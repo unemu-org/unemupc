@@ -127,7 +127,13 @@ build_tools_floppy() {
 	mdir -i "$OUT_TOOLS" ::
 }
 
-export MTOOLS_SKIP_CHECK=1 SOURCE_DATE_EPOCH=315532800 TZ=UTC
+# In the C locale mtools adds VFAT long-name entries even for ASCII names
+# and volume labels. UTF-8 keeps the directory bytes of the pinned images.
+export LC_ALL=C.UTF-8 MTOOLS_SKIP_CHECK=1 SOURCE_DATE_EPOCH=315532800 TZ=UTC
+if [ "$(locale charmap 2>/dev/null)" != "UTF-8" ]; then
+	echo "the C.UTF-8 locale is not available on this host; mtools would write long-name entries" >&2
+	exit 1
+fi
 # Offline mode deliberately requires the already pinned boot fixture; it never
 # attempts a source clone or download. All supplied archives remain hash-checked.
 if [ -n "${FREEDOS_PACKAGE_DIR:-}" ]; then

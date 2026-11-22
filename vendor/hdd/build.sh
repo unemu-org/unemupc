@@ -39,7 +39,13 @@ OFFSET=$((START * 512))
 # Fix every filesystem timestamp at the FAT epoch. Omitting mcopy -m keeps host
 # file mtimes out of the image.
 export MTOOLS_SKIP_CHECK=1
-export SOURCE_DATE_EPOCH=315532800 TZ=UTC
+# In the C locale mtools adds VFAT long-name entries even for ASCII names
+# and volume labels. UTF-8 keeps the directory bytes of the pinned image.
+export LC_ALL=C.UTF-8 SOURCE_DATE_EPOCH=315532800 TZ=UTC
+if [ "$(locale charmap 2>/dev/null)" != "UTF-8" ]; then
+	echo "the C.UTF-8 locale is not available on this host; mtools would write long-name entries" >&2
+	exit 1
+fi
 unset MTOOLSRC MTOOLS_DATE_STRING MTOOLS_NFATS MTOOLS_DIR_LEN
 # mtools reads ~/.mtoolsrc through HOME even when MTOOLSRC is set (that only
 # adds a further file), so mtools runs with an empty home directory. A
