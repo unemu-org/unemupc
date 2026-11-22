@@ -10,7 +10,7 @@ gives the flags. `bd prime` prints the tool's generic workflow; where it differs
 the beads memories (who claims and closes, what goes into `bd remember` — see
 `bd recall bead-conventions` — pushing), these docs and the memories win.
 
-This is the same workflow the CPU core (`x86jit`, prefix `xj`) uses. The two projects keep separate
+This is the same workflow the CPU core (`x86jit`, prefix `xj`) uses. The front end uses its own repository (unemu, prefix `ufe`). These projects keep separate
 bead databases; a reference across them carries a tag — `xj-6vd.9 (x86jit)`.
 
 ## Statuses
@@ -51,7 +51,6 @@ was created under; after a reparent `bd show` is authoritative.
 | `scheduler` | event-driven device scheduling, clock domains, CPU speed |
 | `observation` | observable output from device state, not replayed traces |
 | `skeleton` | phase A of decision-16: the display through a real card to a window, host keyboard |
-| `ux` | how users run and manage machines: machine image bundles, library, media and settings UI (mock-ups approved by the maintainer before any GUI implementation) |
 | `consolidation` | phase A′: machine description files (TOML/YAML), firmware and machine class as configuration, recoverable floppy persistence |
 | `protected-mode` | phase B: 386 protected mode, paging, A20, a 386 profile — DOS-extended programs |
 | `win9x-base` | phase C: PCI, VBE, audio, IDE, mouse, Pentium features — Windows 98 SE to the desktop |

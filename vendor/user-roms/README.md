@@ -185,7 +185,7 @@ your files but counts.
 
 | Test | Files | Where the list is |
 |---|---|---|
-| `user_rom_kenslab_disk_builds_twice_to_the_same_bytes` | the 19 members of Ken's Labyrinth 2.01's `LABFULL.ZIP` (940242 bytes, SHA-256 `643aa0ca8d1a7d2c88afecd952da00f3b912be8b83c4c1d2f4ab9b50491fadfd`), freeware from the author's site; unpack it, the tests do not read the archive | `backlog/docs/design/recipe-corpus/kenslab-2.01/kenslab-2.01.media.toml`, the `unpack` step's `members` |
-| `user_rom_azuramoon_split_builds_twice_to_the_same_bytes` | the 561 files (204 distinct contents) of the Azuramoon chapter I folder | `backlog/docs/design/recipe-corpus/azuramon/azuramoon-2026.media.toml`, `[input.game]` `files` |
+| `user_rom_kenslab_disk_builds_twice_to_the_same_bytes` | the 19 members of Ken's Labyrinth 2.01's `LABFULL.ZIP` (940242 bytes, SHA-256 `643aa0ca8d1a7d2c88afecd952da00f3b912be8b83c4c1d2f4ab9b50491fadfd`), freeware from the author's site; unpack it, the tests do not read the archive | [`backlog/docs/design/recipe-corpus/kenslab-2.01/kenslab-2.01.media.toml`](https://github.com/unemu-org/unemu/blob/8702727a5f88dae352d095ba456ab0ca5f529c72/backlog/docs/design/recipe-corpus/kenslab-2.01/kenslab-2.01.media.toml), the `unpack` step's `members` |
+| `user_rom_azuramoon_split_builds_twice_to_the_same_bytes` | the 561 files (204 distinct contents) of the Azuramoon chapter I folder | [`backlog/docs/design/recipe-corpus/azuramon/azuramoon-2026.media.toml`](https://github.com/unemu-org/unemu/blob/8702727a5f88dae352d095ba456ab0ca5f529c72/backlog/docs/design/recipe-corpus/azuramon/azuramoon-2026.media.toml), `[input.game]` `files` |
 
 Run them with `cargo test --offline -p pc-harness --test user_media_volumes -- --ignored`.

@@ -1,2 +1,0 @@
-rule06-license.media.toml:13:1: error[6.11.6] license: an open set names its licence text: terms is required
-rule06-license.media.toml:13:1: error[6.11.6] license: an open set under GPL-2.0-only carries its source: source is required unless the expression is one LicenseRef-

@@ -6,6 +6,47 @@
 
 set -e
 
+if [[ ${1:-} == --self-test ]]; then
+  work=$(mktemp -d)
+  trap 'rm -rf "$work"' EXIT
+  mkdir "$work/bin"
+  cp "${BASH_SOURCE[0]}" "$work/guard.sh"
+  cat > "$work/bin/git" <<'MOCK'
+#!/usr/bin/env bash
+case "$*" in
+  'config --get commit.gpgsign') echo "${UID_GUARD_TEST_SIGN-true}" ;;
+  'config --get user.email') echo "${UID_GUARD_TEST_EMAIL-user@example.org}" ;;
+  'config --get user.signingkey') echo "${UID_GUARD_TEST_KEY-test-key}" ;;
+  *) exit 2 ;;
+esac
+MOCK
+  cat > "$work/bin/gpg" <<'MOCK'
+#!/usr/bin/env bash
+printf 'uid:::::::::%s:\n' "${UID_GUARD_TEST_UID-User <user@example.org>}"
+MOCK
+  chmod +x "$work/bin/git" "$work/bin/gpg"
+  cases=0
+  check_uid() {
+    local expected=$1 status=0
+    shift
+    env PATH="$work/bin:$PATH" "$@" bash "$work/guard.sh" > "$work/output" 2>&1 || status=$?
+    if [[ $status != "$expected" ]]; then
+      cat "$work/output" >&2
+      echo "uid guard self-test: expected $expected, got $status" >&2
+      exit 1
+    fi
+    cases=$((cases + 1))
+  }
+  check_uid 0
+  check_uid 0 'UID_GUARD_TEST_UID=User <USER@EXAMPLE.ORG>'
+  check_uid 1 'UID_GUARD_TEST_UID=Other <other@example.org>'
+  check_uid 0 UID_GUARD_TEST_SIGN=false 'UID_GUARD_TEST_UID='
+  check_uid 0 'UID_GUARD_TEST_EMAIL='
+  check_uid 0 'UID_GUARD_TEST_KEY='
+  echo "uid guard self-test: $cases passed"
+  exit 0
+fi
+
 if ! git config --get commit.gpgsign | grep -qE '^(true|1)$'; then
   exit 0
 fi

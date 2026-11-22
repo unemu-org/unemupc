@@ -1,6 +1,6 @@
 # Where to capture a decision
 
-This project records decisions in **two** places. Pick the right one — don't invent a third.
+This PC core project records decisions in **two** places. Pick the right one — don't invent a third.
 
 | Surface | Use when | Lifetime |
 |---------|----------|----------|
@@ -68,3 +68,6 @@ Skip it (a bead note or commit message is enough) when the choice:
   skip.
 - **Process/workflow choice** (e.g. "release from `main` only"): durable contract with
   collaborators → record; personal preference → skip.
+
+Front-end decisions live in [unemu](https://github.com/unemu-org/unemu).
+Cross-repository references name the owner, for example [decision-24 (unemu)](https://github.com/unemu-org/unemu/blob/8702727a5f88dae352d095ba456ab0ca5f529c72/backlog/decisions/decision-24%20-%20Desktop%20shell%20is%20a%20classic%20in-window%20menu%20UI%20built%20with%20egui.md).

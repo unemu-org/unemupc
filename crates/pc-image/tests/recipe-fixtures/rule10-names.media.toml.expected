@@ -1,5 +1,0 @@
-rule10-names.media.toml:16:14: error[6.11.10] input.game.files[1].path: the 1.44M volume profile refuses this path: readme.txt: the lower-case letter 'r' is not allowed: a directory entry stores upper case, so write the name as it is on the disk
-rule10-names.media.toml:17:14: error[6.11.10] input.game.files[2].path: the 1.44M volume profile refuses this path: LONGNAME1.TXT: the name has 9 characters before the extension; at most 8 are allowed
-rule10-names.media.toml:18:14: error[6.11.10] input.game.files[3].path: the 1.44M volume profile refuses this path: CON.TXT: it names a DOS device
-rule10-names.media.toml:19:14: error[6.11.10] input.game.files[4].path: the 1.44M volume profile refuses this path: the folder \ABCDEFGH\ABCDEFGH\ABCDEFGH\ABCDEFGH\ABCDEFGH\ABCDEFGH\ABCDEFGH\ABCDEFGH is 72 characters long; DOS keeps at most 64 for a current directory
-rule10-names.media.toml:27:9: error[6.11.10] step[1].label: the 1.44M volume profile refuses the label: label must contain 1..=11 ASCII characters, without leading spaces or FAT filename punctuation

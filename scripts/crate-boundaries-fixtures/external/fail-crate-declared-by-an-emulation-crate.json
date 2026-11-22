@@ -1,58 +1,594 @@
 {
   "self_test": {
     "expect": "fail",
-    "message": "forbidden: device (emulation) → libc (external), run dependency, through device → libc; rule: an emulation crate reaches only the external crates scripts/crate-boundaries.external lists for its layer, each with the kind it is reached by",
+    "message": "forbidden: device (emulation) \u2192 libc (external), run dependency, through device \u2192 libc; rule: an emulation crate reaches only the external crates scripts/crate-boundaries.external lists for its layer, each with the kind it is reached by",
     "errors": 1
   },
   "packages": [
-    {"name": "device", "version": "0.0.3", "id": "path+file:///workspace/crates/device#0.0.3", "source": null, "targets": [{"kind": ["lib"]}], "metadata": {"unemu": {"layer": "emulation"}}},
-    {"name": "testkit", "version": "0.0.3", "id": "path+file:///workspace/crates/testkit#0.0.3", "source": null, "targets": [{"kind": ["lib"]}], "metadata": {"unemu": {"layer": "emulation"}}},
-    {"name": "assembly", "version": "0.0.3", "id": "path+file:///workspace/crates/assembly#0.0.3", "source": null, "targets": [{"kind": ["lib"]}], "metadata": {"unemu": {"layer": "emulation"}}},
-    {"name": "media", "version": "0.0.3", "id": "path+file:///workspace/crates/media#0.0.3", "source": null, "targets": [{"kind": ["lib"]}], "metadata": {"unemu": {"layer": "neutral"}}},
-    {"name": "window", "version": "0.0.3", "id": "path+file:///workspace/crates/window#0.0.3", "source": null, "targets": [{"kind": ["lib"]}], "metadata": {"unemu": {"layer": "application"}}},
-    {"name": "thiserror", "version": "1.0.0", "id": "registry+https://github.com/rust-lang/crates.io-index#thiserror@1.0.0", "source": "registry+https://github.com/rust-lang/crates.io-index", "targets": [{"kind": ["lib"]}]},
-    {"name": "thiserror-impl", "version": "1.0.0", "id": "registry+https://github.com/rust-lang/crates.io-index#thiserror-impl@1.0.0", "source": "registry+https://github.com/rust-lang/crates.io-index", "targets": [{"kind": ["proc-macro"]}]},
-    {"name": "proc-macro2", "version": "1.0.0", "id": "registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.0", "source": "registry+https://github.com/rust-lang/crates.io-index", "targets": [{"kind": ["lib"]}]},
-    {"name": "sha2", "version": "1.0.0", "id": "registry+https://github.com/rust-lang/crates.io-index#sha2@1.0.0", "source": "registry+https://github.com/rust-lang/crates.io-index", "targets": [{"kind": ["lib"]}]},
-    {"name": "cfg-if", "version": "1.0.0", "id": "registry+https://github.com/rust-lang/crates.io-index#cfg-if@1.0.0", "source": "registry+https://github.com/rust-lang/crates.io-index", "targets": [{"kind": ["lib"]}]},
-    {"name": "version_check", "version": "1.0.0", "id": "registry+https://github.com/rust-lang/crates.io-index#version_check@1.0.0", "source": "registry+https://github.com/rust-lang/crates.io-index", "targets": [{"kind": ["lib"]}]},
-    {"name": "toml", "version": "1.0.0", "id": "registry+https://github.com/rust-lang/crates.io-index#toml@1.0.0", "source": "registry+https://github.com/rust-lang/crates.io-index", "targets": [{"kind": ["lib"]}]},
-    {"name": "serde", "version": "1.0.0", "id": "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.0", "source": "registry+https://github.com/rust-lang/crates.io-index", "targets": [{"kind": ["lib"]}]},
-    {"name": "serde_derive", "version": "1.0.0", "id": "registry+https://github.com/rust-lang/crates.io-index#serde_derive@1.0.0", "source": "registry+https://github.com/rust-lang/crates.io-index", "targets": [{"kind": ["proc-macro"]}]},
-    {"name": "memchr", "version": "1.0.0", "id": "registry+https://github.com/rust-lang/crates.io-index#memchr@1.0.0", "source": "registry+https://github.com/rust-lang/crates.io-index", "targets": [{"kind": ["lib"]}]},
-    {"name": "fastrand", "version": "1.0.0", "id": "registry+https://github.com/rust-lang/crates.io-index#fastrand@1.0.0", "source": "registry+https://github.com/rust-lang/crates.io-index", "targets": [{"kind": ["lib"]}]},
-    {"name": "tempfile", "version": "1.0.0", "id": "registry+https://github.com/rust-lang/crates.io-index#tempfile@1.0.0", "source": "registry+https://github.com/rust-lang/crates.io-index", "targets": [{"kind": ["lib"]}]},
-    {"name": "winit", "version": "1.0.0", "id": "registry+https://github.com/rust-lang/crates.io-index#winit@1.0.0", "source": "registry+https://github.com/rust-lang/crates.io-index", "targets": [{"kind": ["lib"]}]},
-    {"name": "libc", "version": "1.0.0", "id": "registry+https://github.com/rust-lang/crates.io-index#libc@1.0.0", "source": "registry+https://github.com/rust-lang/crates.io-index", "targets": [{"kind": ["lib"]}]}
+    {
+      "name": "device",
+      "version": "0.0.3",
+      "id": "path+file:///workspace/crates/device#0.0.3",
+      "source": null,
+      "targets": [
+        {
+          "kind": [
+            "lib"
+          ]
+        }
+      ],
+      "metadata": {
+        "unemu": {
+          "layer": "emulation"
+        }
+      }
+    },
+    {
+      "name": "testkit",
+      "version": "0.0.3",
+      "id": "path+file:///workspace/crates/testkit#0.0.3",
+      "source": null,
+      "targets": [
+        {
+          "kind": [
+            "lib"
+          ]
+        }
+      ],
+      "metadata": {
+        "unemu": {
+          "layer": "emulation"
+        }
+      }
+    },
+    {
+      "name": "assembly",
+      "version": "0.0.3",
+      "id": "path+file:///workspace/crates/assembly#0.0.3",
+      "source": null,
+      "targets": [
+        {
+          "kind": [
+            "lib"
+          ]
+        }
+      ],
+      "metadata": {
+        "unemu": {
+          "layer": "emulation"
+        }
+      }
+    },
+    {
+      "name": "media",
+      "version": "0.0.3",
+      "id": "path+file:///workspace/crates/media#0.0.3",
+      "source": null,
+      "targets": [
+        {
+          "kind": [
+            "lib"
+          ]
+        }
+      ],
+      "metadata": {
+        "unemu": {
+          "layer": "pc"
+        }
+      }
+    },
+    {
+      "name": "unemupc",
+      "version": "0.0.3",
+      "id": "path+file:///workspace/crates/unemupc#0.0.3",
+      "source": null,
+      "targets": [
+        {
+          "kind": [
+            "lib"
+          ]
+        }
+      ],
+      "metadata": {
+        "unemu": {
+          "layer": "pc"
+        }
+      }
+    },
+    {
+      "name": "thiserror",
+      "version": "1.0.0",
+      "id": "registry+https://github.com/rust-lang/crates.io-index#thiserror@1.0.0",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "targets": [
+        {
+          "kind": [
+            "lib"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "thiserror-impl",
+      "version": "1.0.0",
+      "id": "registry+https://github.com/rust-lang/crates.io-index#thiserror-impl@1.0.0",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "targets": [
+        {
+          "kind": [
+            "proc-macro"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "proc-macro2",
+      "version": "1.0.0",
+      "id": "registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.0",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "targets": [
+        {
+          "kind": [
+            "lib"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "sha2",
+      "version": "1.0.0",
+      "id": "registry+https://github.com/rust-lang/crates.io-index#sha2@1.0.0",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "targets": [
+        {
+          "kind": [
+            "lib"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "cfg-if",
+      "version": "1.0.0",
+      "id": "registry+https://github.com/rust-lang/crates.io-index#cfg-if@1.0.0",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "targets": [
+        {
+          "kind": [
+            "lib"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "version_check",
+      "version": "1.0.0",
+      "id": "registry+https://github.com/rust-lang/crates.io-index#version_check@1.0.0",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "targets": [
+        {
+          "kind": [
+            "lib"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "toml",
+      "version": "1.0.0",
+      "id": "registry+https://github.com/rust-lang/crates.io-index#toml@1.0.0",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "targets": [
+        {
+          "kind": [
+            "lib"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "serde",
+      "version": "1.0.0",
+      "id": "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.0",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "targets": [
+        {
+          "kind": [
+            "lib"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "serde_derive",
+      "version": "1.0.0",
+      "id": "registry+https://github.com/rust-lang/crates.io-index#serde_derive@1.0.0",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "targets": [
+        {
+          "kind": [
+            "proc-macro"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "memchr",
+      "version": "1.0.0",
+      "id": "registry+https://github.com/rust-lang/crates.io-index#memchr@1.0.0",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "targets": [
+        {
+          "kind": [
+            "lib"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "fastrand",
+      "version": "1.0.0",
+      "id": "registry+https://github.com/rust-lang/crates.io-index#fastrand@1.0.0",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "targets": [
+        {
+          "kind": [
+            "lib"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "tempfile",
+      "version": "1.0.0",
+      "id": "registry+https://github.com/rust-lang/crates.io-index#tempfile@1.0.0",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "targets": [
+        {
+          "kind": [
+            "lib"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "winit",
+      "version": "1.0.0",
+      "id": "registry+https://github.com/rust-lang/crates.io-index#winit@1.0.0",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "targets": [
+        {
+          "kind": [
+            "lib"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "libc",
+      "version": "1.0.0",
+      "id": "registry+https://github.com/rust-lang/crates.io-index#libc@1.0.0",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "targets": [
+        {
+          "kind": [
+            "lib"
+          ]
+        }
+      ]
+    }
   ],
   "workspace_members": [
     "path+file:///workspace/crates/device#0.0.3",
     "path+file:///workspace/crates/testkit#0.0.3",
     "path+file:///workspace/crates/assembly#0.0.3",
     "path+file:///workspace/crates/media#0.0.3",
-    "path+file:///workspace/crates/window#0.0.3"
+    "path+file:///workspace/crates/unemupc#0.0.3"
   ],
   "resolve": {
     "nodes": [
-      {"id": "path+file:///workspace/crates/device#0.0.3", "deps": [{"name": "thiserror", "pkg": "registry+https://github.com/rust-lang/crates.io-index#thiserror@1.0.0", "dep_kinds": [{"kind": null, "target": null}]}, {"name": "sha2", "pkg": "registry+https://github.com/rust-lang/crates.io-index#sha2@1.0.0", "dep_kinds": [{"kind": null, "target": null}]}, {"name": "fastrand", "pkg": "registry+https://github.com/rust-lang/crates.io-index#fastrand@1.0.0", "dep_kinds": [{"kind": "dev", "target": null}]}, {"name": "testkit", "pkg": "path+file:///workspace/crates/testkit#0.0.3", "dep_kinds": [{"kind": "dev", "target": null}]}, {"name": "libc", "pkg": "registry+https://github.com/rust-lang/crates.io-index#libc@1.0.0", "dep_kinds": [{"kind": null, "target": null}]}]},
-      {"id": "path+file:///workspace/crates/testkit#0.0.3", "deps": [{"name": "device", "pkg": "path+file:///workspace/crates/device#0.0.3", "dep_kinds": [{"kind": null, "target": null}]}]},
-      {"id": "path+file:///workspace/crates/assembly#0.0.3", "deps": [{"name": "device", "pkg": "path+file:///workspace/crates/device#0.0.3", "dep_kinds": [{"kind": null, "target": null}]}, {"name": "media", "pkg": "path+file:///workspace/crates/media#0.0.3", "dep_kinds": [{"kind": null, "target": null}, {"kind": "dev", "target": null}]}]},
-      {"id": "path+file:///workspace/crates/media#0.0.3", "deps": [{"name": "toml", "pkg": "registry+https://github.com/rust-lang/crates.io-index#toml@1.0.0", "dep_kinds": [{"kind": null, "target": null}]}, {"name": "tempfile", "pkg": "registry+https://github.com/rust-lang/crates.io-index#tempfile@1.0.0", "dep_kinds": [{"kind": "dev", "target": null}]}]},
-      {"id": "path+file:///workspace/crates/window#0.0.3", "deps": [{"name": "assembly", "pkg": "path+file:///workspace/crates/assembly#0.0.3", "dep_kinds": [{"kind": null, "target": null}]}, {"name": "winit", "pkg": "registry+https://github.com/rust-lang/crates.io-index#winit@1.0.0", "dep_kinds": [{"kind": null, "target": null}]}]},
-      {"id": "registry+https://github.com/rust-lang/crates.io-index#thiserror@1.0.0", "deps": [{"name": "thiserror_impl", "pkg": "registry+https://github.com/rust-lang/crates.io-index#thiserror-impl@1.0.0", "dep_kinds": [{"kind": null, "target": null}]}]},
-      {"id": "registry+https://github.com/rust-lang/crates.io-index#thiserror-impl@1.0.0", "deps": [{"name": "proc_macro2", "pkg": "registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.0", "dep_kinds": [{"kind": null, "target": null}]}]},
-      {"id": "registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.0", "deps": []},
-      {"id": "registry+https://github.com/rust-lang/crates.io-index#sha2@1.0.0", "deps": [{"name": "cfg_if", "pkg": "registry+https://github.com/rust-lang/crates.io-index#cfg-if@1.0.0", "dep_kinds": [{"kind": null, "target": null}]}, {"name": "version_check", "pkg": "registry+https://github.com/rust-lang/crates.io-index#version_check@1.0.0", "dep_kinds": [{"kind": "build", "target": null}]}]},
-      {"id": "registry+https://github.com/rust-lang/crates.io-index#cfg-if@1.0.0", "deps": []},
-      {"id": "registry+https://github.com/rust-lang/crates.io-index#version_check@1.0.0", "deps": []},
-      {"id": "registry+https://github.com/rust-lang/crates.io-index#toml@1.0.0", "deps": [{"name": "serde", "pkg": "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.0", "dep_kinds": [{"kind": null, "target": null}]}, {"name": "memchr", "pkg": "registry+https://github.com/rust-lang/crates.io-index#memchr@1.0.0", "dep_kinds": [{"kind": null, "target": null}]}]},
-      {"id": "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.0", "deps": [{"name": "serde_derive", "pkg": "registry+https://github.com/rust-lang/crates.io-index#serde_derive@1.0.0", "dep_kinds": [{"kind": null, "target": null}]}]},
-      {"id": "registry+https://github.com/rust-lang/crates.io-index#serde_derive@1.0.0", "deps": [{"name": "memchr", "pkg": "registry+https://github.com/rust-lang/crates.io-index#memchr@1.0.0", "dep_kinds": [{"kind": null, "target": null}]}]},
-      {"id": "registry+https://github.com/rust-lang/crates.io-index#memchr@1.0.0", "deps": []},
-      {"id": "registry+https://github.com/rust-lang/crates.io-index#fastrand@1.0.0", "deps": []},
-      {"id": "registry+https://github.com/rust-lang/crates.io-index#tempfile@1.0.0", "deps": [{"name": "fastrand", "pkg": "registry+https://github.com/rust-lang/crates.io-index#fastrand@1.0.0", "dep_kinds": [{"kind": null, "target": null}]}]},
-      {"id": "registry+https://github.com/rust-lang/crates.io-index#winit@1.0.0", "deps": []},
-      {"id": "registry+https://github.com/rust-lang/crates.io-index#libc@1.0.0", "deps": []}
+      {
+        "id": "path+file:///workspace/crates/device#0.0.3",
+        "deps": [
+          {
+            "name": "thiserror",
+            "pkg": "registry+https://github.com/rust-lang/crates.io-index#thiserror@1.0.0",
+            "dep_kinds": [
+              {
+                "kind": null,
+                "target": null
+              }
+            ]
+          },
+          {
+            "name": "sha2",
+            "pkg": "registry+https://github.com/rust-lang/crates.io-index#sha2@1.0.0",
+            "dep_kinds": [
+              {
+                "kind": null,
+                "target": null
+              }
+            ]
+          },
+          {
+            "name": "fastrand",
+            "pkg": "registry+https://github.com/rust-lang/crates.io-index#fastrand@1.0.0",
+            "dep_kinds": [
+              {
+                "kind": "dev",
+                "target": null
+              }
+            ]
+          },
+          {
+            "name": "testkit",
+            "pkg": "path+file:///workspace/crates/testkit#0.0.3",
+            "dep_kinds": [
+              {
+                "kind": "dev",
+                "target": null
+              }
+            ]
+          },
+          {
+            "name": "libc",
+            "pkg": "registry+https://github.com/rust-lang/crates.io-index#libc@1.0.0",
+            "dep_kinds": [
+              {
+                "kind": null,
+                "target": null
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "path+file:///workspace/crates/testkit#0.0.3",
+        "deps": [
+          {
+            "name": "device",
+            "pkg": "path+file:///workspace/crates/device#0.0.3",
+            "dep_kinds": [
+              {
+                "kind": null,
+                "target": null
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "path+file:///workspace/crates/assembly#0.0.3",
+        "deps": [
+          {
+            "name": "device",
+            "pkg": "path+file:///workspace/crates/device#0.0.3",
+            "dep_kinds": [
+              {
+                "kind": null,
+                "target": null
+              }
+            ]
+          },
+          {
+            "name": "media",
+            "pkg": "path+file:///workspace/crates/media#0.0.3",
+            "dep_kinds": [
+              {
+                "kind": null,
+                "target": null
+              },
+              {
+                "kind": "dev",
+                "target": null
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "path+file:///workspace/crates/media#0.0.3",
+        "deps": [
+          {
+            "name": "toml",
+            "pkg": "registry+https://github.com/rust-lang/crates.io-index#toml@1.0.0",
+            "dep_kinds": [
+              {
+                "kind": null,
+                "target": null
+              }
+            ]
+          },
+          {
+            "name": "tempfile",
+            "pkg": "registry+https://github.com/rust-lang/crates.io-index#tempfile@1.0.0",
+            "dep_kinds": [
+              {
+                "kind": "dev",
+                "target": null
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "path+file:///workspace/crates/unemupc#0.0.3",
+        "deps": [
+          {
+            "name": "assembly",
+            "pkg": "path+file:///workspace/crates/assembly#0.0.3",
+            "dep_kinds": [
+              {
+                "kind": null,
+                "target": null
+              }
+            ]
+          },
+          {
+            "name": "winit",
+            "pkg": "registry+https://github.com/rust-lang/crates.io-index#winit@1.0.0",
+            "dep_kinds": [
+              {
+                "kind": null,
+                "target": null
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "registry+https://github.com/rust-lang/crates.io-index#thiserror@1.0.0",
+        "deps": [
+          {
+            "name": "thiserror_impl",
+            "pkg": "registry+https://github.com/rust-lang/crates.io-index#thiserror-impl@1.0.0",
+            "dep_kinds": [
+              {
+                "kind": null,
+                "target": null
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "registry+https://github.com/rust-lang/crates.io-index#thiserror-impl@1.0.0",
+        "deps": [
+          {
+            "name": "proc_macro2",
+            "pkg": "registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.0",
+            "dep_kinds": [
+              {
+                "kind": null,
+                "target": null
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.0",
+        "deps": []
+      },
+      {
+        "id": "registry+https://github.com/rust-lang/crates.io-index#sha2@1.0.0",
+        "deps": [
+          {
+            "name": "cfg_if",
+            "pkg": "registry+https://github.com/rust-lang/crates.io-index#cfg-if@1.0.0",
+            "dep_kinds": [
+              {
+                "kind": null,
+                "target": null
+              }
+            ]
+          },
+          {
+            "name": "version_check",
+            "pkg": "registry+https://github.com/rust-lang/crates.io-index#version_check@1.0.0",
+            "dep_kinds": [
+              {
+                "kind": "build",
+                "target": null
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "registry+https://github.com/rust-lang/crates.io-index#cfg-if@1.0.0",
+        "deps": []
+      },
+      {
+        "id": "registry+https://github.com/rust-lang/crates.io-index#version_check@1.0.0",
+        "deps": []
+      },
+      {
+        "id": "registry+https://github.com/rust-lang/crates.io-index#toml@1.0.0",
+        "deps": [
+          {
+            "name": "serde",
+            "pkg": "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.0",
+            "dep_kinds": [
+              {
+                "kind": null,
+                "target": null
+              }
+            ]
+          },
+          {
+            "name": "memchr",
+            "pkg": "registry+https://github.com/rust-lang/crates.io-index#memchr@1.0.0",
+            "dep_kinds": [
+              {
+                "kind": null,
+                "target": null
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.0",
+        "deps": [
+          {
+            "name": "serde_derive",
+            "pkg": "registry+https://github.com/rust-lang/crates.io-index#serde_derive@1.0.0",
+            "dep_kinds": [
+              {
+                "kind": null,
+                "target": null
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "registry+https://github.com/rust-lang/crates.io-index#serde_derive@1.0.0",
+        "deps": [
+          {
+            "name": "memchr",
+            "pkg": "registry+https://github.com/rust-lang/crates.io-index#memchr@1.0.0",
+            "dep_kinds": [
+              {
+                "kind": null,
+                "target": null
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "registry+https://github.com/rust-lang/crates.io-index#memchr@1.0.0",
+        "deps": []
+      },
+      {
+        "id": "registry+https://github.com/rust-lang/crates.io-index#fastrand@1.0.0",
+        "deps": []
+      },
+      {
+        "id": "registry+https://github.com/rust-lang/crates.io-index#tempfile@1.0.0",
+        "deps": [
+          {
+            "name": "fastrand",
+            "pkg": "registry+https://github.com/rust-lang/crates.io-index#fastrand@1.0.0",
+            "dep_kinds": [
+              {
+                "kind": null,
+                "target": null
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "registry+https://github.com/rust-lang/crates.io-index#winit@1.0.0",
+        "deps": []
+      },
+      {
+        "id": "registry+https://github.com/rust-lang/crates.io-index#libc@1.0.0",
+        "deps": []
+      }
     ],
     "root": null
   }

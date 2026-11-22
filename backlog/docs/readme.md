@@ -20,4 +20,7 @@ curated files below are hand-maintained.
 | [`status.md`](status.md) | Feature status (what works, what's in flight, what's broken). |
 | [`working-on-tasks.md`](working-on-tasks.md) | Beads: statuses, epics, lifecycle, Definition of Done, git flow, session handoff. |
 | [`decisions.md`](decisions.md) | Where to capture a decision: `backlog decision` vs bead note. |
-| [`user/`](user/) | End-user-facing documentation. |
+
+The desktop, image library, recipes and `setup-unemu` are documented in
+[unemu](https://github.com/unemu-org/unemu). The split records in `design/`
+are frozen; `architecture.md` describes the current core.

@@ -1,1 +1,0 @@
-rule01-not-toml.media.toml:7:11: error[6.11.1] not TOML: string values must be quoted, expected literal string

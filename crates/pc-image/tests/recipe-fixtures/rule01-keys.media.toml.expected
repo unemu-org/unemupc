@@ -1,4 +1,0 @@
-rule01-keys.media.toml:4:1: error[6.11.1] colour: unknown key `colour`; expected one of recipe, work, media, title, license, needs, ids, input, step, medium, extra, attachment
-rule01-keys.media.toml:6:1: error[6.11.1] media: missing key `revision`
-rule01-keys.media.toml:9:1: error[6.11.1] media.revison: unknown key `revison`; expected one of name, platform, release, revision, digest, min_app_version
-rule01-keys.media.toml:24:1: error[6.11.1] medium[1].colour: unknown key `colour`; expected one of id, label, format, file_name, from

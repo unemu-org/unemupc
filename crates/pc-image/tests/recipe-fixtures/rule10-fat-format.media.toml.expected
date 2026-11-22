@@ -1,2 +1,0 @@
-rule10-fat-format.media.toml:33:10: error[6.11.10] medium[1].format: the medium is 720K, but the fat step `disk` builds a 1.44M volume
-rule10-fat-format.media.toml:39:10: error[6.11.10] medium[2].format: the medium is 360K, but the fat step `disks` builds a 1.2M volume

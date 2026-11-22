@@ -10,80 +10,6 @@
       "machine"
     ]
   },
-  "crates/cli-pc/tests/at_games.rs": {
-    "tests": [
-      "open_game_profile_boots_freedos",
-      "open_game_profile_reads_720k_in_b_and_360k_in_a"
-    ],
-    "mentions": [
-      "assembly",
-      "cli_pc",
-      "cpu",
-      "device",
-      "devices",
-      "machine",
-      "machine_file",
-      "pc_harness",
-      "video"
-    ]
-  },
-  "crates/cli-pc/tests/freedos_install_golden.rs": {
-    "tests": [
-      "freedos_installs_and_boots_from_a_blank_hard_disk"
-    ],
-    "mentions": [
-      "assembly",
-      "cli_pc",
-      "cpu",
-      "devices",
-      "machine_file",
-      "media",
-      "pc_harness",
-      "video"
-    ]
-  },
-  "crates/cli-pc/tests/ide_journal_golden.rs": {
-    "tests": [
-      "freedos_ide_journal_survives_a_fresh_assembly_without_changing_base"
-    ],
-    "mentions": [
-      "assembly",
-      "cli_pc",
-      "devices",
-      "machine_file",
-      "media",
-      "pc_harness",
-      "video"
-    ]
-  },
-  "crates/cli-pc/tests/machine_freedos_golden.rs": {
-    "tests": [
-      "freedos_writes_persist_in_a_machine_until_reset"
-    ],
-    "mentions": [
-      "assembly",
-      "image_store",
-      "machine",
-      "media",
-      "pc_harness",
-      "pc_image",
-      "video"
-    ]
-  },
-  "crates/cli-pc/tests/media_files_golden.rs": {
-    "tests": [
-      "freedos_reads_a_floppy_built_from_host_files",
-      "freedos_enters_and_rebuilds_a_split_set_with_xcopy"
-    ],
-    "mentions": [
-      "assembly",
-      "cli_pc",
-      "machine",
-      "machine_file",
-      "pc_harness",
-      "video"
-    ]
-  },
   "crates/pc-harness/src/lib.rs": {
     "tests": [
       "bios_and_dos_outputs_ignore_trace_overflow_and_post_buffers_stay_bounded"
@@ -288,55 +214,6 @@
       "machine_file",
       "pc_harness",
       "video"
-    ]
-  },
-  "crates/registry/src/credential_store.rs": {
-    "tests": [
-      "keychain_backend_round_trip_in_a_throwaway_keychain"
-    ],
-    "mentions": []
-  },
-  "crates/registry/src/tests.rs": {
-    "tests": [
-      "live_round_trip_through_the_default_registry"
-    ],
-    "mentions": [
-      "image_store"
-    ]
-  },
-  "crates/window/src/main.rs": {
-    "tests": [
-      "freedos_window_chunks_deliver_dir_listing_without_opening_a_window"
-    ],
-    "mentions": [
-      "assembly",
-      "cpu",
-      "device",
-      "devices",
-      "image_store",
-      "machine",
-      "machine_file",
-      "platforms",
-      "video",
-      "window"
-    ]
-  },
-  "crates/window/src/shell.rs": {
-    "tests": [
-      "no_rom_basic_takes_a_boot_floppy_and_ctrl_alt_del_boots_freedos",
-      "a_floppy_inserted_before_start_boots_freedos_on_the_open_bios"
-    ],
-    "mentions": [
-      "assembly",
-      "devices",
-      "image_registry",
-      "image_store",
-      "machine_file",
-      "media",
-      "pc_image",
-      "platforms",
-      "video",
-      "window"
     ]
   }
 }

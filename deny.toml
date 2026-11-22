@@ -1,15 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 [advisories]
-# cargo-deny 0.19 checks unmaintained crates across the full dependency graph.
-# Keep its error defaults for vulnerabilities and yanked crates; only the
-# documented advisory below is accepted until its review date.
-ignore = [
-    { id = "RUSTSEC-2026-0192", reason = "Accepted 2026-11-11: window -> winit -> sctk-adwaita -> ab_glyph -> owned_ttf_parser -> ttf-parser 0.25.1 provides Wayland client-side decorations, required for window frames on GNOME. This is an unmaintained crate, not a known vulnerability; no safe upgrade is available. Keep winit's default wayland-csd-adwaita feature. Review 2027-05-11." },
-    { id = "RUSTSEC-2026-0371", reason = "Accepted 2026-11-13: window -> eframe -> egui-winit -> accesskit_winit -> accesskit_unix -> zbus 5.19.0 -> zbus_names 4.3.5 provides Linux AT-SPI accessibility through eframe's accesskit feature. This is an unmaintained crate, not a known vulnerability; merged into zbus 6, no compatible upgrade while the accesskit stack depends on zbus 5. Review 2027-05-13." },
-    { id = "RUSTSEC-2026-0370", reason = "Accepted 2026-11-13: window -> eframe -> egui-winit -> accesskit_winit -> accesskit_unix -> zbus 5.19.0 -> zvariant 5.15.1 provides Linux AT-SPI accessibility through eframe's accesskit feature. This is an unmaintained crate, not a known vulnerability; merged into zbus 6, no compatible upgrade while the accesskit stack depends on zbus 5. Review 2027-05-13." },
-    { id = "RUSTSEC-2026-0372", reason = "Accepted 2026-11-13: window -> eframe -> egui-winit -> accesskit_winit -> accesskit_unix -> zbus 5.19.0 -> zvariant 5.15.1 -> zvariant_derive 5.15.1 provides Linux AT-SPI accessibility through eframe's accesskit feature. This is an unmaintained crate, not a known vulnerability; merged into zbus 6, no compatible upgrade while the accesskit stack depends on zbus 5. Review 2027-05-13." },
-]
+ignore = []
 
 [licenses]
 # Keep the allowlist limited to the all-features graph: workspace AGPL and
@@ -19,33 +11,14 @@ allow = [
     "MIT",
     "Apache-2.0",
     "Unicode-3.0",
-    # Permissive licenses of the windowed presenter's platform dependencies
-    # (dynamic loading of the display libraries, Wayland window decorations).
-    "BSD-2-Clause",
     "BSD-3-Clause",
-    "ISC",
-    # slotmap requires Zlib.
-    "Zlib",
-    # epaint_default_fonts supplies the optional Noto Emoji font under OFL-1.1.
-    "OFL-1.1",
-    # epaint_default_fonts embeds Ubuntu Light under Ubuntu-font-1.0.
-    "Ubuntu-font-1.0",
-    # arboard's Windows clipboard backend, clipboard-win and error-code, is BSL-1.0.
-    "BSL-1.0",
 ]
 confidence-threshold = 0.9
 
-# The PC core's text rasteriser embeds CC BY-SA 4.0 fonts, and the desktop's
-# ui kit CC0 1.0 logo data and a DejaVu Sans symbol subset under the Bitstream
-# Vera font licence (permissive, with an Arev counterpart of the same terms);
-# these licenses are allowed for those crates only.
+# The PC core's text rasteriser embeds CC BY-SA 4.0 fonts.
 [[licenses.exceptions]]
 crate = "unemu-pc-core"
 allow = ["CC-BY-SA-4.0"]
-
-[[licenses.exceptions]]
-crate = "ui-kit"
-allow = ["CC0-1.0", "Bitstream-Vera"]
 
 [bans]
 multiple-versions = "warn"
@@ -54,10 +27,9 @@ wildcards = "deny"
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
-# The CPU core, the contract between front ends and cores, and the NES core,
+# The CPU core, the contract between front ends and cores,
 # each pinned to an exact revision in the workspace manifest.
 allow-git = [
     "https://github.com/unemu-org/x86jit",
     "https://github.com/unemu-org/unemu-core-api",
-    "https://github.com/unemu-org/unemunes",
 ]

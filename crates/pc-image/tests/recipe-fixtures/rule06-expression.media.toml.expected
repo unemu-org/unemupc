@@ -1,3 +1,0 @@
-rule06-expression.media.toml:13:14: error[6.11.6] license.expression: incomplete SPDX licence expression
-rule06-expression.media.toml:14:9: error[6.11.6] license.terms: terms names `licence`, which is not an [[extra]]
-rule06-expression.media.toml:15:10: error[6.11.6] license.source: source names `disk-1`, which is not an [[extra]]

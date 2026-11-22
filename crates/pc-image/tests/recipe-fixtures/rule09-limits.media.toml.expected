@@ -1,2 +1,0 @@
-rule09-limits.media.toml:4:1: error[6.11.9] media: the recipe has 65 steps; at most 64 are allowed
-rule09-limits.media.toml:14:8: error[6.11.9] input.notes.size: a bundled input is at most 1048576 bytes (1 MiB); this one is 1048577

@@ -3,6 +3,9 @@
 Claude-specific entry point. Body lives in [`AGENTS.md`](AGENTS.md) — same canonical content is consumed by every other coding agent.
 
 @AGENTS.md
+
+This repository holds the PC core and standalone `unemupc`. The front end and
+`setup-unemu` live in [unemu](https://github.com/unemu-org/unemu).
 <!-- repoctx:start -->
 ## Code navigation with `repoctx`
 

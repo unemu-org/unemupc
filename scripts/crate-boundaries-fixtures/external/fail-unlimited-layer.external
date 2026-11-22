@@ -11,4 +11,4 @@ emulation: proc-macro2 (build): token streams for the derive macro
 emulation: serde_derive (build): serde's derive macro
 emulation: version_check (build): sha2's build script
 emulation: fastrand (test): a test dependency of device
-neutral: winit (run): neutral crates are not limited by the list
+pc: winit (run): PC host crates are not limited by the list

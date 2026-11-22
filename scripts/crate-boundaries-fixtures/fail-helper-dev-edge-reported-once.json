@@ -1,46 +1,45 @@
 {
   "self_test": {
-    "expect": "pass",
-    "message": ""
+    "expect": "fail",
+    "message": "forbidden: helper",
+    "errors": 1
   },
   "packages": [
     {
-      "name": "unemupc",
+      "name": "device",
       "metadata": {
         "unemu": {
-          "layer": "pc",
-          "side": "core"
+          "layer": "emulation"
         }
       },
       "dependencies": [
         {
-          "name": "pc-harness",
+          "name": "helper",
           "source": null,
-          "kind": "normal"
+          "kind": null
         }
       ]
     },
     {
-      "name": "pc-harness",
+      "name": "helper",
       "metadata": {
         "unemu": {
-          "layer": "pc",
-          "side": "core"
+          "layer": "emulation"
         }
       },
       "dependencies": [
         {
-          "name": "media",
+          "name": "host",
           "source": null,
           "kind": "dev"
         }
       ]
     },
     {
-      "name": "media",
+      "name": "host",
       "metadata": {
         "unemu": {
-          "layer": "neutral"
+          "layer": "pc"
         }
       },
       "dependencies": []

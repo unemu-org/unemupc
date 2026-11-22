@@ -11,12 +11,12 @@ deciders: Mikołaj Mikołajczyk
 ## Status
 
 Accepted — 2026-11-17 by the maintainer. Design step of
-`upc-dfs.15`; it must be settled before `upcli image template create`
-(`upc-dfs.14`) publishes its first template. Builds on [[decision-25]]
-(machine images), [[decision-26]] (installation media sets) and
-[[decision-27]] (firmware packages). The survey of today's readers and the
+`upc-dfs.15`; it must be settled before the [unemu front end](https://github.com/unemu-org/unemu)'s `image template create`
+(`upc-dfs.14`) publishes its first template. Builds on [decision-25 (unemu)](https://github.com/unemu-org/unemu/blob/8702727a5f88dae352d095ba456ab0ca5f529c72/backlog/decisions/decision-25%20-%20Machine%20images%20are%20self-contained%20OCI%20artifacts%20in%20a%20local%20store.md)
+(machine images), [decision-26 (unemu)](https://github.com/unemu-org/unemu/blob/8702727a5f88dae352d095ba456ab0ca5f529c72/backlog/decisions/decision-26%20-%20Installation%20media%20sets%20are%20their%20own%20OCI%20artifact%20type.md) (installation media sets) and
+[decision-27 (unemu)](https://github.com/unemu-org/unemu/blob/8702727a5f88dae352d095ba456ab0ca5f529c72/backlog/decisions/decision-27%20-%20Firmware%20packages%20are%20their%20own%20OCI%20artifact%20type.md) (firmware packages). The survey of today's readers and the
 measured behaviour of release 0.0.2 are in
-`backlog/docs/design/machine-images.md` §5.6.
+[`backlog/docs/design/machine-images.md`](https://github.com/unemu-org/unemu/blob/8702727a5f88dae352d095ba456ab0ca5f529c72/backlog/docs/design/machine-images.md) §5.6.
 
 **Note, 2026-11-19 (amendment to come).** The maintainer decided, with the
 stage B plan of `backlog/docs/design/core-contract.md` (§14.6 Q6, §9),
@@ -68,8 +68,8 @@ firmware packages (`unemu-at-bios-1.0.2-unemu.3:1`,
    SemVer 2.0.0 release version (`MAJOR.MINOR.PATCH`, with no pre-release or
    build part). It names the oldest release of the program that provides the
    manifest's `unemu.platform` and can read and run the artifact: unemupc for
-   `ibm-pc-at`, where the desktop `unemupc` and the command-line `upcli` share
-   one version. It follows the `unemu.*` keys already in use. The manifest
+   `ibm-pc-at`, whose desktop and command line now live in
+   the [unemu front end](https://github.com/unemu-org/unemu). It follows the `unemu.*` keys already in use. The manifest
    alone carries it, so Remotes and Get templates can grey out a row without
    fetching a config. Machine images, installation media sets and firmware
    packages all use the same rule.
@@ -147,7 +147,7 @@ firmware packages (`unemu-at-bios-1.0.2-unemu.3:1`,
 ## Alternatives considered
 
 - **The writing release's own version.** Simple, but too strict, and it
-  breaks reproducibility. Every rebuild with a newer `upcli` changes the
+  breaks reproducibility. Every rebuild with a newer front end changes the
   manifest and its digest. The pinned digests of the published sets and
   packages would no longer match, and an immutable tag would refuse the
   rebuilt bytes.
@@ -217,10 +217,10 @@ change the meaning of an existing key/value (point 4 still applies).
 
 1. Add `crates/pc-config/src/compat.rs`, export it from `src/lib.rs`, and
    move the core rows/evaluators and coverage tests there from
-   `crates/pc-image/src/compat.rs`. Use core-owned release/row data without
+   [`crates/pc-image/src/compat.rs`](https://github.com/unemu-org/unemu/blob/8702727a5f88dae352d095ba456ab0ca5f529c72/crates/pc-image/src/compat.rs). Use core-owned release/row data without
    an `image-store` dependency; the provider converts it at the boundary.
    Keep package-format rows in `pc-image`; do not move the whole file.
-2. In `crates/image-store/src/compat.rs`, replace global `level()` checks
+2. In [`crates/image-store/src/compat.rs`](https://github.com/unemu-org/unemu/blob/8702727a5f88dae352d095ba456ab0ca5f529c72/crates/image-store/src/compat.rs), replace global `level()` checks
    in `Requirement`, `raised`, `stamp`, `floor` and `carry` with explicit
    component levels and two requirements. Split `envelope`/`shared_release`
    results by owner. Extend `ConfigValidator` in `src/store.rs` beyond its
@@ -228,7 +228,8 @@ change the meaning of an existing key/value (point 4 still applies).
    `src/summary.rs` fields/cache schema for component-specific reasons.
 3. Wire core version/rows and front-end application version through
    `crates/pc-image/src/{compat,provider}.rs`, `crates/platforms/src/` and
-   application composition (`upcli`, `window`). Update `image-registry`
+   the [unemu front end](https://github.com/unemu-org/unemu)'s
+   application composition. Update `image-registry`
    pull/push guards, `recipe/src/compat.rs`, CLI import/template writers
    and library/Remotes readers to use the same pair, before fetching blobs.
    Update machine-images §5.6 when this amendment is accepted.

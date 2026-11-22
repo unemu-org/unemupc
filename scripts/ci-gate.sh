@@ -4,7 +4,7 @@
 set -euo pipefail
 
 usage() {
-    echo 'Usage: bash scripts/ci-gate.sh {devshell|fmt|guard|clippy|deny|tests|fixtures|goldens|recipe-conformance|user-roms}' >&2
+    echo 'Usage: bash scripts/ci-gate.sh {devshell|fmt|guard|clippy|deny|tests|fixtures|goldens|user-roms}' >&2
     exit 2
 }
 
@@ -24,8 +24,8 @@ case "$step" in
     guard)
         gate_command=(bash -uc '
             status=0
+            bash scripts/uid-guard.sh --self-test || status=1
             bash scripts/publication-guard-test.sh && bash scripts/publication-guard.sh || status=1
-            bash scripts/repo-ownership.sh --self-test && bash scripts/repo-ownership.sh || status=1
             nix develop --no-update-lock-file --command bash -euc "
                 cargo fetch --locked
                 bash scripts/crate-boundaries.sh --self-test
@@ -39,7 +39,7 @@ case "$step" in
     clippy)
         gate_command+=(bash -euc '
             cargo clippy --locked --all-targets --all-features -- -D warnings
-            cargo clippy --locked -p window --bin unemu -- -D warnings
+            cargo clippy --locked -p unemupc --bin unemupc -- -D warnings
         ')
         ;;
     deny) gate_command+=(cargo deny --all-features check advisories licenses bans sources) ;;
@@ -51,12 +51,6 @@ case "$step" in
             cargo test --locked --release -p devices
         ')
         ;;
-    recipe-conformance)
-        gate_command+=(cargo run --locked -p window -- recipe conformance
-            crates/pc-image/data/recipes
-            backlog/docs/design/recipe-corpus/kenslab-2.01/kenslab-2.01.media.toml
-            --library vendor/freedos --library vendor)
-        ;;
     fixtures)
         # The goldens gate requires every fixture its tests read. vgabios and
         # unemu-at-bios are built by Nix from their public GitHub repositories
@@ -67,9 +61,6 @@ case "$step" in
         # images. XTIDE runs after them: it exports its
         # source over the network with Subversion, which Nix supplies, so an
         # unreachable server cannot keep the other fixtures from being built.
-        # The FreeDOS 1.4 Floppy Edition runs last for the same reason: its
-        # first run downloads about 330 MB from FreeDOS, GitHub and GitLab,
-        # and with the workflow's cache of its outputs it only re-checks pins.
         # The lane stops at the first failing script; the last header names it.
         gate_command+=(bash -euc '
             echo "== fixtures: vendor/kiselev-bios/fetch.sh"
@@ -78,8 +69,6 @@ case "$step" in
             bash vendor/freedos/fetch.sh
             echo "== fixtures: vendor/test386/fetch.sh"
             bash vendor/test386/fetch.sh
-            echo "== fixtures: vendor/kenslab/fetch-labfull.sh"
-            bash vendor/kenslab/fetch-labfull.sh
             echo "== fixtures: vendor/hdd/build.sh"
             bash vendor/hdd/build.sh
             echo "== fixtures: vendor/vgabios/fetch.sh"
@@ -94,8 +83,6 @@ case "$step" in
             bash vendor/at-privilege-test/build.sh
             echo "== fixtures: vendor/xtide-universal-bios/fetch.sh"
             bash vendor/xtide-universal-bios/fetch.sh
-            echo "== fixtures: vendor/freedos/fetch-floppy-1.4.sh"
-            bash vendor/freedos/fetch-floppy-1.4.sh
         ')
         ;;
     # The tests lane runs before the fixtures exist, so tests that read a

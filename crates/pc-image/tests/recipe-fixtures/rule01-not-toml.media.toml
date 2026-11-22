@@ -1,7 +1,0 @@
-# Rule 1: a file that is not TOML. The value of revision is missing.
-recipe = "1.0"
-
-[media]
-name = "private/media/ibm-pc/demo"
-platform = "ibm-pc"
-revision =

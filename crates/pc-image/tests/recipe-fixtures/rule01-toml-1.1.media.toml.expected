@@ -1,4 +1,0 @@
-rule01-toml-1.1.media.toml:12:21: error[6.11.1] title.description: the escape \x is TOML 1.1 syntax; recipes are TOML 1.0
-rule01-toml-1.1.media.toml:24:27: error[6.11.1] step[1].members[1]: a line break inside an inline table is TOML 1.1 syntax; recipes are TOML 1.0
-rule01-toml-1.1.media.toml:25:25: error[6.11.1] step[1].members[1].time: a time without seconds is TOML 1.1 syntax; recipes are TOML 1.0
-rule01-toml-1.1.media.toml:26:26: error[6.11.1] step[1].members[2]: a comma before the closing brace of an inline table is TOML 1.1 syntax; recipes are TOML 1.0

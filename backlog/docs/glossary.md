@@ -4,6 +4,9 @@ Domain and project terminology. One term per entry. Keep definitions short — l
 
 ## Project
 
+- **unemupc** — the PC core and its standalone command line in this repository.
+- **unemu** — the desktop and command front end, in [its own repository](https://github.com/unemu-org/unemu), with beads prefix `ufe`.
+
 - **LLE** — low-level emulation: modelling hardware at the device/register level
   (vs high-level emulation, which shims APIs).
 - **x86jit** — the external x86 recompiler used as the CPU core; a separate project

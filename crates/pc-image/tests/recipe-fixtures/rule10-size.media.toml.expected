@@ -1,2 +1,0 @@
-rule10-size.media.toml:34:10: error[6.11.10] medium[1].format: `disk` is 737281 bytes; a 720K medium is exactly 737280 bytes
-rule10-size.media.toml:40:10: error[6.11.10] medium[2].format: `files/CD.ISO` is 2049 bytes; an iso-2048 medium is a whole number of 2048-byte sectors, at least one

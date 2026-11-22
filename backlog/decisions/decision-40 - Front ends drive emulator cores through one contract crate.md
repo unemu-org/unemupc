@@ -18,7 +18,7 @@ once unemunes starts and published at 1.0; it is named `unemu-core-api`;
 `machine-file` and the journal half of `media` stay with the PC core for
 now; the PC text rasteriser and its fonts move into the PC adapter. Design
 step of `upc-dfs.24`, with `upc-3bm`. Builds on [[decision-7]]
-(swappability behind traits), [[decision-25]] (machine images in a
+(swappability behind traits), [decision-25 (unemu)](https://github.com/unemu-org/unemu/blob/8702727a5f88dae352d095ba456ab0ca5f529c72/backlog/decisions/decision-25%20-%20Machine%20images%20are%20self-contained%20OCI%20artifacts%20in%20a%20local%20store.md) (machine images in a
 platform-neutral store), [[decision-30]] (the minimum release of an image)
 and [[decision-32]] (platform ids). The inventory of today's coupling, the
 contract's signatures and the ordered steps are in
@@ -107,7 +107,7 @@ in under five minutes.
    with its fonts move below the contract into it. Golden tests keep using
    the emulation crates directly.
 10. **The command line splits in four**: `cli-core` (neutral commands and
-    the provider seam), `cli-pc` (PC provider commands), the `upcli`
+    the provider seam), `cli-pc` (PC provider commands), the [unemu front end](https://github.com/unemu-org/unemu)
     binary, and `pc-harness` (the golden runners and their tests). The
     helpers the desktop takes from `cli` move into the libraries they
     belong to, and `window` stops depending on `cli`. A small `platforms`

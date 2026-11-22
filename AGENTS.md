@@ -15,6 +15,11 @@ x86 recompiler, consumed as a pinned git dependency (see below). It is a
 boots an unmodified open BIOS and FreeDOS from a floppy image, headless and
 deterministic, captured for golden tests.
 
+The core and its standalone program `unemupc` live here. The desktop and
+command front end, including `setup-unemu`, live in
+[unemu](https://github.com/unemu-org/unemu) (beads prefix `ufe`). Core changes
+reach that repository through an exact git revision pin.
+
 The 286 AT is the first machine profile, not the end target. The goal line is
 a period PC that runs Windows 98 SE games on an emulated 3dfx Voodoo, reached
 in four phases, each an epic in beads; Windows XP-era machines are a non-goal

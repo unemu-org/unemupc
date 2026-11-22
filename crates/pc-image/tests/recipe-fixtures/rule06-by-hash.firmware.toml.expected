@@ -1,1 +1,0 @@
-rule06-by-hash.firmware.toml:14:1: error[6.11.6] license: the firmware catalogue lists `ibm-5170-bios-1985-06-10` as user-supplied; its package takes no [license]

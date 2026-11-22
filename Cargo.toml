@@ -12,35 +12,13 @@ members = [
     "crates/audio",
     "crates/assembly",
     "crates/testkit",
-    "crates/cli-core",
-    "crates/cli-pc",
     "crates/unemupc",
-    "crates/upcli",
     "crates/pc-harness",
-    "crates/window",
-    "crates/pc-session-tests",
-    "crates/ui-kit",
-    "crates/library-model",
-    "crates/library-ui",
-    "crates/media-ui",
     "crates/pc-core",
-    "crates/machine-view",
-    "crates/pc-media",
-    "crates/pc-library",
-    "crates/pc-ui",
-    "crates/media",
     "crates/journal",
     "crates/journal-files",
     "crates/machine-file",
     "crates/pc-config",
-    "crates/image-store",
-    "crates/registry",
-    "crates/pc-image",
-    "crates/platforms",
-    "crates/recipe",
-    "crates/test-core",
-    "crates/core-launch",
-    "crates/player-ui",
 ]
 
 [workspace.package]
@@ -49,7 +27,7 @@ edition = "2021"
 license = "AGPL-3.0-or-later"
 rust-version = "1.99"
 repository = "https://github.com/unemu-org/unemupc"
-# Workspace crate names (cpu, bus, device, machine, cli, window, ...) collide
+# Workspace crate names (cpu, bus, device, machine, ...) collide
 # with unrelated crates on crates.io; nothing here is published there.
 publish = false
 
@@ -60,16 +38,10 @@ toml = "1"
 serde-saphyr = { version = "=2.1.1", default-features = false, features = ["deserialize"] }
 # Library error enums (§conventions: thiserror for stable library errors).
 thiserror = "1"
-# Frontend/test-only error plumbing.
+# Command-line and test error plumbing.
 anyhow = "1"
 # SHA-256 for media image identity.
 sha2 = "0.10"
-winit = "0.30"
-egui = { version = "=0.37.0", default-features = false, features = ["default_fonts"] }
-# `clipboard` gives egui-winit the host clipboard (arboard; smithay-clipboard on
-# Wayland) instead of a string that lives only inside the app.
-eframe = { version = "=0.37.0", default-features = false, features = ["accesskit", "clipboard", "default_fonts", "glow", "x11", "wayland"] }
-cpal = "=0.18.2"
 # CPU core: one device read and one device write for exchange and read-modify-write
 # instructions on memory-mapped devices, and RAM/ROM lookups off the hot memory path.
 # Every build and golden trace runs against a known CPU. A bare path dependency breaks
@@ -85,13 +57,6 @@ unemu-core-api = { version = "0.3", git = "https://github.com/unemu-org/unemu-co
 # The contract's storage and content over host files, from the contract's
 # repository at the same revision: it depends on that copy of the contract.
 unemu-core-files = { version = "0.3", git = "https://github.com/unemu-org/unemu-core-api", rev = "afba6e6b217946eb57b9556e79a30bbe53c90fb4" }
-# The NES core, from its own repository at an exact revision built against the
-# same release of the contract as the pin above: one copy of the contract in the
-# build. Moving this pin moves the NES golden's revision too. A bare path
-# dependency breaks nix build and CI; develop against a local checkout through a
-# gitignored [patch] override instead of editing this line.
-unemu-nes-core = { version = "0.0.1", git = "https://github.com/unemu-org/unemunes", rev = "0dbf0d56c627ab62601fca1dcd64ec77f3e4643c" }
-
 # Internal crates share the workspace version.
 assembly = { path = "crates/assembly", version = "0.0.3" }
 device = { path = "crates/device", version = "0.0.3" }
@@ -101,7 +66,6 @@ cpu = { path = "crates/cpu", version = "0.0.3" }
 machine = { path = "crates/machine", version = "0.0.3" }
 machine-file = { path = "crates/machine-file", version = "0.0.3" }
 pc-config = { path = "crates/pc-config", version = "0.0.3" }
-media = { path = "crates/media", version = "0.0.3" }
 journal = { path = "crates/journal", version = "0.0.3" }
 journal-files = { path = "crates/journal-files", version = "0.0.3" }
 devices = { path = "crates/devices", version = "0.0.3" }
@@ -109,7 +73,6 @@ video = { path = "crates/video", version = "0.0.3" }
 audio = { path = "crates/audio", version = "0.0.3" }
 testkit = { path = "crates/testkit", version = "0.0.3" }
 unemu-pc-core = { path = "crates/pc-core", version = "0.0.3" }
-machine-view = { path = "crates/machine-view", version = "0.0.3" }
 
 # Keep hardware preconditions and arithmetic checked even in optimized dev/test code.
 [profile.dev]
@@ -120,7 +83,7 @@ overflow-checks = true
 [profile.dev.package."*"]
 opt-level = 3
 
-# Optimize the emulation loop while leaving frontends and test drivers unoptimized
+# Optimize the emulation loop while leaving host tools and test drivers unoptimized
 # for debugging. The test profile inherits these optimization settings.
 [profile.dev.package.devices]
 opt-level = 3
@@ -141,7 +104,4 @@ opt-level = 3
 opt-level = 3
 
 [profile.dev.package.chipset]
-opt-level = 3
-
-[profile.dev.package.media]
 opt-level = 3

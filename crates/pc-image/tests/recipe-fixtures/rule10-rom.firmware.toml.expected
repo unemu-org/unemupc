@@ -1,4 +1,0 @@
-rule10-rom.firmware.toml:22:8: error[6.11.10] rom[1].from: the catalogue entry `ibm-5170-bios-1985-06-10` has SHA-256 6fb653b58e678cb69b0f943a105c6c803b18a6db23d13c0abccec5b66c6ee652; this ROM has aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-rule10-rom.firmware.toml:33:8: error[6.11.10] rom[2].from: the catalogue entry `unemu-at-bios-1.0.2-unemu.3` is 32768 bytes; this ROM is 65536
-rule10-rom.firmware.toml:39:8: error[6.11.10] rom[3].size: the catalogue entry `unemu-at-bios-1.0.2-unemu.3` is 32768 bytes; this ROM is 65536
-rule10-rom.firmware.toml:40:10: error[6.11.10] rom[3].sha256: the catalogue entry `unemu-at-bios-1.0.2-unemu.3` has SHA-256 6938dc8b665fa120f33775163ab6bacc559389525db87adedf734416f9ef2442; this ROM has bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb

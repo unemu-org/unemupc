@@ -60,13 +60,9 @@ target/
 /vendor/freedos/freedos.img
 /vendor/freedos/freedos-1200.img
 /vendor/freedos/freedos-tools-1200.img
-# FreeDOS 1.4 Floppy Edition: the edition's disks, the release documents, the
-# licence index and the deterministic source archive, written by
-# vendor/freedos/fetch-floppy-1.4.sh (its downloads stay under build/).
+# Local residue from front-end fixtures is never part of the core tree.
 /vendor/freedos/floppy-1.4/
-# Ken's Labyrinth: the author's pinned archive, fetched for recipe conformance.
-/vendor/kenslab/LABFULL.ZIP
-/vendor/kenslab/LABFULL.ZIP.part
+/vendor/kenslab/
 # XTIDE Universal BIOS AT option ROM: pinned download, source export, the
 # padded/checksummed images and their source archive are rebuilt by
 # vendor/xtide-universal-bios/fetch.sh, not checked in.
@@ -124,11 +120,5 @@ target/
 /vendor/ltemm/.extract.*/
 /vendor/ltemm/*.zip
 
-# Third-party shareware: archives, installation floppies, vendor-text extras and
-# anything else a user puts here (unpacked files, other spellings, symlinks)
-# stay local. Only the scripts and their READMEs are tracked.
-/vendor/shareware/**
-!/vendor/shareware/**/
-!/vendor/shareware/common.sh
-!/vendor/shareware/*/fetch.sh
-!/vendor/shareware/*/README.md
+# Local residue from front-end installation media.
+/vendor/shareware/

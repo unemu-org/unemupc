@@ -1,1 +1,0 @@
-rule10-label.media.toml:23:9: error[6.11.10] step[1].label: the 1.44M volume profile refuses the label: the lower-case letter 'a' is not allowed: a label is stored in upper case, so write it as it is on the disk

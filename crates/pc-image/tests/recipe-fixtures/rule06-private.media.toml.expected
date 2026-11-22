@@ -1,1 +1,0 @@
-rule06-private.media.toml:5:8: error[6.11.6] media.name: a recipe without [license] is user-supplied and names its output under private/, not unemu/

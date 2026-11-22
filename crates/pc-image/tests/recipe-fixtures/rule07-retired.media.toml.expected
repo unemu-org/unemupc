@@ -1,1 +1,0 @@
-rule07-retired.media.toml:6:12: error[6.11.7] media.platform: `ibm-pc-at` is a retired platform id; a recipe names its platform ibm-pc

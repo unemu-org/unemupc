@@ -1,1 +1,0 @@
-rule08-lock.media.toml:8:10: error[6.11.8] media.digest: a digest pins a lock, and there is no rule08-lock.media.toml.lock beside the recipe

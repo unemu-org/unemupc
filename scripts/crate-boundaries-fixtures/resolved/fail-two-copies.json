@@ -40,7 +40,7 @@
       "manifest_path": "/cargo/git/checkouts/other-core-0000/3333333/Cargo.toml"
     },
     {
-      "name": "platforms",
+      "name": "host-platforms",
       "version": "0.0.2",
       "id": "path+file:///workspace/crates/platforms#0.0.2",
       "source": null,

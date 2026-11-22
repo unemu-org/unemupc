@@ -3,4 +3,3 @@
 # dependency (normal, build or dev) that leads to TO. A stale entry fails:
 # delete a line when its crossing is gone.
 # See backlog/docs/design/core-contract.md §7.4 and §9.
-window → upcli (normal): the application binary composes desktop options and command words; UI libraries still cannot depend on command-line crates (§12.13 Q1)

@@ -1,1 +1,0 @@
-rule07-platform.media.toml:7:12: error[6.11.7] media.platform: no provider of platform `nes` in this build; it has ibm-pc

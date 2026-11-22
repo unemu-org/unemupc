@@ -1,839 +1,847 @@
 {
   "packages": [
     {
-      "name": "device",
-      "id": "path+file:///workspace/crates/device#0.0.2",
-      "manifest_path": "/workspace/crates/device/Cargo.toml",
-      "dependencies": []
-    },
-    {
-      "name": "bus",
-      "id": "path+file:///workspace/crates/bus#0.0.2",
-      "manifest_path": "/workspace/crates/bus/Cargo.toml",
+      "name": "assembly",
+      "id": "path+file:///workspace/crates/assembly#0.0.3",
       "dependencies": [
         {
-          "name": "device",
+          "name": "audio",
+          "source": null,
           "kind": null,
-          "path": "/workspace/crates/device"
-        }
-      ]
-    },
-    {
-      "name": "chipset",
-      "id": "path+file:///workspace/crates/chipset#0.0.2",
-      "manifest_path": "/workspace/crates/chipset/Cargo.toml",
-      "dependencies": [
-        {
-          "name": "device",
-          "kind": null,
-          "path": "/workspace/crates/device"
+          "path": "/workspace/crates/audio"
         },
-        {
-          "name": "devices",
-          "kind": null,
-          "path": "/workspace/crates/devices"
-        },
-        {
-          "name": "testkit",
-          "kind": "dev",
-          "path": "/workspace/crates/testkit"
-        }
-      ]
-    },
-    {
-      "name": "devices",
-      "id": "path+file:///workspace/crates/devices#0.0.2",
-      "manifest_path": "/workspace/crates/devices/Cargo.toml",
-      "dependencies": [
-        {
-          "name": "device",
-          "kind": null,
-          "path": "/workspace/crates/device"
-        },
-        {
-          "name": "testkit",
-          "kind": "dev",
-          "path": "/workspace/crates/testkit"
-        },
-        {
-          "name": "video",
-          "kind": "dev",
-          "path": "/workspace/crates/video"
-        }
-      ]
-    },
-    {
-      "name": "testkit",
-      "id": "path+file:///workspace/crates/testkit#0.0.2",
-      "manifest_path": "/workspace/crates/testkit/Cargo.toml",
-      "dependencies": [
-        {
-          "name": "cpu",
-          "kind": null,
-          "path": "/workspace/crates/cpu"
-        },
-        {
-          "name": "device",
-          "kind": null,
-          "path": "/workspace/crates/device"
-        }
-      ]
-    },
-    {
-      "name": "cpu",
-      "id": "path+file:///workspace/crates/cpu#0.0.2",
-      "manifest_path": "/workspace/crates/cpu/Cargo.toml",
-      "dependencies": []
-    },
-    {
-      "name": "video",
-      "id": "path+file:///workspace/crates/video#0.0.2",
-      "manifest_path": "/workspace/crates/video/Cargo.toml",
-      "dependencies": [
-        {
-          "name": "device",
-          "kind": null,
-          "path": "/workspace/crates/device"
-        }
-      ]
-    },
-    {
-      "name": "machine",
-      "id": "path+file:///workspace/crates/machine#0.0.2",
-      "manifest_path": "/workspace/crates/machine/Cargo.toml",
-      "dependencies": [
         {
           "name": "bus",
+          "source": null,
           "kind": null,
           "path": "/workspace/crates/bus"
         },
         {
+          "name": "chipset",
+          "source": null,
+          "kind": null,
+          "path": "/workspace/crates/chipset"
+        },
+        {
           "name": "cpu",
+          "source": null,
           "kind": null,
           "path": "/workspace/crates/cpu"
         },
         {
           "name": "device",
+          "source": null,
           "kind": null,
           "path": "/workspace/crates/device"
         },
         {
-          "name": "chipset",
-          "kind": "dev",
-          "path": "/workspace/crates/chipset"
-        },
-        {
           "name": "devices",
-          "kind": "dev",
+          "source": null,
+          "kind": null,
           "path": "/workspace/crates/devices"
         },
         {
+          "name": "journal",
+          "source": null,
+          "kind": null,
+          "path": "/workspace/crates/journal"
+        },
+        {
+          "name": "machine",
+          "source": null,
+          "kind": null,
+          "path": "/workspace/crates/machine"
+        },
+        {
+          "name": "sha2",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "kind": null
+        },
+        {
+          "name": "thiserror",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "kind": null
+        },
+        {
+          "name": "unemu-core-api",
+          "source": "git+https://github.com/unemu-org/unemu-core-api?rev=afba6e6b217946eb57b9556e79a30bbe53c90fb4",
+          "kind": null
+        },
+        {
+          "name": "video",
+          "source": null,
+          "kind": null,
+          "path": "/workspace/crates/video"
+        },
+        {
+          "name": "journal",
+          "source": null,
+          "kind": "dev",
+          "path": "/workspace/crates/journal"
+        },
+        {
           "name": "testkit",
+          "source": null,
           "kind": "dev",
           "path": "/workspace/crates/testkit"
+        },
+        {
+          "name": "unemu-core-api",
+          "source": "git+https://github.com/unemu-org/unemu-core-api?rev=afba6e6b217946eb57b9556e79a30bbe53c90fb4",
+          "kind": "dev"
         }
-      ]
+      ],
+      "manifest_path": "/workspace/crates/assembly/Cargo.toml"
     },
     {
       "name": "audio",
-      "id": "path+file:///workspace/crates/audio#0.0.2",
-      "manifest_path": "/workspace/crates/audio/Cargo.toml",
+      "id": "path+file:///workspace/crates/audio#0.0.3",
       "dependencies": [
         {
           "name": "device",
+          "source": null,
           "kind": null,
           "path": "/workspace/crates/device"
-        }
-      ]
-    },
-    {
-      "name": "assembly",
-      "id": "path+file:///workspace/crates/assembly#0.0.2",
-      "manifest_path": "/workspace/crates/assembly/Cargo.toml",
-      "dependencies": [
-        {
-          "name": "audio",
-          "kind": null,
-          "path": "/workspace/crates/audio"
         },
         {
+          "name": "thiserror",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "kind": null
+        }
+      ],
+      "manifest_path": "/workspace/crates/audio/Cargo.toml"
+    },
+    {
+      "name": "bus",
+      "id": "path+file:///workspace/crates/bus#0.0.3",
+      "dependencies": [
+        {
+          "name": "device",
+          "source": null,
+          "kind": null,
+          "path": "/workspace/crates/device"
+        },
+        {
+          "name": "thiserror",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "kind": null
+        }
+      ],
+      "manifest_path": "/workspace/crates/bus/Cargo.toml"
+    },
+    {
+      "name": "chipset",
+      "id": "path+file:///workspace/crates/chipset#0.0.3",
+      "dependencies": [
+        {
+          "name": "device",
+          "source": null,
+          "kind": null,
+          "path": "/workspace/crates/device"
+        },
+        {
+          "name": "devices",
+          "source": null,
+          "kind": null,
+          "path": "/workspace/crates/devices"
+        },
+        {
+          "name": "testkit",
+          "source": null,
+          "kind": "dev",
+          "path": "/workspace/crates/testkit"
+        }
+      ],
+      "manifest_path": "/workspace/crates/chipset/Cargo.toml"
+    },
+    {
+      "name": "cpu",
+      "id": "path+file:///workspace/crates/cpu#0.0.3",
+      "dependencies": [
+        {
+          "name": "thiserror",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "kind": null
+        },
+        {
+          "name": "x86jit-core",
+          "source": "git+https://github.com/unemu-org/x86jit?rev=6cb817b86c1fbf463f7aab8c0da1ce0eec3db0b7",
+          "kind": null
+        }
+      ],
+      "manifest_path": "/workspace/crates/cpu/Cargo.toml"
+    },
+    {
+      "name": "device",
+      "id": "path+file:///workspace/crates/device#0.0.3",
+      "dependencies": [
+        {
+          "name": "thiserror",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "kind": null
+        }
+      ],
+      "manifest_path": "/workspace/crates/device/Cargo.toml"
+    },
+    {
+      "name": "devices",
+      "id": "path+file:///workspace/crates/devices#0.0.3",
+      "dependencies": [
+        {
+          "name": "device",
+          "source": null,
+          "kind": null,
+          "path": "/workspace/crates/device"
+        },
+        {
+          "name": "thiserror",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "kind": null
+        },
+        {
+          "name": "testkit",
+          "source": null,
+          "kind": "dev",
+          "path": "/workspace/crates/testkit"
+        },
+        {
+          "name": "video",
+          "source": null,
+          "kind": "dev",
+          "path": "/workspace/crates/video"
+        }
+      ],
+      "manifest_path": "/workspace/crates/devices/Cargo.toml"
+    },
+    {
+      "name": "journal",
+      "id": "path+file:///workspace/crates/journal#0.0.3",
+      "dependencies": [
+        {
+          "name": "sha2",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "kind": null
+        },
+        {
+          "name": "thiserror",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "kind": null
+        },
+        {
+          "name": "unemu-core-api",
+          "source": "git+https://github.com/unemu-org/unemu-core-api?rev=afba6e6b217946eb57b9556e79a30bbe53c90fb4",
+          "kind": null
+        },
+        {
+          "name": "unemu-core-api",
+          "source": "git+https://github.com/unemu-org/unemu-core-api?rev=afba6e6b217946eb57b9556e79a30bbe53c90fb4",
+          "kind": "dev"
+        }
+      ],
+      "manifest_path": "/workspace/crates/journal/Cargo.toml"
+    },
+    {
+      "name": "journal-files",
+      "id": "path+file:///workspace/crates/journal-files#0.0.3",
+      "dependencies": [
+        {
+          "name": "journal",
+          "source": null,
+          "kind": null,
+          "path": "/workspace/crates/journal"
+        },
+        {
+          "name": "serde",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "kind": null
+        },
+        {
+          "name": "sha2",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "kind": null
+        },
+        {
+          "name": "thiserror",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "kind": null
+        },
+        {
+          "name": "toml",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "kind": null
+        },
+        {
+          "name": "unemu-core-api",
+          "source": "git+https://github.com/unemu-org/unemu-core-api?rev=afba6e6b217946eb57b9556e79a30bbe53c90fb4",
+          "kind": null
+        },
+        {
+          "name": "unemu-core-files",
+          "source": "git+https://github.com/unemu-org/unemu-core-api?rev=afba6e6b217946eb57b9556e79a30bbe53c90fb4",
+          "kind": null
+        },
+        {
+          "name": "unemu-core-api",
+          "source": "git+https://github.com/unemu-org/unemu-core-api?rev=afba6e6b217946eb57b9556e79a30bbe53c90fb4",
+          "kind": "dev"
+        },
+        {
+          "name": "libc",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "kind": null
+        }
+      ],
+      "manifest_path": "/workspace/crates/journal-files/Cargo.toml"
+    },
+    {
+      "name": "machine",
+      "id": "path+file:///workspace/crates/machine#0.0.3",
+      "dependencies": [
+        {
           "name": "bus",
+          "source": null,
           "kind": null,
           "path": "/workspace/crates/bus"
         },
         {
-          "name": "chipset",
+          "name": "cpu",
+          "source": null,
           "kind": null,
+          "path": "/workspace/crates/cpu"
+        },
+        {
+          "name": "device",
+          "source": null,
+          "kind": null,
+          "path": "/workspace/crates/device"
+        },
+        {
+          "name": "thiserror",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "kind": null
+        },
+        {
+          "name": "chipset",
+          "source": null,
+          "kind": "dev",
           "path": "/workspace/crates/chipset"
         },
         {
-          "name": "cpu",
-          "kind": null,
-          "path": "/workspace/crates/cpu"
-        },
-        {
-          "name": "device",
-          "kind": null,
-          "path": "/workspace/crates/device"
-        },
-        {
           "name": "devices",
-          "kind": null,
-          "path": "/workspace/crates/devices"
-        },
-        {
-          "name": "machine",
-          "kind": null,
-          "path": "/workspace/crates/machine"
-        },
-        {
-          "name": "media",
-          "kind": null,
-          "path": "/workspace/crates/media"
-        },
-        {
-          "name": "video",
-          "kind": null,
-          "path": "/workspace/crates/video"
-        },
-        {
-          "name": "media",
+          "source": null,
           "kind": "dev",
-          "path": "/workspace/crates/media"
+          "path": "/workspace/crates/devices"
         },
         {
           "name": "testkit",
+          "source": null,
           "kind": "dev",
           "path": "/workspace/crates/testkit"
         }
-      ]
-    },
-    {
-      "name": "media",
-      "id": "path+file:///workspace/crates/media#0.0.2",
-      "manifest_path": "/workspace/crates/media/Cargo.toml",
-      "dependencies": []
-    },
-    {
-      "name": "cli-core",
-      "id": "path+file:///workspace/crates/cli-core#0.0.2",
-      "manifest_path": "/workspace/crates/cli-core/Cargo.toml",
-      "dependencies": [
-        {
-          "name": "image-registry",
-          "kind": null,
-          "path": "/workspace/crates/registry"
-        },
-        {
-          "name": "image-store",
-          "kind": null,
-          "path": "/workspace/crates/image-store"
-        },
-        {
-          "name": "media",
-          "kind": null,
-          "path": "/workspace/crates/media"
-        },
-        {
-          "name": "image-registry",
-          "kind": "dev",
-          "path": "/workspace/crates/registry"
-        }
-      ]
-    },
-    {
-      "name": "cli-pc",
-      "id": "path+file:///workspace/crates/cli-pc#0.0.2",
-      "manifest_path": "/workspace/crates/cli-pc/Cargo.toml",
-      "dependencies": [
-        {"name": "unemupc", "kind": null, "path": "/workspace/crates/unemupc"},
-        {
-          "name": "assembly",
-          "kind": null,
-          "path": "/workspace/crates/assembly"
-        },
-        {
-          "name": "cli-core",
-          "kind": null,
-          "path": "/workspace/crates/cli-core"
-        },
-        {
-          "name": "device",
-          "kind": null,
-          "path": "/workspace/crates/device"
-        },
-        {
-          "name": "image-registry",
-          "kind": null,
-          "path": "/workspace/crates/registry"
-        },
-        {
-          "name": "image-store",
-          "kind": null,
-          "path": "/workspace/crates/image-store"
-        },
-        {
-          "name": "machine",
-          "kind": null,
-          "path": "/workspace/crates/machine"
-        },
-        {
-          "name": "machine-file",
-          "kind": null,
-          "path": "/workspace/crates/machine-file"
-        },
-        {
-          "name": "media",
-          "kind": null,
-          "path": "/workspace/crates/media"
-        },
-        {
-          "name": "pc-harness",
-          "kind": null,
-          "path": "/workspace/crates/pc-harness"
-        },
-        {
-          "name": "pc-image",
-          "kind": null,
-          "path": "/workspace/crates/pc-image"
-        },
-        {
-          "name": "video",
-          "kind": null,
-          "path": "/workspace/crates/video"
-        },
-        {
-          "name": "assembly",
-          "kind": "dev",
-          "path": "/workspace/crates/assembly"
-        },
-        {
-          "name": "cpu",
-          "kind": "dev",
-          "path": "/workspace/crates/cpu"
-        },
-        {
-          "name": "devices",
-          "kind": "dev",
-          "path": "/workspace/crates/devices"
-        },
-        {
-          "name": "image-registry",
-          "kind": "dev",
-          "path": "/workspace/crates/registry"
-        },
-        {
-          "name": "image-store",
-          "kind": "dev",
-          "path": "/workspace/crates/image-store"
-        },
-        {
-          "name": "media",
-          "kind": "dev",
-          "path": "/workspace/crates/media"
-        }
-      ]
-    },
-    {
-      "name": "upcli",
-      "id": "path+file:///workspace/crates/upcli#0.0.2",
-      "manifest_path": "/workspace/crates/upcli/Cargo.toml",
-      "dependencies": [
-        {
-          "name": "assembly",
-          "kind": null,
-          "path": "/workspace/crates/assembly"
-        },
-        {
-          "name": "cli-core",
-          "kind": null,
-          "path": "/workspace/crates/cli-core"
-        },
-        {
-          "name": "cli-pc",
-          "kind": null,
-          "path": "/workspace/crates/cli-pc"
-        },
-        {
-          "name": "devices",
-          "kind": null,
-          "path": "/workspace/crates/devices"
-        },
-        {
-          "name": "image-store",
-          "kind": null,
-          "path": "/workspace/crates/image-store"
-        },
-        {
-          "name": "platforms",
-          "kind": null,
-          "path": "/workspace/crates/platforms"
-        },
-        {
-          "name": "cpu",
-          "kind": "dev",
-          "path": "/workspace/crates/cpu"
-        },
-        {
-          "name": "image-registry",
-          "kind": "dev",
-          "path": "/workspace/crates/registry"
-        },
-        {
-          "name": "machine",
-          "kind": "dev",
-          "path": "/workspace/crates/machine"
-        },
-        {
-          "name": "pc-harness",
-          "kind": "dev",
-          "path": "/workspace/crates/pc-harness"
-        },
-        {
-          "name": "pc-image",
-          "kind": "dev",
-          "path": "/workspace/crates/pc-image"
-        }
-      ]
-    },
-    {
-      "name": "image-registry",
-      "id": "path+file:///workspace/crates/registry#image-registry@0.0.2",
-      "manifest_path": "/workspace/crates/registry/Cargo.toml",
-      "dependencies": [
-        {
-          "name": "image-store",
-          "kind": null,
-          "path": "/workspace/crates/image-store"
-        },
-        {
-          "name": "image-store",
-          "kind": "dev",
-          "path": "/workspace/crates/image-store"
-        }
-      ]
-    },
-    {
-      "name": "image-store",
-      "id": "path+file:///workspace/crates/image-store#0.0.2",
-      "manifest_path": "/workspace/crates/image-store/Cargo.toml",
-      "dependencies": []
+      ],
+      "manifest_path": "/workspace/crates/machine/Cargo.toml"
     },
     {
       "name": "machine-file",
-      "id": "path+file:///workspace/crates/machine-file#0.0.2",
-      "manifest_path": "/workspace/crates/machine-file/Cargo.toml",
+      "id": "path+file:///workspace/crates/machine-file#0.0.3",
       "dependencies": [
         {
           "name": "assembly",
+          "source": null,
           "kind": null,
           "path": "/workspace/crates/assembly"
         },
         {
-          "name": "image-store",
+          "name": "cpu",
+          "source": null,
           "kind": null,
-          "path": "/workspace/crates/image-store"
+          "path": "/workspace/crates/cpu"
         },
         {
-          "name": "media",
+          "name": "devices",
+          "source": null,
           "kind": null,
-          "path": "/workspace/crates/media"
+          "path": "/workspace/crates/devices"
+        },
+        {
+          "name": "journal",
+          "source": null,
+          "kind": null,
+          "path": "/workspace/crates/journal"
+        },
+        {
+          "name": "journal-files",
+          "source": null,
+          "kind": null,
+          "path": "/workspace/crates/journal-files"
+        },
+        {
+          "name": "pc-config",
+          "source": null,
+          "kind": null,
+          "path": "/workspace/crates/pc-config"
+        },
+        {
+          "name": "serde",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "kind": null
+        },
+        {
+          "name": "serde-saphyr",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "kind": null
+        },
+        {
+          "name": "sha2",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "kind": null
+        },
+        {
+          "name": "thiserror",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "kind": null
+        },
+        {
+          "name": "toml",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "kind": null
+        },
+        {
+          "name": "unemu-core-api",
+          "source": "git+https://github.com/unemu-org/unemu-core-api?rev=afba6e6b217946eb57b9556e79a30bbe53c90fb4",
+          "kind": null
         },
         {
           "name": "assembly",
+          "source": null,
           "kind": "dev",
           "path": "/workspace/crates/assembly"
+        },
+        {
+          "name": "audio",
+          "source": null,
+          "kind": "dev",
+          "path": "/workspace/crates/audio"
+        },
+        {
+          "name": "bus",
+          "source": null,
+          "kind": "dev",
+          "path": "/workspace/crates/bus"
+        },
+        {
+          "name": "chipset",
+          "source": null,
+          "kind": "dev",
+          "path": "/workspace/crates/chipset"
+        },
+        {
+          "name": "cpu",
+          "source": null,
+          "kind": "dev",
+          "path": "/workspace/crates/cpu"
+        },
+        {
+          "name": "device",
+          "source": null,
+          "kind": "dev",
+          "path": "/workspace/crates/device"
+        },
+        {
+          "name": "devices",
+          "source": null,
+          "kind": "dev",
+          "path": "/workspace/crates/devices"
+        },
+        {
+          "name": "journal-files",
+          "source": null,
+          "kind": "dev",
+          "path": "/workspace/crates/journal-files"
         },
         {
           "name": "machine",
+          "source": null,
           "kind": "dev",
           "path": "/workspace/crates/machine"
+        },
+        {
+          "name": "machine-file",
+          "source": null,
+          "kind": "dev",
+          "path": "/workspace/crates/machine-file"
+        },
+        {
+          "name": "pc-config",
+          "source": null,
+          "kind": "dev",
+          "path": "/workspace/crates/pc-config"
+        },
+        {
+          "name": "testkit",
+          "source": null,
+          "kind": "dev",
+          "path": "/workspace/crates/testkit"
+        },
+        {
+          "name": "unemu-core-api",
+          "source": "git+https://github.com/unemu-org/unemu-core-api?rev=afba6e6b217946eb57b9556e79a30bbe53c90fb4",
+          "kind": "dev"
+        },
+        {
+          "name": "video",
+          "source": null,
+          "kind": "dev",
+          "path": "/workspace/crates/video"
         }
-      ]
+      ],
+      "manifest_path": "/workspace/crates/machine-file/Cargo.toml"
     },
     {
-      "name": "pc-harness",
-      "id": "path+file:///workspace/crates/pc-harness#0.0.2",
-      "manifest_path": "/workspace/crates/pc-harness/Cargo.toml",
+      "name": "pc-config",
+      "id": "path+file:///workspace/crates/pc-config#0.0.3",
       "dependencies": [
         {
           "name": "assembly",
+          "source": null,
+          "kind": null,
+          "path": "/workspace/crates/assembly"
+        },
+        {
+          "name": "serde",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "kind": null
+        },
+        {
+          "name": "sha2",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "kind": null
+        },
+        {
+          "name": "thiserror",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "kind": null
+        },
+        {
+          "name": "toml",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "kind": null
+        },
+        {
+          "name": "unemu-core-api",
+          "source": "git+https://github.com/unemu-org/unemu-core-api?rev=afba6e6b217946eb57b9556e79a30bbe53c90fb4",
+          "kind": null
+        }
+      ],
+      "manifest_path": "/workspace/crates/pc-config/Cargo.toml"
+    },
+    {
+      "name": "pc-harness",
+      "id": "path+file:///workspace/crates/pc-harness#0.0.3",
+      "dependencies": [
+        {
+          "name": "anyhow",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "kind": null
+        },
+        {
+          "name": "assembly",
+          "source": null,
           "kind": null,
           "path": "/workspace/crates/assembly"
         },
         {
           "name": "chipset",
+          "source": null,
           "kind": null,
           "path": "/workspace/crates/chipset"
         },
         {
           "name": "cpu",
+          "source": null,
           "kind": null,
           "path": "/workspace/crates/cpu"
         },
         {
           "name": "device",
+          "source": null,
           "kind": null,
           "path": "/workspace/crates/device"
         },
         {
           "name": "devices",
+          "source": null,
           "kind": null,
           "path": "/workspace/crates/devices"
         },
         {
+          "name": "journal-files",
+          "source": null,
+          "kind": null,
+          "path": "/workspace/crates/journal-files"
+        },
+        {
           "name": "machine",
+          "source": null,
           "kind": null,
           "path": "/workspace/crates/machine"
         },
         {
+          "name": "machine-file",
+          "source": null,
+          "kind": null,
+          "path": "/workspace/crates/machine-file"
+        },
+        {
           "name": "video",
+          "source": null,
           "kind": null,
           "path": "/workspace/crates/video"
         },
         {
           "name": "assembly",
+          "source": null,
           "kind": "dev",
           "path": "/workspace/crates/assembly"
         },
         {
           "name": "bus",
+          "source": null,
           "kind": "dev",
           "path": "/workspace/crates/bus"
         },
         {
           "name": "machine",
+          "source": null,
           "kind": "dev",
           "path": "/workspace/crates/machine"
         },
         {
           "name": "machine-file",
+          "source": null,
           "kind": "dev",
           "path": "/workspace/crates/machine-file"
         },
         {
           "name": "testkit",
+          "source": null,
           "kind": "dev",
           "path": "/workspace/crates/testkit"
+        },
+        {
+          "name": "toml",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "kind": "dev"
         }
-      ]
+      ],
+      "manifest_path": "/workspace/crates/pc-harness/Cargo.toml"
     },
     {
-      "name": "pc-image",
-      "id": "path+file:///workspace/crates/pc-image#0.0.2",
-      "manifest_path": "/workspace/crates/pc-image/Cargo.toml",
+      "name": "testkit",
+      "id": "path+file:///workspace/crates/testkit#0.0.3",
       "dependencies": [
-        {
-          "name": "assembly",
-          "kind": null,
-          "path": "/workspace/crates/assembly"
-        },
-        {
-          "name": "image-store",
-          "kind": null,
-          "path": "/workspace/crates/image-store"
-        },
-        {
-          "name": "machine-file",
-          "kind": null,
-          "path": "/workspace/crates/machine-file"
-        },
-        {
-          "name": "media",
-          "kind": null,
-          "path": "/workspace/crates/media"
-        },
         {
           "name": "cpu",
-          "kind": "dev",
+          "source": null,
+          "kind": null,
           "path": "/workspace/crates/cpu"
-        },
-        {
-          "name": "image-registry",
-          "kind": "dev",
-          "path": "/workspace/crates/registry"
-        },
-        {
-          "name": "image-store",
-          "kind": "dev",
-          "path": "/workspace/crates/image-store"
-        },
-        {
-          "name": "machine",
-          "kind": "dev",
-          "path": "/workspace/crates/machine"
-        },
-        {
-          "name": "media",
-          "kind": "dev",
-          "path": "/workspace/crates/media"
-        }
-      ]
-    },
-    {
-      "name": "platforms",
-      "id": "path+file:///workspace/crates/platforms#0.0.2",
-      "manifest_path": "/workspace/crates/platforms/Cargo.toml",
-      "dependencies": [
-        {
-          "name": "assembly",
-          "kind": null,
-          "path": "/workspace/crates/assembly"
-        },
-        {
-          "name": "image-registry",
-          "kind": null,
-          "path": "/workspace/crates/registry"
-        },
-        {
-          "name": "image-store",
-          "kind": null,
-          "path": "/workspace/crates/image-store"
-        },
-        {
-          "name": "pc-image",
-          "kind": null,
-          "path": "/workspace/crates/pc-image"
-        }
-      ]
-    },
-    {
-      "name": "window",
-      "id": "path+file:///workspace/crates/window#0.0.2",
-      "manifest_path": "/workspace/crates/window/Cargo.toml",
-      "dependencies": [
-        {
-          "name": "upcli",
-          "kind": null,
-          "path": "/workspace/crates/upcli"
-        },
-        {
-          "name": "assembly",
-          "kind": null,
-          "path": "/workspace/crates/assembly"
-        },
-        {
-          "name": "audio",
-          "kind": null,
-          "path": "/workspace/crates/audio"
         },
         {
           "name": "device",
+          "source": null,
           "kind": null,
           "path": "/workspace/crates/device"
-        },
-        {
-          "name": "devices",
-          "kind": null,
-          "path": "/workspace/crates/devices"
-        },
-        {
-          "name": "image-registry",
-          "kind": null,
-          "path": "/workspace/crates/registry"
-        },
-        {
-          "name": "image-store",
-          "kind": null,
-          "path": "/workspace/crates/image-store"
-        },
-        {
-          "name": "machine",
-          "kind": null,
-          "path": "/workspace/crates/machine"
-        },
-        {
-          "name": "machine-file",
-          "kind": null,
-          "path": "/workspace/crates/machine-file"
-        },
-        {
-          "name": "media",
-          "kind": null,
-          "path": "/workspace/crates/media"
-        },
-        {
-          "name": "pc-image",
-          "kind": null,
-          "path": "/workspace/crates/pc-image"
-        },
-        {
-          "name": "platforms",
-          "kind": null,
-          "path": "/workspace/crates/platforms"
-        },
-        {
-          "name": "video",
-          "kind": null,
-          "path": "/workspace/crates/video"
-        },
-        {
-          "name": "assembly",
-          "kind": "dev",
-          "path": "/workspace/crates/assembly"
-        },
-        {
-          "name": "cpu",
-          "kind": "dev",
-          "path": "/workspace/crates/cpu"
-        },
-        {
-          "name": "image-registry",
-          "kind": "dev",
-          "path": "/workspace/crates/registry"
-        },
-        {
-          "name": "image-store",
-          "kind": "dev",
-          "path": "/workspace/crates/image-store"
-        },
-        {
-          "name": "media",
-          "kind": "dev",
-          "path": "/workspace/crates/media"
-        },
-        {
-          "name": "pc-image",
-          "kind": "dev",
-          "path": "/workspace/crates/pc-image"
-        },
-        {
-          "name": "ui-kit",
-          "kind": null,
-          "path": "/workspace/crates/ui-kit"
-        },
-        {
-          "name": "ui-kit",
-          "kind": "dev",
-          "path": "/workspace/crates/ui-kit"
-        },
-        {
-          "name": "machine-view",
-          "kind": null,
-          "path": "/workspace/crates/machine-view"
-        },
-        {
-          "name": "unemu-core-api",
-          "kind": null,
-          "source": "git+https://github.com/unemu-org/unemu-core-api?rev=4e2dd8325b54ce652bf4884fd85da602b14ae726#4e2dd8325b54ce652bf4884fd85da602b14ae726"
-        },
-        {
-          "name": "unemu-pc-core",
-          "kind": null,
-          "path": "/workspace/crates/pc-core"
         }
-      ]
-    },
-    {
-      "name": "ui-kit",
-      "id": "path+file:///workspace/crates/ui-kit#0.0.2",
-      "manifest_path": "/workspace/crates/ui-kit/Cargo.toml",
-      "dependencies": []
+      ],
+      "manifest_path": "/workspace/crates/testkit/Cargo.toml"
     },
     {
       "name": "unemu-pc-core",
-      "id": "path+file:///workspace/crates/pc-core#0.0.2",
-      "manifest_path": "/workspace/crates/pc-core/Cargo.toml",
+      "id": "path+file:///workspace/crates/pc-core#unemu-pc-core@0.0.3",
       "dependencies": [
         {
-          "name": "unemu-core-api",
-          "kind": null,
-          "source": "git+https://github.com/unemu-org/unemu-core-api?rev=4e2dd8325b54ce652bf4884fd85da602b14ae726#4e2dd8325b54ce652bf4884fd85da602b14ae726"
-        },
-        {
           "name": "assembly",
+          "source": null,
           "kind": null,
           "path": "/workspace/crates/assembly"
         },
         {
           "name": "audio",
+          "source": null,
           "kind": null,
           "path": "/workspace/crates/audio"
         },
         {
+          "name": "cpu",
+          "source": null,
+          "kind": null,
+          "path": "/workspace/crates/cpu"
+        },
+        {
           "name": "device",
+          "source": null,
           "kind": null,
           "path": "/workspace/crates/device"
         },
         {
           "name": "devices",
+          "source": null,
           "kind": null,
           "path": "/workspace/crates/devices"
         },
         {
           "name": "machine",
+          "source": null,
           "kind": null,
           "path": "/workspace/crates/machine"
         },
         {
-          "name": "video",
+          "name": "pc-config",
+          "source": null,
           "kind": null,
-          "path": "/workspace/crates/video"
-        }
-      ]
-    },
-    {
-      "name": "machine-view",
-      "id": "path+file:///workspace/crates/machine-view#0.0.2",
-      "manifest_path": "/workspace/crates/machine-view/Cargo.toml",
-      "dependencies": [
+          "path": "/workspace/crates/pc-config"
+        },
         {
           "name": "unemu-core-api",
+          "source": "git+https://github.com/unemu-org/unemu-core-api?rev=afba6e6b217946eb57b9556e79a30bbe53c90fb4",
+          "kind": null
+        },
+        {
+          "name": "video",
+          "source": null,
           "kind": null,
-          "source": "git+https://github.com/unemu-org/unemu-core-api?rev=4e2dd8325b54ce652bf4884fd85da602b14ae726#4e2dd8325b54ce652bf4884fd85da602b14ae726"
+          "path": "/workspace/crates/video"
+        },
+        {
+          "name": "assembly",
+          "source": null,
+          "kind": "dev",
+          "path": "/workspace/crates/assembly"
+        },
+        {
+          "name": "unemu-core-api",
+          "source": "git+https://github.com/unemu-org/unemu-core-api?rev=afba6e6b217946eb57b9556e79a30bbe53c90fb4",
+          "kind": "dev"
         }
-      ]
+      ],
+      "manifest_path": "/workspace/crates/pc-core/Cargo.toml"
     },
     {
-      "name": "pc-session-tests",
-      "id": "path+file:///workspace/crates/pc-session-tests#0.0.2",
-      "manifest_path": "/workspace/crates/pc-session-tests/Cargo.toml",
+      "name": "unemupc",
+      "id": "path+file:///workspace/crates/unemupc#0.0.3",
       "dependencies": [
         {
-          "name": "machine-view",
-          "kind": "dev",
-          "path": "/workspace/crates/machine-view"
+          "name": "anyhow",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "kind": null
+        },
+        {
+          "name": "assembly",
+          "source": null,
+          "kind": null,
+          "path": "/workspace/crates/assembly"
+        },
+        {
+          "name": "device",
+          "source": null,
+          "kind": null,
+          "path": "/workspace/crates/device"
+        },
+        {
+          "name": "journal-files",
+          "source": null,
+          "kind": null,
+          "path": "/workspace/crates/journal-files"
+        },
+        {
+          "name": "machine",
+          "source": null,
+          "kind": null,
+          "path": "/workspace/crates/machine"
+        },
+        {
+          "name": "machine-file",
+          "source": null,
+          "kind": null,
+          "path": "/workspace/crates/machine-file"
+        },
+        {
+          "name": "pc-harness",
+          "source": null,
+          "kind": null,
+          "path": "/workspace/crates/pc-harness"
+        },
+        {
+          "name": "unemu-core-api",
+          "source": "git+https://github.com/unemu-org/unemu-core-api?rev=afba6e6b217946eb57b9556e79a30bbe53c90fb4",
+          "kind": null
         },
         {
           "name": "unemu-pc-core",
-          "kind": "dev",
+          "source": null,
+          "kind": null,
           "path": "/workspace/crates/pc-core"
+        },
+        {
+          "name": "video",
+          "source": null,
+          "kind": null,
+          "path": "/workspace/crates/video"
+        },
+        {
+          "name": "assembly",
+          "source": null,
+          "kind": "dev",
+          "path": "/workspace/crates/assembly"
+        },
+        {
+          "name": "cpu",
+          "source": null,
+          "kind": "dev",
+          "path": "/workspace/crates/cpu"
+        },
+        {
+          "name": "machine-file",
+          "source": null,
+          "kind": "dev",
+          "path": "/workspace/crates/machine-file"
         }
-      ]
+      ],
+      "manifest_path": "/workspace/crates/unemupc/Cargo.toml"
     },
-    {"name": "journal", "id": "path+file:///workspace/crates/journal#0.0.2", "manifest_path": "/workspace/crates/journal/Cargo.toml", "dependencies": []},
-    {"name": "journal-files", "id": "path+file:///workspace/crates/journal-files#0.0.2", "manifest_path": "/workspace/crates/journal-files/Cargo.toml", "dependencies": []},
-    {"name": "unemupc", "id": "path+file:///workspace/crates/unemupc#0.0.2", "manifest_path": "/workspace/crates/unemupc/Cargo.toml", "dependencies": []}
+    {
+      "name": "video",
+      "id": "path+file:///workspace/crates/video#0.0.3",
+      "dependencies": [
+        {
+          "name": "device",
+          "source": null,
+          "kind": null,
+          "path": "/workspace/crates/device"
+        }
+      ],
+      "manifest_path": "/workspace/crates/video/Cargo.toml"
+    }
   ],
   "workspace_members": [
-    "path+file:///workspace/crates/device#0.0.2",
-    "path+file:///workspace/crates/bus#0.0.2",
-    "path+file:///workspace/crates/chipset#0.0.2",
-    "path+file:///workspace/crates/devices#0.0.2",
-    "path+file:///workspace/crates/testkit#0.0.2",
-    "path+file:///workspace/crates/cpu#0.0.2",
-    "path+file:///workspace/crates/video#0.0.2",
-    "path+file:///workspace/crates/machine#0.0.2",
-    "path+file:///workspace/crates/audio#0.0.2",
-    "path+file:///workspace/crates/assembly#0.0.2",
-    "path+file:///workspace/crates/media#0.0.2",
-    "path+file:///workspace/crates/cli-core#0.0.2",
-    "path+file:///workspace/crates/cli-pc#0.0.2",
-    "path+file:///workspace/crates/upcli#0.0.2",
-    "path+file:///workspace/crates/registry#image-registry@0.0.2",
-    "path+file:///workspace/crates/image-store#0.0.2",
-    "path+file:///workspace/crates/machine-file#0.0.2",
-    "path+file:///workspace/crates/pc-harness#0.0.2",
-    "path+file:///workspace/crates/pc-image#0.0.2",
-    "path+file:///workspace/crates/platforms#0.0.2",
-    "path+file:///workspace/crates/window#0.0.2",
-    "path+file:///workspace/crates/ui-kit#0.0.2",
-    "path+file:///workspace/crates/pc-core#0.0.2",
-    "path+file:///workspace/crates/machine-view#0.0.2",
-    "path+file:///workspace/crates/pc-session-tests#0.0.2",
-    "path+file:///workspace/crates/journal#0.0.2",
-    "path+file:///workspace/crates/journal-files#0.0.2",
-    "path+file:///workspace/crates/unemupc#0.0.2"
+    "path+file:///workspace/crates/device#0.0.3",
+    "path+file:///workspace/crates/bus#0.0.3",
+    "path+file:///workspace/crates/chipset#0.0.3",
+    "path+file:///workspace/crates/devices#0.0.3",
+    "path+file:///workspace/crates/testkit#0.0.3",
+    "path+file:///workspace/crates/cpu#0.0.3",
+    "path+file:///workspace/crates/video#0.0.3",
+    "path+file:///workspace/crates/machine#0.0.3",
+    "path+file:///workspace/crates/audio#0.0.3",
+    "path+file:///workspace/crates/assembly#0.0.3",
+    "path+file:///workspace/crates/journal#0.0.3",
+    "path+file:///workspace/crates/unemupc#0.0.3",
+    "path+file:///workspace/crates/journal-files#0.0.3",
+    "path+file:///workspace/crates/machine-file#0.0.3",
+    "path+file:///workspace/crates/pc-config#0.0.3",
+    "path+file:///workspace/crates/pc-harness#0.0.3",
+    "path+file:///workspace/crates/pc-core#unemu-pc-core@0.0.3"
   ],
-  "workspace_root": "/workspace"
+  "workspace_root": "/workspace",
+  "version": 1
 }

@@ -1,5 +1,7 @@
 # Test timings
 
+Measurements below predate the repository split and describe the combined workspace. They are retained as historical evidence, not current core build times. The current core has 17 crates; front-end timing belongs to [unemu](https://github.com/unemu-org/unemu).
+
 Where a change's build and test time goes, measured on 2026-11-17 to decide
 what a change must run ([`commands.md`](commands.md#affected-tests-and-the-bead-gate)
 has the commands). The first rounds ran the tests under `cargo test`; the
@@ -47,7 +49,7 @@ units, so it exceeds the crate's share of the wall time):
 A warm target directory rebuilds only the changed crate and its dependents
 (the scenarios below). Selecting a subset with `-p` can rebuild a few shared
 crates once: cargo unifies features over the selected packages only, so
-`cargo test -p window` builds `machine`, `assembly`, `machine-file`,
+testing the desktop package builds `machine`, `assembly`, `machine-file`,
 `pc-image` and `cli` without the reference scheduler that `cli`'s
 dev-dependencies switch on in a workspace build (24 s, once per target
 directory).
@@ -191,11 +193,11 @@ The first plan (no ignored tests by name) under `cargo test`:
 | Change | Plan | Build | Tests | Total | Load |
 | --- | --- | ---: | ---: | ---: | --- |
 | docs only (`backlog/docs/commands.md`, `README.md`) | checks | — | — | 7 s | 14 |
-| window only (`crates/window/src/pacing.rs`) | window, fast; image-store `platform_ids` | 24 s, of which most is the once-per-target `-p window` feature set; 8 s for `platform_ids` | 96 s | 134 s | 14 → 11 |
+| window only (`crates/window/src/pacing.rs`) | window, fast; image-store `platform_ids` | 24 s, of which most is the once-per-target desktop package feature set; 8 s for `platform_ids` | 96 s | 134 s | 14 → 11 |
 | cli only (`crates/cli/src/image.rs`) | cli and window, fast | 15 s | 131 s, the window binary 94 s of it | 154 s | 11 → 17 |
-| image-store (`crates/image-store/src/library.rs`) | image-store, image-registry, machine-file, pc-image, cli, window; fast | 30 s | 252 s | 291 s | 17 → 7 |
+| image-store ([`crates/image-store/src/library.rs`](https://github.com/unemu-org/unemu/blob/8702727a5f88dae352d095ba456ab0ca5f529c72/crates/image-store/src/library.rs)) | image-store, image-registry, machine-file, pc-image, cli, window; fast | 30 s | 252 s | 291 s | 17 → 7 |
 | devices (`crates/devices/src/pit8253.rs`) | devices, chipset, machine, assembly, machine-file, pc-image, cli, window; goldens; release-profile devices | 32 s | 437 s, then 118 s for the release-profile devices tests (their first release build) | 595 s | 7 → 8 |
-| cli golden test file and `crates/window/src/shell.rs` | cli and window, fast; their three ignored tests by name, in the same build | 16 s | 142 s, then 32 s for the three ignored tests | 180 s | 14 → 21 |
+| cli golden test file and [`crates/window/src/shell.rs`](https://github.com/unemu-org/unemu/blob/8702727a5f88dae352d095ba456ab0ca5f529c72/crates/window/src/shell.rs) | cli and window, fast; their three ignored tests by name, in the same build | 16 s | 142 s, then 32 s for the three ignored tests | 180 s | 14 → 21 |
 | `Cargo.lock` | everything; goldens; release-profile devices | 0 s here (the lock did not really change; a new lock rebuilds everything, 200 s) | 427 s | 434 s | 8 → 11 |
 
 `scripts/bead-gate.sh` on the front-end changes (fmt, guard, clippy, tests,
@@ -203,17 +205,17 @@ rustdoc; no deny), one at a time through the cargo wrapper:
 
 | Change | Target directory | fmt | guard | clippy | tests | rustdoc | Total | Load |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| cli only | warm for tests, first clippy and rustdoc | 1 s | 5 s | 29 s + 7 s `upcli` | 185 s | 6 s | 234 s | 8 → 10 |
+| cli only | warm for tests, first clippy and rustdoc | 1 s | 5 s | 29 s + 7 s front-end command line | 185 s | 6 s | 234 s | 8 → 10 |
 | window only | warm | 1 s | 5 s | 8 s | 127 s | 5 s | 147 s | 10 → 7 |
 | cli only | warm | 2 s | 5 s | 6 s | 174 s | 1 s | 188 s | 7 → 7 |
-| cli only | empty, as for every new worktree today | 2 s | 8 s | 42 s + 8 s `upcli` | 318 s, of which 174 s build | 10 s | 388 s | 7 → 18 |
+| cli only | empty, as for every new worktree today | 2 s | 8 s | 42 s + 8 s front-end command line | 318 s, of which 174 s build | 10 s | 388 s | 7 → 18 |
 
 The rows above ran the first plan under `cargo test`. With the final plan
 under nextest, warm:
 
 | Change | fmt | guard | clippy | tests | rustdoc | Total | Load |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| cli only | 1 s | 5 s | 6 s + 1 s `upcli` | 202 s (132 s tests, 68 s for 35 ignored tests by name) | 2 s | 218 s | 5 → 7 |
+| cli only | 1 s | 5 s | 6 s + 1 s front-end command line | 202 s (132 s tests, 68 s for 35 ignored tests by name) | 2 s | 218 s | 5 → 7 |
 | window only | 1 s | 6 s | 5 s | 129 s (106 s tests, 22 s for 3 ignored tests by name) | 1 s | 143 s | 7 → 5 |
 
 Clippy and rustdoc build their dependencies without code generation, so even

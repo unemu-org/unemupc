@@ -11,8 +11,8 @@ deciders: Mikołaj Mikołajczyk
 ## Status
 
 Accepted — 2026-11-17 by the maintainer, before the first public release.
-Amends [[decision-25]] (machine images), [[decision-26]] (installation media
-sets) and [[decision-27]] (firmware packages), which name the platform
+Amends [decision-25 (unemu)](https://github.com/unemu-org/unemu/blob/8702727a5f88dae352d095ba456ab0ca5f529c72/backlog/decisions/decision-25%20-%20Machine%20images%20are%20self-contained%20OCI%20artifacts%20in%20a%20local%20store.md) (machine images), [decision-26 (unemu)](https://github.com/unemu-org/unemu/blob/8702727a5f88dae352d095ba456ab0ca5f529c72/backlog/decisions/decision-26%20-%20Installation%20media%20sets%20are%20their%20own%20OCI%20artifact%20type.md) (installation media
+sets) and [decision-27 (unemu)](https://github.com/unemu-org/unemu/blob/8702727a5f88dae352d095ba456ab0ca5f529c72/backlog/decisions/decision-27%20-%20Firmware%20packages%20are%20their%20own%20OCI%20artifact%20type.md) (firmware packages), which name the platform
 `ibm-pc-at`, and uses [[decision-30]] (the oldest release that runs an image).
 
 ## Context
@@ -64,7 +64,7 @@ more expensive with every artifact published, so it is done now or never.
    out, the maintainer deletes the six published `ibm-pc-at` artifacts on
    the registry by hand, once, and unemu-media pushes their rebuilds under
    the same tags (`unemu/media/freedos:1.4`, firmware revision 1) as new
-   tags; upcli gains no path for moving frozen tags. Titles not yet published
+   tags; the [unemu front end](https://github.com/unemu-org/unemu) gains no path for moving frozen tags. Titles not yet published
    wait for that release and are published once. Tags on registry.unemu.dev
    become immutable from the first public release on; from then on a change
    is a new revision. This repository's pinned digests of the builders it

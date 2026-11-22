@@ -1,43 +1,9 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: AGPL-3.0-or-later
-# Keep the workspace's crate layers apart, so the front end, the platform
-# providers and the emulator cores can later live in separate repositories
-# (backlog/docs/design/core-contract.md §7.3 and §7.4).
-#
-# Source includes (#[path], include!, include_str!, include_bytes!) may not
-# cross the core/front-end boundary, even when Cargo permits a dependency.
-#
-# Every workspace package names its layer in its manifest:
-#
-#   [package.metadata.unemu]
-#   layer = "neutral"   # contract | neutral | emulation | pc | application
-#
-# A crate may depend on these layers, through normal, build and test
-# dependencies alike, directly or through other workspace crates:
-#
-#   contract     nothing at all, also outside the workspace
-#   neutral      contract, neutral
-#   emulation    contract, emulation
-#   pc           contract, neutral, emulation, pc
-#   application  anything
-#
-# and no window crate (window, window-*, ui-kit, machine-view, library-model,
-# library-ui, pc-media, pc-library, media-ui, pc-ui, player-ui, unemu)
-# depends on a CLI crate (cli, cli-*, upcli), nor the other way round, except
-# the application composition edge window → upcli. The
-# launch crate, core-launch, is neutral and in neither family: both programs
-# make their list of cores with it, and the command line will start machines
-# through it too. The player, player-ui, is neutral and a window crate: it
-# draws a machine started from a file with egui.
-#
-# The test core, unemu-test-core, is what the front end's crates test against
-# instead of a real platform, so it declares no dependency of any kind but the
-# contract, unemu-core-api, not even one from outside the workspace.
-#
-# The contract crate, unemu-core-api, lives in its own repository and comes in
-# as a pinned git dependency, so no workspace package has the contract layer
-# any more: the rule that a contract crate depends on nothing is checked by the
-# contract's own CI, and here it only applies if such a package comes back.
+# Keep emulation libraries independent of PC host tools. Every workspace
+# package declares its layer in package.metadata.unemu. The emulation layer
+# may reach only itself and the contract, across every dependency kind.
+# Source includes must stay inside this repository.
 #
 # One copy of the contract. Two revisions of unemu-core-api in one build are
 # two different crates, and a core built against one does not implement the
@@ -52,12 +18,6 @@
 # follows the crate's own dependencies of every kind, then the normal and build
 # dependencies of the crates it reaches, and reports the first forbidden crate
 # on each path once, with the path.
-#
-# Every emulation crate and each package with metadata.unemu.side = "core"
-# stays on the core's side: workspace dependencies may reach only that side,
-# the contract and unemu-core-files. The layer and frontend-family rules still
-# apply. Host crates mark their side explicitly so a neutral store cannot
-# silently enter the standalone core command line.
 #
 # Known violations are listed in scripts/crate-boundaries.allow, one declared
 # dependency per line: `FROM → TO (KIND): REASON`, KIND being normal, build or
@@ -95,8 +55,8 @@
 # (`dep?/feature`), edges under a cfg no target matches (`cfg(any())`) and the
 # features the whole workspace unifies. So a line may name a crate the core's
 # own build does not compile (`cargo tree -e normal,build` of the emulation
-# packages leaves it out), and a feature change in a front-end crate can move
-# the core's list. The list errs on the side of naming too much.
+# packages leaves it out), and workspace feature unification can move
+# the list. The list errs on the side of naming too much.
 #
 # Usage:
 #   scripts/crate-boundaries.sh                  check the workspace
@@ -126,24 +86,14 @@ contract_crate=unemu-core-api
 # document and one allow list.
 # Quoted assignments avoid Bash pipe deadlocks while loading these programs.
 program='
-def layers: ["contract", "neutral", "emulation", "pc", "application"];
+def layers: ["contract", "emulation", "pc"];
 def may_use: {
   contract: [],
-  neutral: ["contract", "neutral"],
   emulation: ["contract", "emulation"],
-  pc: ["contract", "neutral", "emulation", "pc"],
-  application: layers
+  pc: ["contract", "emulation", "pc"]
 };
 def known_layer: . as $l | any(layers[]; . == $l);
 def article: if test("^[aeiou]") then "an \(.)" else "a \(.)" end;
-def family:
-  if . == "cli" or . == "upcli" or startswith("cli-") then "CLI"
-  elif . == "window" or . == "unemu" or . == "ui-kit" or . == "machine-view"
-       or . == "library-model" or . == "library-ui" or . == "pc-media"
-       or . == "pc-library" or . == "media-ui" or . == "pc-ui"
-       or . == "player-ui" or startswith("window-") then "window"
-  else null end;
-
 # The rule $from breaks by depending on $to, if any. A crate without a known
 # layer is reported on its own, not as a dependency.
 def broken_rule($layer; $core; $from; $to):
@@ -151,12 +101,6 @@ def broken_rule($layer; $core; $from; $to):
   | if $tl == null or ($tl | known_layer | not) then empty
     elif any(may_use | .[$fl][]; . == $tl) | not then
       "\($fl | article) crate may depend only on \(may_use | .[$fl] | join(", "))"
-    elif ($from | family) != null and ($to | family) != null
-         and ($from | family) != ($to | family) then
-      "no \($from | family) crate depends on \($to | family | article) crate"
-    elif $core[$from] and ($core[$to] | not) and $tl != "contract"
-         and $to != "unemu-core-files" then
-      "a core-side crate may depend only on the contract, core-side crates and unemu-core-files"
     else empty end;
 
 def listed($valid; $from; $to; $kind):
@@ -228,9 +172,6 @@ def walk($graph; $layer; $core; $valid; $from):
         | "unknown layer: \(.name) declares layer \($layer[.name] | tojson); use one of \(layers | join(", "))" ]
       + [ $packages[] | select($layer[.name] == "contract") | .name as $from | .dependencies[]?
         | "forbidden: \($from) (contract) depends on \(.name) (\(.kind // "normal") dependency); rule: a contract crate depends on nothing" ]
-      + [ $packages[] | select(.name == "unemu-test-core") | .name as $from | .dependencies[]?
-        | select(.name != "unemu-core-api")
-        | "forbidden: \($from) depends on \(.name) (\(.kind // "normal") dependency); rule: the test core depends on the contract alone" ]
       + $forbidden
       + [ $checked[] | select(.live | not)
           | "stale allow entry, line \(.line): \(.text); that dependency is gone or no longer forbidden, so delete the line" ]

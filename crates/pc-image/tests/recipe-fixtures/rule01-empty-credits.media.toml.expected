@@ -1,3 +1,0 @@
-rule01-empty-credits.media.toml:13:14: error[6.11.1] title.publishers: an empty list states nothing: leave the key out, which keeps the work file's list
-rule01-empty-credits.media.toml:14:14: error[6.11.1] title.developers: an empty list states nothing: leave the key out, which keeps the work file's list
-rule01-empty-credits.media.toml:15:10: error[6.11.1] title.genres: an empty list states nothing: leave the key out, which keeps the work file's list

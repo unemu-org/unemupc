@@ -1,5 +1,7 @@
 # Status
 
+2026-11-22 — The front end moved to [unemu](https://github.com/unemu-org/unemu) at `0f279540`; entries above this marker are the core's own.
+
 Snapshot of what works, what's in flight, what's broken. **Not the roadmap** — open work lives in
 beads (`bd ready --exclude-type epic`, `bd list --type epic`).
 
@@ -41,7 +43,7 @@ Update this when a feature lands, breaks, or gets pulled. Stale status is worse 
   decoding or pull blobs and give a component-specific disabled reason.
   The front-end extraction baseline stays 0.0.3, preserving existing
   manifest bytes, digest pins and explicit core floors. See
-  [machine images §5.6](design/machine-images.md#56-compatibility-of-published-images).
+  [machine images §5.6](https://github.com/unemu-org/unemu/blob/8702727a5f88dae352d095ba456ab0ca5f529c72/backlog/docs/design/machine-images.md#56-compatibility-of-published-images).
 - **2026-11-21 — FAT12 tests stay with the front end:** the complete
   user-file volume-builder suite moves from `pc-harness` to `pc-image`,
   retaining both test names, corpus, full SHA-256 checks, skip/required-file
@@ -101,7 +103,7 @@ Update this when a feature lands, breaks, or gets pulled. Stale status is worse 
   exports are removed, but live ones and the assembly file mount/metadata remain.
   Final layer tags and the dependency/host-list proofs remain partial. See
   [core contract §12.10 step 11](design/core-contract.md#1210-steps).
-- **2026-11-21 — Recipe format 1.0 frozen:** decision-43 is
+- **2026-11-21 — Recipe format 1.0 frozen:** [decision-43 (unemu)](https://github.com/unemu-org/unemu/blob/8702727a5f88dae352d095ba456ab0ca5f529c72/backlog/decisions/decision-43%20-%20Recipe-format-1.0-frozen.md) is
   accepted. Recipes and work files use 1.0;
   experimental 0.1 is refused, while historical syntax snapshots remain.
   Existing output pins and lock bytes are preserved. The generated 1.0
@@ -110,7 +112,7 @@ Update this when a feature lands, breaks, or gets pulled. Stale status is worse 
   Ken's exact licence-index input is missing locally; the complete Ken's
   input set still needs release-fixture provisioning. No recipe is published by this change.
   `commands.md` carries §9's promises until user documentation follows the
-  front-end split. See `design/recipes.md` §19.2 B17 and decision-43.
+  front-end split. See [`design/recipes.md`](https://github.com/unemu-org/unemu/blob/8702727a5f88dae352d095ba456ab0ca5f529c72/backlog/docs/design/recipes.md) §19.2 B17 and [decision-43 (unemu)](https://github.com/unemu-org/unemu/blob/8702727a5f88dae352d095ba456ab0ca5f529c72/backlog/decisions/decision-43%20-%20Recipe-format-1.0-frozen.md).
 
 - **2026-11-20 — Contract 0.3 re-pin:** `unemu-core-api` and
   `unemu-core-files` use release 0.3.0 at `0d490fcb`; the NES core uses
@@ -164,15 +166,15 @@ Update this when a feature lands, breaks, or gets pulled. Stale status is worse 
   inputs or publication). `recipe conformance` exits 1 for drafts unless
   `--allow-drafts` is given; failed pinned builds and runs with no pinned
   recipe still fail. Usage text and the command-line pin are unchanged.
-  See `commands.md` and `design/recipes.md` §3.8's dated decision.
+  See `commands.md` and [`design/recipes.md`](https://github.com/unemu-org/unemu/blob/8702727a5f88dae352d095ba456ab0ca5f529c72/backlog/docs/design/recipes.md) §3.8's dated decision.
 - **2026-11-20 — Machinefile syntax corpus:** three documented installation
   routes (FreeDOS 1.4, private MS-DOS 3.30, private Windows 3.1) now have
   equal TOML/HCL pairs with proposed input steps, waits, disk capture and
   lock snapshots. The pre-freeze review recommends keeping TOML, with
   concrete nested-input and multiline examples. These are design documents
   with explicit assumptions and placeholder pins; no guest installation or
-  Machinefile implementation is claimed. See `design/recipe-corpus/README.md`
-  and `design/recipes.md` §14.
+  Machinefile implementation is claimed. See [`design/recipe-corpus/README.md`](https://github.com/unemu-org/unemu/blob/8702727a5f88dae352d095ba456ab0ca5f529c72/backlog/docs/design/recipe-corpus/README.md)
+  and [`design/recipes.md`](https://github.com/unemu-org/unemu/blob/8702727a5f88dae352d095ba456ab0ca5f529c72/backlog/docs/design/recipes.md) §14.
 
 - **2026-11-20 — Standalone PC core command line:** the new `unemupc`
   package supplies a library and binary for `--boot`, `--bios`,
@@ -321,7 +323,7 @@ Update this when a feature lands, breaks, or gets pulled. Stale status is worse 
   pinned by a regression test against the pre-change manifests. ROMs,
   sources, floppy contents, blank disks and hardware settings are unchanged.
   Guards still run before tags; existing differing revision tags are refused.
-  See `design/machine-images.md` §5.5 and `design/recipes.md` §19.2.
+  See [`design/machine-images.md`](https://github.com/unemu-org/unemu/blob/8702727a5f88dae352d095ba456ab0ca5f529c72/backlog/docs/design/machine-images.md) §5.5 and [`design/recipes.md`](https://github.com/unemu-org/unemu/blob/8702727a5f88dae352d095ba456ab0ca5f529c72/backlog/docs/design/recipes.md) §19.2.
 
 - **2026-11-20 — The PC launch document:** (`upc-dfs.43.5`, stage B step S5;
   design/core-contract.md §14.2.2, §14.3). `pc_config::launch` holds the document the PC core
@@ -345,7 +347,7 @@ Update this when a feature lands, breaks, or gets pulled. Stale status is worse 
   from `unemu-org/software` at `3c493f7`, under `recipes/media/freedos/`,
   `recipes/media/kenslab/` and `recipes/firmware/`. Design-only recipes and
   first-round HCL snapshots are preserved; current GitHub links use the
-  repository's new name. See `design/recipe-corpus/README.md` for the mapping.
+  repository's new name. See [`design/recipe-corpus/README.md`](https://github.com/unemu-org/unemu/blob/8702727a5f88dae352d095ba456ab0ca5f529c72/backlog/docs/design/recipe-corpus/README.md) for the mapping.
 
 - **2026-11-20 — The core's host interfaces are guarded:** (`upc-dfs.29`,
   embeddability step 2; design/core-contract.md §12.10). No guest behaviour change.
@@ -652,7 +654,7 @@ Update this when a feature lands, breaks, or gets pulled. Stale status is worse 
   the shell's toolbar and menu gating test, `image-store` store test of the push record, and
   model tests of the rule and of Source.
 - **2026-11-19 — Every set and package exports to plain files:** step B11 of
-  design/recipes.md §19.2 (decision-37). `upcli image export NAME:TAG --to
+  design/recipes.md §19.2 ([decision-37 (unemu)](https://github.com/unemu-org/unemu/blob/8702727a5f88dae352d095ba456ab0ca5f529c72/backlog/decisions/decision-37%20-%20Every%20artifact%20exports%20to%20plain%20files%20without%20loss.md)). `upcli image export NAME:TAG --to
   DIR [--files] [--store DIR]` writes every layer's decoded bytes under its
   file name (the title of A3, without `.zst`), `config.toml` and
   `manifest.json` as stored, `EXPORT-VERSION` (`1`) and `SHA256SUMS`;
@@ -666,7 +668,7 @@ Update this when a feature lands, breaks, or gets pulled. Stale status is worse 
   FAT16 sizes with a reason, and reads long names. `recipe build` names
   the exported files that keep each input (`kept as files in data-1.img,
   data-2.img`) and says that an unpacked archive itself is not kept.
-  `scripts/export-layout.sh` writes the same files from any OCI Image
+  [`scripts/export-layout.sh`](https://github.com/unemu-org/unemu/blob/8702727a5f88dae352d095ba456ab0ca5f529c72/scripts/export-layout.sh) writes the same files from any OCI Image
   Layout with jq, sha256sum, zstd and mtools. MEASURED (`cli-pc` test
   `image_export`): command and script give the same files and times for a
   synthetic split set, a firmware package and the FreeDOS 1.4 1.44M set;
@@ -755,7 +757,7 @@ Update this when a feature lands, breaks, or gets pulled. Stale status is worse 
   instead of refused (`e29dc1ae`). Every golden keeps its transcript and retired count at the
   new pin.
 - **2026-11-19 — Recipes on a registry:** step B10 of design/recipes.md
-  §19.2 (decision-35). `upcli recipe push FILE REF` publishes a pinned
+  §19.2 ([decision-35 (unemu)](https://github.com/unemu-org/unemu/blob/8702727a5f88dae352d095ba456ab0ca5f529c72/backlog/decisions/decision-35%20-%20Recipes%20are%20OCI%20artifacts%20in%20a%20recipes%20namespace%20beside%20their%20outputs.md)). `upcli recipe push FILE REF` publishes a pinned
   recipe as an artifact of its own type (`application/vnd.unemu.recipe.media.v1`
   or `…firmware.v1`): the recipe as config, its work file, bundled inputs
   and lock files as titled layers, `unemu.recipe.output` and its digest,
@@ -856,7 +858,7 @@ Update this when a feature lands, breaks, or gets pulled. Stale status is worse 
   changes its palette: each palette row is rotated by -5° of hue per row, the differential phase
   distortion of a 2C02G (NESdev "NTSC video"). Colour `$22`, a common sky colour, goes from a
   purple `B17BFF` to `968AFF`; row 0 is unchanged. The cartridge golden in
-  `crates/platforms/tests/nes_cartridge.rs` moves to `0xFCDFD18611FED325` (its picture uses rows
+  [`crates/platforms/tests/nes_cartridge.rs`](https://github.com/unemu-org/unemu/blob/8702727a5f88dae352d095ba456ab0ca5f529c72/crates/platforms/tests/nes_cartridge.rs) moves to `0xFCDFD18611FED325` (its picture uses rows
   1 and 2), the same digest unemunes pins for that picture.
 - **2026-11-19 — The NES core, compiled in:** step 16 of
   design/core-contract.md §13.6. Both programs carry `unemu-nes-core`
@@ -1364,7 +1366,7 @@ Update this when a feature lands, breaks, or gets pulled. Stale status is worse 
   check FILE|FOLDER...` passes the corpus's `ibm-pc` files; the NES and
   Amiga recipes each get the one rule-7 finding that this build has no
   provider for their platform, and with test providers for the two
-  platforms all 18 files pass (MEASURED). `design/recipe-schema-0.1.json` is now
+  platforms all 18 files pass (MEASURED). [`design/recipe-schema-0.1.json`](https://github.com/unemu-org/unemu/blob/8702727a5f88dae352d095ba456ab0ca5f529c72/backlog/docs/design/recipe-schema-0.1.json) is now
   written from the parser's key tables and the providers, and a test
   compares it. Building, fetching and planning are later beads.
 - **2026-11-17 — A listing no longer reads another listing's probe as a
@@ -1418,7 +1420,7 @@ Update this when a feature lands, breaks, or gets pulled. Stale status is worse 
   `media create --add` and Create from files alike; with the default keys
   a volume equals `media create --add`'s. Every disk the builder makes,
   `media create --format` included, now carries our own boot code
-  (`crates/media/src/fat12/boot.asm`, 8086 instructions only) in place of
+  ([`crates/media/src/fat12/boot.asm`](https://github.com/unemu-org/unemu/blob/8702727a5f88dae352d095ba456ab0ca5f529c72/crates/media/src/fat12/boot.asm), 8086 instructions only) in place of
   the halt loop: started from the disk, the machine prints that it is not
   a system disk, waits for a key and boots again through INT 19h. MEASURED
   on the Xi8088 BIOS and on the open AT BIOS without option ROMs
@@ -1522,7 +1524,7 @@ Update this when a feature lands, breaks, or gets pulled. Stale status is worse 
 - **2026-11-17 — Every layer of a set or package names its export file:**
   each layer descriptor of an installation set and of a firmware package
   carries `org.opencontainers.image.title` with the file it unpacks to
-  (decision-37 point 3 and its amendment, recipes.md §3.10 and §19.1 A3), so
+  ([decision-37 (unemu)](https://github.com/unemu-org/unemu/blob/8702727a5f88dae352d095ba456ab0ca5f529c72/backlog/decisions/decision-37%20-%20Every%20artifact%20exports%20to%20plain%20files%20without%20loss.md) point 3 and its amendment, recipes.md §3.10 and §19.1 A3), so
   an ORAS pull names the files: a disk, ROM image or chip, source archive or
   extra its input's file name as given, with `.zst` after it on a layer
   stored compressed (`x86BOOT.img.zst`, `bios-unemu-at.bin.zst`), so `zstd -d`
@@ -1580,7 +1582,7 @@ Update this when a feature lands, breaks, or gets pulled. Stale status is worse 
   has the keyboard its keys still go only to the guest, so Ctrl+C remains
   the guest's in both shortcut styles. The native macOS menu has no Edit
   menu, so no key equivalent takes Command+V before the window.
-  `crates/ui-kit/src/text_clipboard.rs` holds the mapping and its tests
+  [`crates/ui-kit/src/text_clipboard.rs`](https://github.com/unemu-org/unemu/blob/8702727a5f88dae352d095ba456ab0ca5f529c72/crates/ui-kit/src/text_clipboard.rs) holds the mapping and its tests
   with a fake clipboard, plus a check that eframe is built with
   `clipboard` and that arboard opens the host clipboard (skipped on Linux
   without an X11 or Wayland display, as on the headless CI runner); the
@@ -1633,7 +1635,7 @@ Update this when a feature lands, breaks, or gets pulled. Stale status is worse 
   `unemu/media/<platform>/<work>` and firmware packages under
   `unemu/firmware/<platform>/<catalogue id>` when official, and under the same
   paths in `private/` for everything imported here; machine templates keep
-  `unemu/<name>` (recipes.md §8.3, decision-35). A set or package tag is
+  `unemu/<name>` (recipes.md §8.3, [decision-35 (unemu)](https://github.com/unemu-org/unemu/blob/8702727a5f88dae352d095ba456ab0ca5f529c72/backlog/decisions/decision-35%20-%20Recipes%20are%20OCI%20artifacts%20in%20a%20recipes%20namespace%20beside%20their%20outputs.md)). A set or package tag is
   `[<release>-]rN` (`1.4-r1`, `usa-rev1-r1`, `r1`), which never moves, locally
   or by push, with or without `--move`, and a deleted one names no other
   image; the release alone (`1.4`, also a release shaped like a version,
@@ -1641,7 +1643,7 @@ Update this when a feature lands, breaks, or gets pulled. Stale status is worse 
   creates it only at that newest revision and moves it forward in the same
   compare-and-swap that writes a newer revision, never backward and never to
   another release; sets and packages have no `latest` and take no new tag
-  outside the scheme; the digit-first set tag rule is retired (decision-38).
+  outside the scheme; the digit-first set tag rule is retired ([decision-38 (unemu)](https://github.com/unemu-org/unemu/blob/8702727a5f88dae352d095ba456ab0ca5f529c72/backlog/decisions/decision-38%20-%20Tags%20name%20a%20release%20and%20a%20revision%20and%20only%20revision%20tags%20are%20immutable.md)).
   A push creates or moves an alias only at the newest revision of its release
   that the registry already has, checked against the registry's tag list and
   the digest of each revision. A pull by an alias writes the revision it
@@ -1673,7 +1675,7 @@ Update this when a feature lands, breaks, or gets pulled. Stale status is worse 
   the `+zstd` suffix of the version-1 media types is its marker, so no
   manifest byte changes, and a later encoder is a new profile beside it
   (machine-images §2, the `image_store::codec` documentation).
-  `crates/image-store/tests/zstd_profile.rs` pins seven synthetic test
+  [`crates/image-store/tests/zstd_profile.rs`](https://github.com/unemu-org/unemu/blob/8702727a5f88dae352d095ba456ab0ca5f529c72/crates/image-store/tests/zstd_profile.rs) pins seven synthetic test
   vectors, one per compressed payload kind (floppy, tar source archive,
   ROM, optical, sector pack, extra, a 3 MiB disk base), by frame length and
   SHA-256, plus payloads at the edges of the threshold and the floppy limit,
@@ -2350,7 +2352,7 @@ Update this when a feature lands, breaks, or gets pulled. Stale status is worse 
   keep their retired counts and traces.
 - **2026-11-16 — Firmware is editable in Settings… on machines and images;
   "newer version available" for superseded firmware:** implements the approved
-  [firmware-settings mock-up](design/mockups/firmware-settings.html) (now in
+  [firmware-settings mock-up](https://github.com/unemu-org/unemu/blob/8702727a5f88dae352d095ba456ab0ca5f529c72/backlog/docs/design/mockups/firmware-settings.html) (now in
   the repository; the icon inventory counts 12 approved mock-ups). The
   catalogue gives every system BIOS a CMOS layout (`CmosLayout`: open AT
   BIOS, Kiselev Xi 8088, IBM AT, Landmark ROM POST) and every superseded entry
@@ -2446,7 +2448,7 @@ Update this when a feature lands, breaks, or gets pulled. Stale status is worse 
   and at-pm-test goldens carry no video BIOS and are unchanged. The official
   templates and firmware packages move once, to version 1.2.0 (1.1.1 was
   never published but may be in a local store): pinned digests in
-  `crates/pc-image/tests/template.rs`; the XTIDE package keeps its digest.
+  [`crates/pc-image/tests/template.rs`](https://github.com/unemu-org/unemu/blob/8702727a5f88dae352d095ba456ab0ca5f529c72/crates/pc-image/tests/template.rs); the XTIDE package keeps its digest.
   `image template build --dry-run` against a scratch store reports every tag
   `new` and `guard:allowed`.
 
@@ -2552,7 +2554,7 @@ Update this when a feature lands, breaks, or gets pulled. Stale status is worse 
   `vgabios-0.8a-unemu.3-src.tar` (`2d93fcaa…f8eb`, nothing left out now that
   the fork no longer tracks its issue tracker's settings). The official
   templates and firmware packages move once, to version 1.1.1 (pinned
-  digests in `crates/pc-image/tests/template.rs`; the XTIDE package keeps its
+  digests in [`crates/pc-image/tests/template.rs`](https://github.com/unemu-org/unemu/blob/8702727a5f88dae352d095ba456ab0ca5f529c72/crates/pc-image/tests/template.rs); the XTIDE package keeps its
   digest). Machines made from templates 1.1.0 keep the `v1.0.2-unemu.2` BIOS,
   without the fix; a machine made from 1.1.1, or a machine file, gets the
   fix. **MEASURED** with that ROM rebuilt from its release: a machine file
@@ -2776,7 +2778,7 @@ Update this when a feature lands, breaks, or gets pulled. Stale status is worse 
   (including `Zlib`) and judged by the `unemu/` guard before they are
   tagged. The release documents state no licence and are not carried. The
   build checks every set fixture before its first tag.
-  `vendor/freedos/fetch-floppy-1.4.sh` (the last step of the CI fixtures
+  [`vendor/freedos/fetch-floppy-1.4.sh`](https://github.com/unemu-org/unemu/blob/8702727a5f88dae352d095ba456ab0ca5f529c72/vendor/freedos/fetch-floppy-1.4.sh) (the last step of the CI fixtures
   lane; CI caches its outputs, and a run whose outputs match their pins stops
   at once) fetches the edition (`FD14-FloppyEdition.zip`, the SHA-256 the
   release's `verify.txt` lists, ibiblio fallback), checks its member list,
@@ -2790,7 +2792,7 @@ Update this when a feature lands, breaks, or gets pulled. Stale status is worse 
   §5.5](design/machine-images.md#55-official-template-images) and
   `vendor/freedos/README.md`.
 - **2026-11-15 — Desktop icons follow the approved mock-ups:** the app now
-  draws the mock-ups' icons ([icons note](design/icons.md)). The inline SVGs
+  draws the mock-ups' icons ([icons note](https://github.com/unemu-org/unemu/blob/8702727a5f88dae352d095ba456ab0ca5f529c72/backlog/docs/design/icons.md)). The inline SVGs
   are painted with egui shapes from their own coordinates, in the text colour
   where the SVG says `currentColor` and in the mock-up's fixed colours
   elsewhere, so no SVG renderer or icon font enters the build: the
@@ -2980,7 +2982,7 @@ Update this when a feature lands, breaks, or gets pulled. Stale status is worse 
   pins: the packages `9c482af2…7daa`, `770f76c1…ac1c`, `240d2d4f…89ec`,
   `open-at` `e2618810…7e0f` and `open-at-games` `8dfa958d…273b` (the machines
   record their package manifests, so they move too). See
-  [machine images §5.5](design/machine-images.md#55-official-template-images).
+  [machine images §5.5](https://github.com/unemu-org/unemu/blob/8702727a5f88dae352d095ba456ab0ca5f529c72/backlog/docs/design/machine-images.md#55-official-template-images).
 - **2026-11-15 — CI on Linux: pinned download tools and CA roots, no worker
   race in window tests:** the devShell now provides `curl` and Info-ZIP
   `unzip` 6.00 and points `NIX_SSL_CERT_FILE` and `CURL_CA_BUNDLE` at the
@@ -3043,7 +3045,7 @@ Update this when a feature lands, breaks, or gets pulled. Stale status is worse 
   `org.opencontainers.image.authors` (the developers), lists joined with `, `
   in the order stated, beside the title (and `org.opencontainers.image.licenses`
   of an open set), all from the set's title record, so registry web UIs that
-  read the standard annotations show them (`design/machine-images.md` §5.2).
+  read the standard annotations show them ([`design/machine-images.md`](https://github.com/unemu-org/unemu/blob/8702727a5f88dae352d095ba456ab0ca5f529c72/backlog/docs/design/machine-images.md) §5.2).
   An empty field adds nothing: a set without catalogue fields keeps its digest
   (the shared and CLI pin tests are unchanged). There is no creation time (no
   clock) and no URL (the title record has no such field). The existing-tag
@@ -3121,7 +3123,7 @@ Update this when a feature lands, breaks, or gets pulled. Stale status is worse 
   existing tag, so a store that already holds the tags needs new ones or a
   fresh store.
 - **2026-11-15 — Registry privacy per namespace:** one registry can serve a
-  public `unemu/` and a private `private/`, as decision-25's amendment "privacy
+  public `unemu/` and a private `private/`, as [decision-25 (unemu)](https://github.com/unemu-org/unemu/blob/8702727a5f88dae352d095ba456ab0ca5f529c72/backlog/decisions/decision-25%20-%20Machine%20images%20are%20self-contained%20OCI%20artifacts%20in%20a%20local%20store.md)'s amendment "privacy
   per namespace" and the approved registry-accounts mock-up describe.
   - **Preferences:** a registry entry either keeps one `private` flag for the
     whole registry (older entries read and write unchanged) or lists
@@ -3169,7 +3171,7 @@ Update this when a feature lands, breaks, or gets pulled. Stale status is worse 
     - Pull… shows the namespace line; the mock-up has no Pull… dialog.
 - **2026-11-15 — Redistributable installation media sets:** `image media
   import … --open --license LicenseRef-NAME --license-text EXTRA` states that a
-  set may be redistributed under the vendor's own terms (decision-26
+  set may be redistributed under the vendor's own terms ([decision-26 (unemu)](https://github.com/unemu-org/unemu/blob/8702727a5f88dae352d095ba456ab0ca5f529c72/backlog/decisions/decision-26%20-%20Installation%20media%20sets%20are%20their%20own%20OCI%20artifact%20type.md)
   amendment). `--open` needs both flags; the licence must be one SPDX
   `LicenseRef-` and the terms text exactly one of the set's `--extra` files,
   so nothing is guessed. An open set marks every medium and extra open under
@@ -3280,7 +3282,7 @@ Update this when a feature lands, breaks, or gets pulled. Stale status is worse 
     dry runs first.
   - **File › Get templates…** follows the approved get-templates mock-up;
     the behaviour is described once, in
-    [`design/machine-images.md`](design/machine-images.md) §5.5. In
+    [`design/machine-images.md`](https://github.com/unemu-org/unemu/blob/8702727a5f88dae352d095ba456ab0ca5f529c72/backlog/docs/design/machine-images.md) §5.5. In
     short: the library offers it while it holds no machine image (firmware
     packages and media sets do not count); it lists the machine images under
     `unemu/` of the default registry and pulls the chosen ones one after
@@ -3510,7 +3512,7 @@ Update this when a feature lands, breaks, or gets pulled. Stale status is worse 
   floppies and CMOS stay user-supplied.
 - **2026-11-15 — Status-bar drive chips:** while a machine runs, the status
   bar shows one chip per drive it has, as in the approved
-  [main-window mock-up](design/mockups/main-window.html) (revision 2):
+  [main-window mock-up](https://github.com/unemu-org/unemu/blob/8702727a5f88dae352d095ba456ab0ca5f529c72/backlog/docs/design/mockups/main-window.html) (revision 2):
   `A: FreeDOS 1.2 boot · 1.2M · read-only`, `B: empty`,
   `C: open-at-dos:1.0.0 · journal`, each with an amber activity light.
   - **Hover and click:** hover shows the drive, the full image name, its source
@@ -3925,8 +3927,8 @@ Update this when a feature lands, breaks, or gets pulled. Stale status is worse 
   lowering rules; indexed ROM edits preserve other bindings and symlink spellings.
   Saved local children edit in place with a diff and overwrite consent; firmware
   edits defer discovery to readiness checks.
-- **2026-11-14 — Firmware packages:** The neutral strict OCI codec, shared extras, PC roles/chip layouts/fit validation, ROM-folder import and `image firmware ls/show` are implemented. Import matches full hashes and lengths, rejects incomplete or ambiguous sets, preserves sources and publishes by CAS. Frontends explicitly select the store: desktop readiness honors Preferences, CLI run accepts --store/--no-store, and plain library loaders disable store lookup. Fully pinned declarations keep their image/chip shape; identical package re-import is idempotent and preselection store failures warn and fall back to declared paths and ROM folders; damaged selected packages block use. Machine-image import embeds ROMs and records package provenance. Firmware summaries expose role, board/class and catalogue facets without reading ROMs. The library's Firmware collection landed on 2026-11-15 (entry above); see [design §5.3](design/machine-images.md#53-firmware-packages).
-- **2026-11-14 — Installation media sets:** the design section and [mock-up](design/mockups/install-media.html) were approved by the maintainer. The codec, CLI and From library dialog are implemented; the library collection and Import dialog followed on 2026-11-15; the transfer-medium generator remains deferred.
+- **2026-11-14 — Firmware packages:** The neutral strict OCI codec, shared extras, PC roles/chip layouts/fit validation, ROM-folder import and `image firmware ls/show` are implemented. Import matches full hashes and lengths, rejects incomplete or ambiguous sets, preserves sources and publishes by CAS. Frontends explicitly select the store: desktop readiness honors Preferences, CLI run accepts --store/--no-store, and plain library loaders disable store lookup. Fully pinned declarations keep their image/chip shape; identical package re-import is idempotent and preselection store failures warn and fall back to declared paths and ROM folders; damaged selected packages block use. Machine-image import embeds ROMs and records package provenance. Firmware summaries expose role, board/class and catalogue facets without reading ROMs. The library's Firmware collection landed on 2026-11-15 (entry above); see [design §5.3](https://github.com/unemu-org/unemu/blob/8702727a5f88dae352d095ba456ab0ca5f529c72/backlog/docs/design/machine-images.md#53-firmware-packages).
+- **2026-11-14 — Installation media sets:** the design section and [mock-up](https://github.com/unemu-org/unemu/blob/8702727a5f88dae352d095ba456ab0ca5f529c72/backlog/docs/design/mockups/install-media.html) were approved by the maintainer. The codec, CLI and From library dialog are implemented; the library collection and Import dialog followed on 2026-11-15; the transfer-medium generator remains deferred.
 - **2026-11-14 — PC machine image import:** `pc-image` imports resolved TOML/YAML machines into self-contained OCI blobs and local tags, validates PC bundle bindings and resolves them back to assembly input. Firmware, full media catalogues and CMOS are copied; journal generations freeze to whole raw bases through private recovery copies. `image import` requires an explicit store and tag, with `--create` for initialization; interrupted journals require named per-medium recovery choices. Validation and resolution keep large disks file-backed, and local import records retain policies and generation choices. Source files and journals remain unchanged. Layers, workspaces and registry transport remain separate.
 - **2026-11-14 — PC machine image import:** `pc-image` imports resolved TOML/YAML machines into self-contained OCI blobs and local tags, validates PC bundle bindings and resolves them back to assembly input. Firmware, full media catalogues and CMOS are copied; journal generations freeze to whole raw bases through private recovery copies. `image import` requires an explicit store and tag; interrupted journals require a recovery choice. Source files and journals remain unchanged. Layers, workspaces and registry transport remain separate.
 - **2026-11-14 — Firmware folder index and progress:** desktop readiness uses a

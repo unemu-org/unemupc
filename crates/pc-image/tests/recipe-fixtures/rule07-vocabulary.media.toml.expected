@@ -1,7 +1,0 @@
-rule07-vocabulary.media.toml:12:21: error[6.11.7] title.software_platform: `AmigaOS` is not a software platform of ibm-pc: one of DOS, Windows 3.x, Windows 9x, CP/M, other
-rule07-vocabulary.media.toml:16:17: error[6.11.7] needs.video[2]: need video: "8514" is not one of mda, hercules, cga, ega, mcga, vga, svga, none
-rule07-vocabulary.media.toml:17:1: error[6.11.7] needs.tv_system: need kind "tv_system" is not one of cpu, fpu, video, sound, memory, ems, xms, input
-rule07-vocabulary.media.toml:21:1: error[6.11.7] ids.discogs: `discogs` is not a catalogue of work ids of ibm-pc: one of wikidata, mobygames, igdb
-rule07-vocabulary.media.toml:42:10: error[6.11.7] step[1].format: `iso-2048` is not a format with a FAT volume profile of ibm-pc: one of 1.44M, 1.2M, 720K, 360K
-rule07-vocabulary.media.toml:47:10: error[6.11.7] medium[1].format: `2.88M` is not a media format of ibm-pc: one of 1.44M, 1.2M, 720K, 360K, iso-2048
-rule07-vocabulary.media.toml:59:12: error[6.11.7] extra[1].dos_name: notes.txt: expected canonical uppercase DOS 8.3 name (no reserved device names)

@@ -45,8 +45,6 @@ emulation: winnow (run): toml's parser combinators, for the PC config codec
 emulation: indexmap (run): in cargo metadata's resolve through toml's weak `indexmap?/std` feature; not compiled for the core
 emulation: hashbrown (run): in cargo metadata's resolve through indexmap, itself there only through toml's weak `indexmap?/std`; not compiled for the core
 emulation: equivalent (run): in cargo metadata's resolve through indexmap, itself there only through toml's weak `indexmap?/std`; not compiled for the core
-emulation: foldhash (run): in cargo metadata's resolve through hashbrown and indexmap, there only through toml's weak `indexmap?/std`; not compiled for the core
-emulation: memchr (run): in cargo metadata's resolve through winnow's weak `memchr?/std` feature; not compiled for the core
 
 # Build time: derive macros and one build script. They run on the build host
 # and are not linked into the core.

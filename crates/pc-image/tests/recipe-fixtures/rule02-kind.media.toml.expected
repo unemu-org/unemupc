@@ -1,7 +1,0 @@
-rule02-kind.media.toml:5:1: error[6.11.2] media: a Mediafile has at least one [[medium]]
-rule02-kind.media.toml:5:1: error[6.11.2] media: no title: a Mediafile states [title] with title, or names a work file that does
-rule02-kind.media.toml:6:8: error[6.11.2] media.name: the second component is `firmware`; the output of [media] is named NAMESPACE/media/PLATFORM/ID
-rule02-kind.media.toml:6:8: error[6.11.2] media.name: the third component is `nes`; it is the platform, `ibm-pc`
-rule02-kind.media.toml:10:2: error[6.11.2] firmware: a recipe has one identity table; this one has [media] and [firmware]
-rule02-kind.media.toml:15:2: error[6.11.2] machine: [machine] is reserved for the Machinefile, which recipe 1.0 does not specify
-rule02-kind.media.toml:17:2: error[6.11.2] package: [package] belongs to a Firmwarefile; a recipe of [media] has none

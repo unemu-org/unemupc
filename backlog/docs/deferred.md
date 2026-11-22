@@ -154,7 +154,7 @@ and media changes at virtual times) on the parent to reproduce the layer byte
 for byte. Results could be cached by `(parent hash, recipe hash, CPU core revision)`.
 Proprietary bases and layers are never committed to the repository. They live
 in the user's private image store and private registry as parts of whole-machine
-images; see [`design/machine-images.md`](design/machine-images.md), §§4 and 5.
+images; see [`design/machine-images.md`](https://github.com/unemu-org/unemu/blob/8702727a5f88dae352d095ba456ab0ca5f529c72/backlog/docs/design/machine-images.md), §§4 and 5.
 A saved machine state would be tied to the emulator version; disk layers remain
 plain data.
 
@@ -174,37 +174,6 @@ layers for floppies and merging sibling layers.
   §Header: exactly 128 bytes, and
   [`design/machine-files.md`](design/machine-files.md), §Drives.
 - **Tracked in:** upc-18x.5.
-
-### Machine-image daemon
-
-The image store is a library that the GUI and CLI call directly, for local
-storage and for registry push/pull. Immutable blobs, lock files and tag
-compare-and-swap handle concurrent processes; see
-[`design/machine-images.md`](design/machine-images.md), §§3.1 and 5.1.
-
-- **Why deferred:** No current workflow needs a long-running service.
-- **Revisit when:** Machines must run headless on a server with remote viewing,
-  remote control is wanted, or background GC is needed.
-- **Requirement for now:** Keep the store API transport-neutral, so a daemon
-  would be a thin wrapper with no storage or validation rules of its own.
-
-### Reusing Docker and oras registry logins
-
-The registry client reads secrets only from its own sources: environment
-variables bound to one host, or the macOS Keychain item it creates with
-`image login`. It does not read `~/.docker/config.json`, oras credentials or
-Docker credential helpers, so a registry already logged in with those tools
-needs its own `image login`; see
-[`design/machine-images.md`](design/machine-images.md) §5.1.
-
-- **Why deferred:** Credential helpers are external programs with their own
-  storage and prompts, and their entries are not scoped the way this client
-  scopes credentials (one login per registry, never offered to another host).
-  Supporting them safely needs its own design and tests, which no current
-  workflow requires.
-- **Revisit when:** Users pull from registries they already use with Docker or
-  oras, or Bearer-token authentication lands and helpers become the natural
-  source of tokens.
 
 ### Bridging real hardware: an OPL chip, later real ISA cards
 

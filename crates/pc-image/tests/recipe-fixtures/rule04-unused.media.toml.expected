@@ -1,6 +1,0 @@
-rule04-unused.media.toml:20:8: error[6.11.4] input.spare: the input `spare` is not used by any output
-rule04-unused.media.toml:36:6: error[6.11.4] step[1].id: the step `readme` is not used by any output
-rule04-unused.media.toml:40:8: error[6.11.4] input.orphan: the input `orphan` is not used by any output
-rule04-unused.media.toml:47:6: error[6.11.4] step[2].id: the step `orphan-text` is not used by any output
-rule04-unused.media.toml:51:1: error[6.11.1] step[3]: expected exactly one of unpack, fat, text; this table has unpack and text
-rule04-unused.media.toml:66:8: error[6.11.3] medium[2].from: `bonus` is a file; it has no member `DISK2.IMG`

@@ -144,29 +144,12 @@ jobs:
         if: ${{ !cancelled() }}
         run: bash scripts/ci-gate.sh tests
 
-      # The FreeDOS 1.4 Floppy Edition outputs (disks, licence index, source
-      # tar; about 55 MB) cost about 330 MB of downloads to rebuild. Their fetch
-      # script re-checks every cached file against its pin before it uses one,
-      # so a cache hit is never trusted unverified.
-      - name: Restore FreeDOS 1.4 fixtures
-        id: freedos_cache
-        if: ${{ !cancelled() }}
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: vendor/freedos/floppy-1.4
-          key: freedos-floppy-1.4-${{ hashFiles('vendor/freedos/fetch-floppy-1.4.sh', 'vendor/freedos/floppy-1.4-licenses.txt') }}
-
       # Missing fixtures make the boot goldens skip. Build them with the devShell's
       # nasm and filesystem tools first; a fetch/build failure must fail the job.
       - name: Build golden fixtures
         id: fixtures
         if: ${{ !cancelled() }}
         run: bash scripts/ci-gate.sh fixtures
-
-      - name: Recipe conformance
-        id: recipe_conformance
-        if: ${{ !cancelled() && steps.fixtures.outcome == 'success' }}
-        run: bash scripts/ci-gate.sh recipe-conformance
 
       # Reuse the same test profile and binaries as the ordinary workspace tests.
       # The user-supplied ROM lane is local only: CI never has that firmware.
@@ -176,14 +159,6 @@ jobs:
         run: bash scripts/ci-gate.sh goldens
 
       # A cancelled run is superseded by a newer one, which saves instead.
-      - name: Save FreeDOS 1.4 fixtures
-        id: freedos_cache_save
-        if: ${{ !cancelled() && steps.fixtures.outcome == 'success' && steps.freedos_cache.outputs.cache-hit != 'true' }}
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: vendor/freedos/floppy-1.4
-          key: freedos-floppy-1.4-${{ hashFiles('vendor/freedos/fetch-floppy-1.4.sh', 'vendor/freedos/floppy-1.4-licenses.txt') }}
-
       - name: Save cargo downloads
         id: cache_save
         if: ${{ !cancelled() && steps.devshell.outcome == 'success' && steps.cargo_cache.outputs.cache-hit != 'true' }}
@@ -229,11 +204,8 @@ jobs:
             clippy=${{ steps.clippy.outcome }}
             deny=${{ steps.deny.outcome }}
             tests=${{ steps.tests.outcome }}
-            freedos_cache=${{ steps.freedos_cache.outcome }}
             fixtures=${{ steps.fixtures.outcome }}
             goldens=${{ steps.goldens.outcome }}
-            recipe_conformance=${{ steps.recipe_conformance.outcome }}
-            freedos_cache_save=${{ steps.freedos_cache_save.outcome }}
             cache_save=${{ steps.cache_save.outcome }}
             target_cache_save=${{ steps.target_cache_save.outcome }}
         run: |

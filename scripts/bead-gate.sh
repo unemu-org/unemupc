@@ -4,7 +4,7 @@
 #
 # scripts/affected-tests.sh plans the change; this gate then runs formatting,
 # the publication guard, clippy on the affected crates (and on the production
-# unemu binary when its command composition is affected), the affected tests in their tier,
+# unemupc binary when its command composition is affected), the affected tests in their tier,
 # rustdoc of the affected crates, and cargo deny when the lock file, a
 # manifest or the dependency policy changed. Documentation, script and
 # configuration changes build nothing: they run the guard and their own
@@ -106,9 +106,9 @@ fi
 
 guard_lane() {
   local status=0
+  bash scripts/uid-guard.sh --self-test || status=1
   bash scripts/publication-guard-test.sh && bash scripts/publication-guard.sh || status=1
   bash scripts/core-host-guard.sh --self-test && bash scripts/core-host-guard.sh || status=1
-  bash scripts/repo-ownership.sh --self-test && bash scripts/repo-ownership.sh || status=1
   return "$status"
 }
 step guard guard_lane
@@ -117,7 +117,7 @@ if [[ $mode == crates || $mode == full ]]; then
   step clippy "${cargo_cmd[@]}" clippy --locked "${packages[@]}" --all-targets --all-features -- -D warnings
   if [[ $(var cli) == 1 ]]; then
     # The production binary without the dev-dependency features tests unify in.
-    step clippy-unemu "${cargo_cmd[@]}" clippy --locked -p window --bin unemu -- -D warnings
+    step clippy-unemupc "${cargo_cmd[@]}" clippy --locked -p unemupc --bin unemupc -- -D warnings
   fi
 else
   skip clippy "no crate affected"

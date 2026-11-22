@@ -47,7 +47,7 @@ The `flake.nix` devShell provides the Rust toolchain (`rustc`, `cargo`, `clippy`
 `rustfmt`, `rust-analyzer`, `rust-src`) as the latest stable release from the
 `rust-overlay` input — upstream binaries, so a Rust update never rebuilds the
 rest of nixpkgs — plus `nasm` + `binutils` (guest test-ROM builds),
-`qemu` (optional differential oracle), and `jq` (fetching the SingleStepTests
+`cargo-deny`, `cargo-nextest`, `qemu` (optional differential oracle), and `jq` (fetching the SingleStepTests
 corpus). Enter with `nix develop` or let direnv auto-load it.
 
 The fixture scripts under `vendor/` take their tools from the same devShell:
@@ -56,8 +56,7 @@ Linux run the same versions. The devShell also points `NIX_SSL_CERT_FILE` and
 `CURL_CA_BUNDLE` at the pinned nixpkgs CA bundle, so downloads verify against
 the same roots everywhere rather than the host's bundle (an old container bundle
 could not verify a FreeDOS mirror's current root). `SSL_CERT_FILE` stays unset:
-the registry client's native-roots loader would read that file instead of the
-macOS keychain. A host `SSL_CERT_FILE` still applies to tools that read it.
+callers may provide their own trust configuration. A host `SSL_CERT_FILE` still applies to tools that read it.
 
 ### Firmware toolchain (SeaBIOS)
 

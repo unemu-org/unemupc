@@ -1,2 +1,0 @@
-# Synthetic allow list for the self-test fixtures.
-assembly → media (normal): the running machine owns its journal sessions

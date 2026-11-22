@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Reject Rust source includes across the core/front-end repository boundary."""
+"""Reject Rust source includes outside the repository."""
 
 import json
+import os
 from pathlib import Path
 import re
 import sys
@@ -146,11 +147,12 @@ def source_includes(text, directory):
                         yield offset, path
 
 
-def check(packages):
+def check(packages, repository_root=None):
     owners = sorted([(Path(p['manifest_path']).parent.resolve(), p['name'],
                       p['metadata']['unemu'].get('layer') == 'emulation'
                       or p['metadata']['unemu'].get('side') == 'core')
                      for p in packages], key=lambda p: len(p[0].parts), reverse=True)
+    repository_root = Path(repository_root or Path(os.path.commonpath([str(p[0]) for p in owners]))).resolve()
     def owner(path):
         return next((p for p in owners if path.is_relative_to(p[0])), None)
     errors = []
@@ -162,7 +164,10 @@ def check(packages):
             for offset, value in source_includes(text, directory):
                 target = (source.parent / value).resolve()
                 other = owner(target)
-                if other is not None and other[2] != core:
+                if not target.is_relative_to(repository_root):
+                    line = text.count('\n', 0, offset) + 1
+                    errors.append(f'outside repository source include: {name} in {source.relative_to(directory)}:{line}')
+                elif other is not None and other[2] != core:
                     line = text.count('\n', 0, offset) + 1
                     errors.append(f'forbidden source include: {name} → {other[1]} in {source.relative_to(directory)}:{line}')
     for error in errors:
@@ -221,8 +226,12 @@ if sys.argv[1] == '--self-test':
         ]:
             (nested / 'lib.rs').write_text(expression)
             assert check(packages) == 1, expression
+        (nested / 'lib.rs').write_text('')
+        (root / 'core/lib.rs').write_text('include_str!("../../outside.txt");')
+        assert check(packages) == 1, 'includes outside the repository must fail'
     print('self-test source includes: cross-side plants rejected; same-side includes and comments accepted')
 else:
-    errors = check(json.loads(Path(sys.argv[1]).read_text())['packages'])
+    metadata = json.loads(Path(sys.argv[1]).read_text())
+    errors = check(metadata['packages'], metadata['workspace_root'])
     print(f'crate boundaries: {errors} source-include error(s)')
     sys.exit(bool(errors))

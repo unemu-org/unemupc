@@ -1,8 +1,0 @@
-# A work file with nothing wrong.
-recipe = "1.0"
-
-[work]
-id = "good"
-
-[title]
-title = "Good"

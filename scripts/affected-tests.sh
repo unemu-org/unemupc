@@ -19,9 +19,10 @@
 # fixture archives) of every affected crate; it is chosen when a change can
 # alter emulated behaviour: an emulation crate, the machine runners the
 # goldens drive (pc-harness), a shipped machine file or a fixture pin changed.
-# Without it, the ignored tests of each changed crate still run, by name, and
-# so do those in files of the affected crates that name a changed crate
-# (`image_store::`, say). Tests that need user-supplied firmware start with
+# Without it, a change confined to integration test files selects only their
+# ignored tests. Other changes select the ignored tests of each changed crate,
+# and those in files of the affected crates that name a changed crate
+# (`assembly::`, say). Tests that need user-supplied firmware start with
 # `user_rom_` and run only in the user-roms and all tiers. Before a release,
 # `--all --tier all` runs the whole workspace in every tier.
 #
@@ -74,16 +75,10 @@ planner='
 # Crates whose change can alter emulated behaviour; a change to one of them
 # selects the golden tier.
 def emulation_crates: ["assembly", "audio", "bus", "chipset", "cpu", "device",
-  "devices", "journal", "journal-files", "machine", "machine-file", "media", "pc-config", "testkit", "unemu-pc-core",
+  "devices", "journal", "journal-files", "machine", "machine-file", "pc-config", "testkit", "unemu-pc-core",
   "video"];
-# Files that hold the machine runners and the disk builder the goldens drive,
-# and the command line the front-end goldens drive: of the neutral command
-# line its dispatch and the journal tools a golden runs (no golden drives its
-# recipe, image or library commands), and every PC command; a path ending in
-# "/" covers every file under it.
-def runner_files: ["crates/pc-harness/src/", "crates/cli-core/src/lib.rs",
-  "crates/cli-pc/src/", "crates/unemupc/src/",
-  "crates/pc-image/src/media_create.rs"];
+# Machine runners select the slow golden tier when their behaviour changes.
+def runner_files: ["crates/pc-harness/src/", "crates/unemupc/src/"];
 # Paths that crates read outside their own directory: test support shared
 # with #[path], shipped machine files, fixture scripts and pins, assets.
 # The self-test checks that every path a crate source names outside its
@@ -91,39 +86,17 @@ def runner_files: ["crates/pc-harness/src/", "crates/cli-core/src/lib.rs",
 # repository root reads both machines/ and vendor/.
 def data_rules: [
   {prefix: "crates/pc-harness/tests/support/", goldens: true,
-   crates: ["assembly", "cli-pc", "machine-file", "pc-config", "pc-harness", "pc-image", "pc-library", "unemupc", "upcli",
-     "window"],
+   crates: ["assembly", "machine-file", "pc-config", "pc-harness", "unemupc"],
    why: "golden test support shared by several crates"},
-  {prefix: "crates/pc-image/tests/support/", goldens: false,
-   crates: ["cli-pc", "pc-image"], why: "test support shared with the PC command line"},
   {prefix: "machines/README.md", goldens: false,
-   crates: ["cli-pc", "machine-file", "pc-image", "window"],
-   why: "machine-file guide that tests quote"},
+   crates: ["machine-file"], why: "machine-file guide that tests quote"},
   {prefix: "machines/", goldens: true,
-   crates: ["cli-pc", "machine-file", "pc-harness", "pc-image", "pc-library", "pc-session-tests",
-     "unemupc", "upcli", "window"],
-   why: "shipped machine file"},
+   crates: ["machine-file", "pc-harness", "unemupc"], why: "shipped machine file"},
   {prefix: "vendor/", except: "[.]md$", goldens: true,
-   crates: ["assembly", "cli-pc", "machine-file", "pc-harness", "pc-image", "pc-library",
-     "pc-session-tests", "unemupc", "upcli", "window"],
-   why: "fixture script, pin or notice"},
-  {prefix: "assets/", goldens: false, crates: ["ui-kit"], why: "brand asset the ui kit embeds"},
-  {prefix: "backlog/docs/design/mockups/", goldens: false, crates: ["ui-kit"],
-   why: "approved mock-ups the icon tests of the ui kit read"},
-  {prefix: "crates/pc-image/data/recipes/", goldens: false,
-   crates: ["cli-pc", "pc-image"],
-   why: "shipped recipes read by recipe checks and template builds"},
-  {prefix: "backlog/docs/design/recipe-corpus/", goldens: false,
-   crates: ["cli-pc", "pc-image"],
-   why: "recipes the recipe checks and the user-file volume tests read"},
-  {prefix: "backlog/docs/design/recipe-schema-1.0.json", goldens: false,
-   crates: ["pc-image"], why: "the recipe schema a test compares with the generated one"}
+   crates: ["assembly", "machine-file", "pc-harness", "unemupc"],
+   why: "fixture script, pin or notice"}
 ];
-# Tests that read the sources on their own side of the extraction boundary.
 def scan_tests: [
-  {package: "image-store", test: "platform_ids",
-   watch: "^crates/(media|image-store|registry|recipe|core-launch|cli-core|ui-kit|machine-view|library-model|library-ui|player-ui|test-core|pc-image|cli-pc|pc-media|pc-library|media-ui|pc-ui|pc-session-tests|platforms|upcli|window)/.+[.]rs$",
-   why: "scans the front-end Rust sources"},
   {package: "pc-config", test: "platform_ids",
    watch: "^crates/(device|bus|cpu|video|audio|devices|chipset|machine|assembly|testkit|journal|pc-config|pc-core|machine-file|journal-files|pc-harness|unemupc)/.+[.]rs$",
    why: "scans the core Rust sources"}
@@ -205,15 +178,17 @@ else
    else $golden_auto end) as $goldens_on
 | (if $full then "full" elif ($seeds | length) > 0 then "crates"
    elif ($files | length) > 0 then "checks" else "none" end) as $mode
-# Without the golden tier: the ignored tests of every changed crate, and those
-# in files of an affected crate that name a changed crate.
+# Integration test files do not change the crate implementation or sibling
+# tests. Support files and other changes retain the broader crate selection.
 | (if $goldens_on or $tier == "fast" or $mode != "crates" then [] else
     [$ignored | to_entries[] | .key as $path | .value as $v
      | ($path | owner($members) | .name) as $crate
      | select($crate != null and ($affected | has($crate)))
      | [$seeds[] | select(ident as $id | ($v.mentions // []) | has($id))] as $named
      | if ($seeds | has($crate)) then
-         {path: $path, crate: $crate, tests: $v.tests, why: "in changed crate \($crate)"}
+         select(any($files[]; (.crates | has($crate)) and
+           (.path == $path or (.path | test("^crates/[^/]+/tests/[^/]+[.]rs$") | not))))
+         | {path: $path, crate: $crate, tests: $v.tests, why: "in changed crate \($crate)"}
        elif ($named | length) > 0 then
          {path: $path, crate: $crate, tests: $v.tests,
           why: "names \($named | map(ident + "::") | join(" "))"}
@@ -234,7 +209,7 @@ else
        | select(.watch as $w | $changed | any(test($w)))
        | "\(.package):\(.test)"] end),
     release_devices: ($affected | has("devices") and ($mode == "crates" or $mode == "full")),
-    cli: ($affected | has("window") and ($mode == "crates" or $mode == "full")),
+    cli: ($affected | has("unemupc") and ($mode == "crates" or $mode == "full")),
     deny: ($files | any(.deny)),
     docs: [$files[] | select(.class == "docs") | .path],
     shell: [$changed[] | select(test("[.]sh$"))],
@@ -525,15 +500,15 @@ run_self_test() {
   fi
 
   # Both runners' failures are reported by test name.
-  printf '%s\n' '        PASS [   0.010s] (1/3) cli::quantum passes' \
-    '        FAIL [   1.250s] (2/3) cli::quantum real16_spin_reaches_cap' \
-    '     SIGSEGV [   0.300s] (3/3) window::bin/unemu shell::tests::crashes' \
+  printf '%s\n' '        PASS [   0.010s] (1/3) unemupc::quantum passes' \
+    '        FAIL [   1.250s] (2/3) unemupc::quantum real16_spin_reaches_cap' \
+    '     SIGSEGV [   0.300s] (3/3) unemupc::bin/unemupc shell::tests::crashes' \
     '     Summary [   1.300s] 3 tests run: 1 passed, 2 failed' \
-    '        FAIL [   1.250s] (2/3) cli::quantum real16_spin_reaches_cap' > "$tmp/nextest.log"
+    '        FAIL [   1.250s] (2/3) unemupc::quantum real16_spin_reaches_cap' > "$tmp/nextest.log"
   printf '%s\n' 'test passes ... ok' 'test shell::tests::breaks ... FAILED' \
     'test result: FAILED. 1 passed; 1 failed' > "$tmp/cargo.log"
   got=$( { failed_tests nextest "$tmp/nextest.log"; failed_tests cargo "$tmp/cargo.log"; } | tr '\n' '|')
-  expect='cli::quantum real16_spin_reaches_cap|window::bin/unemu shell::tests::crashes|shell::tests::breaks|'
+  expect='unemupc::bin/unemupc shell::tests::crashes|unemupc::quantum real16_spin_reaches_cap|shell::tests::breaks|'
   if [[ $got == "$expect" ]]; then
     echo "ok   failed tests are reported by name for both runners"
   else

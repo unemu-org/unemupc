@@ -1,2 +1,1 @@
-# Synthetic allow list for the self-test fixtures.
-assembly → journal (normal): the machine writes its journals while it runs
+pc-config → machine-file (normal): synthetic accepted crossing

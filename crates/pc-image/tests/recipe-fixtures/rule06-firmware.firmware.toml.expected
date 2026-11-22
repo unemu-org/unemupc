@@ -1,3 +1,0 @@
-rule06-firmware.firmware.toml:14:1: error[6.11.6] license: GPL-2.0-or-later is copyleft: the package carries its source, so source is required
-rule06-firmware.firmware.toml:14:1: error[6.11.6] license: the firmware catalogue lists `ibm-5170-bios-1985-06-10` as user-supplied; its package takes no [license]
-rule06-firmware.firmware.toml:15:14: error[6.11.6] license.expression: the firmware catalogue records GPL-3.0-or-later for `unemu-at-bios-1.0.2-unemu.3`; the expression is that one

@@ -1,13 +1,13 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 name: Release
 
-# Builds unemu and unemupc for each release platform and attaches them to the
+# Builds unemupc for each release platform and attaches them to the
 # GitHub release: one unemupc-<version>-<target>.tar.gz per platform and a
 # SHA256SUMS file. Publishing a release for a tag (v0.1.0) starts it; a manual
 # run with that tag builds again and replaces the release's assets. Nothing is
 # published to a package registry.
 #
-# The binaries are built outside Nix with rustup: a Nix build links libraries
+# The binary is built outside Nix with rustup: a Nix build links libraries
 # from /nix/store, and the binary would not start on a machine without Nix.
 # Every action is pinned to a full commit SHA; the comment names its release.
 on:
@@ -40,33 +40,6 @@ env:
   CARGO_TERM_COLOR: never
 
 jobs:
-  recipe-conformance:
-    name: recipe conformance
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: refs/tags/${{ env.TAG }}
-          persist-credentials: false
-      - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31.11.5
-      - name: Drop the job token from the Nix configuration
-        run: sudo sed -i '/^access-tokens[[:space:]]*=/d' /etc/nix/nix.conf
-      - name: Build fixtures
-        run: bash scripts/ci-gate.sh fixtures
-      - name: Check the published schema
-        run: nix develop --no-update-lock-file --command cargo test --locked -p pc-image --test recipe_check the_published_schema_is_the_generated_one
-      - name: Reproduce every pinned recipe
-        run: bash scripts/ci-gate.sh recipe-conformance
-      - name: Prepare the schema release asset
-        run: |
-          mkdir -p dist
-          cp backlog/docs/design/recipe-schema-1.0.json dist/
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: release-recipe-schema
-          path: dist/recipe-schema-1.0.json
-          if-no-files-found: error
-
   build:
     name: build (${{ matrix.target }})
     runs-on: ${{ matrix.runner }}
@@ -74,7 +47,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # The oldest hosted Ubuntu sets the glibc the binaries need (2.35).
+          # The oldest hosted Ubuntu sets the glibc the binary needs (2.35).
           - target: x86_64-unknown-linux-gnu
             runner: ubuntu-22.04
           # Rust targets macOS 11 by default, so the runner's macOS version does
@@ -111,16 +84,6 @@ jobs:
             exit 1
           fi
 
-      # cpal links ALSA, which it finds through pkg-config. The X11, Wayland,
-      # xkbcommon and EGL/GLX libraries of eframe and winit are opened at run
-      # time (dlopen), so the build needs no packages for them.
-      - name: Install build libraries
-        if: runner.os == 'Linux'
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends pkg-config libasound2-dev
-
       - name: Install Rust
         run: |
           set -euo pipefail
@@ -128,11 +91,11 @@ jobs:
           rustc --version
           cargo --version
 
-      # rustc records source paths in the binaries (panic locations, file!()).
+      # rustc records source paths in the binary (panic locations, file!()).
       # Rewrite every prefix that names the runner: the workspace (and target/
       # inside it, where generated sources live), cargo's registry sources and
-      # git checkouts, and the toolchain. cc gets the same mapping for the C
-      # sources of ring and zstd, should a __FILE__ of theirs reach a binary.
+      # git checkouts, and the toolchain. cc gets the same mapping for any C
+      # sources built by dependencies, should a __FILE__ reach the binary.
       - name: Build
         run: |
           set -euo pipefail
@@ -152,37 +115,15 @@ jobs:
           export UNEMUPC_SOURCE_COMMIT
           export CFLAGS="-ffile-prefix-map=$GITHUB_WORKSPACE=/build/unemupc -ffile-prefix-map=$cargo_home/registry/src=/cargo/registry/src -ffile-prefix-map=$cargo_home/git/checkouts=/cargo/git/checkouts"
           cargo build --locked --release --target "$TARGET" \
-            -p window -p unemupc --bin unemu --bin unemupc
+            -p unemupc --bin unemupc
 
-      - name: Check command words on headless Linux with and without ALSA
-        if: runner.os == 'Linux'
-        run: |
-          set -euo pipefail
-          docker run --rm -v "$PWD/target/$TARGET/release/unemu:/usr/local/bin/unemu:ro" ubuntu:22.04 bash -euc '
-            if unemu image ls --store /tmp/missing-store > /tmp/no-alsa.log 2>&1; then
-              echo "::error::unemu unexpectedly started without the ALSA runtime"
-              exit 1
-            fi
-            cat /tmp/no-alsa.log
-            grep -q libasound.so.2 /tmp/no-alsa.log
-            apt-get update
-            apt-get install -y --no-install-recommends libasound2
-            unemu --version
-            status=0
-            unemu image ls --store /tmp/missing-store > /tmp/with-alsa.log 2>&1 || status=$?
-            cat /tmp/with-alsa.log
-            test "$status" = 1
-            unemu media create floppy --type 360K /tmp/disk.img --format
-            test "$(stat -c %s /tmp/disk.img)" = 368640
-          '
-
-      - name: Check the binaries
+      - name: Check the binary
         run: |
           set -euo pipefail
           cargo_home=${CARGO_HOME:-$HOME/.cargo}
           sysroot=$(rustc --print sysroot)
           failed=0
-          for bin in unemu unemupc; do
+          for bin in unemupc; do
             file=target/$TARGET/release/$bin
             "$file" --version
             list=$RUNNER_TEMP/$bin.strings
@@ -222,7 +163,7 @@ jobs:
           done
           exit "$failed"
 
-      # The archive holds the binaries, the licence, the README, the
+      # The archive holds the binary, the licence, the README, the
       # third-party licences generated for this target, and the repository's
       # own notices those licences quote, under notices/ at their repository
       # paths, with the standard licence texts of LICENSES/.
@@ -232,7 +173,7 @@ jobs:
           name=unemupc-${TAG#v}-$TARGET
           stage=dist/$name
           mkdir -p "$stage/notices"
-          cp "target/$TARGET/release/unemu" "target/$TARGET/release/unemupc" LICENSE README.md "$stage/"
+          cp "target/$TARGET/release/unemupc" LICENSE README.md "$stage/"
           bash scripts/third-party-licenses.sh "$stage/THIRD-PARTY-LICENSES.md" "$TARGET"
           # The headings of "Components in this repository" name those files;
           # the licence texts between the fences are skipped.
@@ -270,7 +211,7 @@ jobs:
 
   upload:
     name: upload
-    needs: [build, recipe-conformance]
+    needs: [build]
     runs-on: ubuntu-24.04
     permissions:
       contents: write # gh release upload and gh release edit
@@ -285,7 +226,7 @@ jobs:
         run: |
           set -euo pipefail
           cd dist
-          sha256sum -- *.tar.gz recipe-schema-1.0.json > SHA256SUMS
+          sha256sum -- *.tar.gz > SHA256SUMS
           cat SHA256SUMS
 
       # --clobber lets a manual run replace the assets of an earlier one.
@@ -294,7 +235,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          gh release upload "$TAG" dist/*.tar.gz dist/recipe-schema-1.0.json dist/SHA256SUMS \
+          gh release upload "$TAG" dist/*.tar.gz dist/SHA256SUMS \
             --repo "$GITHUB_REPOSITORY" --clobber
 
       # Appended once: a manual run finds the marker and leaves the notes alone.
@@ -320,9 +261,7 @@ jobs:
           - Linux x86-64 (glibc 2.35 or newer): `unemupc-<version>-x86_64-unknown-linux-gnu.tar.gz`
           - macOS on Apple silicon: `unemupc-<version>-aarch64-apple-darwin.tar.gz`
 
-          `recipe-schema-1.0.json` is the recipe format 1.0 editor schema.
-
-          Each archive holds `unemu` (the desktop app and command line), `unemupc` (the standalone PC core command line), `LICENSE`,
+          Each archive holds `unemupc` (the standalone PC core command line), `LICENSE`,
           `README.md`, `THIRD-PARTY-LICENSES.md` and the notices it quotes. Check a download against `SHA256SUMS`:
 
           ```sh
@@ -330,17 +269,14 @@ jobs:
           shasum -a 256 --ignore-missing -c SHA256SUMS     # macOS
           ```
 
-          The macOS binaries are not signed or notarized yet, so macOS refuses to
-          open them as downloaded. After unpacking, remove the quarantine flag in
+          The macOS binary is not signed or notarized yet, so macOS refuses to
+          open it as downloaded. After unpacking, remove the quarantine flag in
           the unpacked folder:
 
           ```sh
-          xattr -d com.apple.quarantine unemu unemupc
+          xattr -d com.apple.quarantine unemupc
           ```
 
-          On Linux `unemu` needs ALSA (`libasound.so.2`), including for command words
-          on a headless host; install `libasound2` on Ubuntu 22.04. The window also needs an X11 or
-          Wayland session with OpenGL; the command line needs neither.
           NOTES
           } > "$RUNNER_TEMP/notes.md"
           gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file "$RUNNER_TEMP/notes.md"

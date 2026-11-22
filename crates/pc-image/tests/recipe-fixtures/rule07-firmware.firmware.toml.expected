@@ -1,5 +1,0 @@
-rule07-firmware.firmware.toml:14:23: error[6.11.7] package.fits.boards[2]: `amiga-500` is not a board of ibm-pc: one of ibm-5170, ibm-5150, ibm-5160, compaq-deskpro, tandy-1000, generic-386-isa, i440fx-piix3, i440bx-piix4
-rule07-firmware.firmware.toml:15:20: error[6.11.7] package.fits.machine_classes[1]: `ps2` is not a machine class of ibm-pc: one of at, xt
-rule07-firmware.firmware.toml:29:8: error[6.11.7] rom[1].role: `kickstart` is not a ROM role of ibm-pc: one of system-bios, option-rom, video-bios, keyboard-controller, other
-rule07-firmware.firmware.toml:30:16: error[6.11.7] rom[1].catalogue_id: the firmware catalogue of ibm-pc has no entry `no-such-bios`
-rule07-firmware.firmware.toml:35:14: error[6.11.7] rom[1].parts[2].lane: `high` is not a chip lane of ibm-pc: one of even, odd

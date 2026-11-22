@@ -1,1 +1,0 @@
-rule02-no-identity.media.toml:1:1: error[6.11.2] no identity table: a recipe has [media] or [firmware], a work file [work]

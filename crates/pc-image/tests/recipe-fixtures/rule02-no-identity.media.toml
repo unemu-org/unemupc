@@ -1,5 +1,0 @@
-# Rule 2: no identity table at all.
-recipe = "1.0"
-
-[title]
-title = "Demo"

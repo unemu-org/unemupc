@@ -128,7 +128,7 @@ would stop the next dependency or the next `std::fs` call.
    crates only: no image store, no registry, no recipes, no window
    toolkit. For the PC it is `unemupc`: headless runs of machine files and
    BIOS ROMs, the machine check and the journal tools, with the words,
-   output and exit codes those commands have in `upcli` today, and room
+   output and exit codes those commands have in the [unemu front end](https://github.com/unemu-org/unemu), and room
    for the debugger, tracing and the exception trace.
 9. **Not required now**, each with the event that would make it worth its
    cost:

@@ -57,7 +57,7 @@ in CI; see [`commands.md` § CI](commands.md#ci).
 ## When in doubt
 
 - Read the relevant decision: `ls backlog/decisions/` (see [`decisions.md`](decisions.md)).
-- Check active work: `backlog task list --plain`.
+- Check active work: `bd ready --exclude-type epic`.
 - Ask the user. Solo project — they're the only deciding authority.
 
 ---
@@ -66,12 +66,12 @@ in CI; see [`commands.md` § CI](commands.md#ci).
 
 - **Edition**: 2021. **MSRV**: the latest stable Rust the devShell provides
   (currently 1.99; decision-17), never below x86jit's. **Workspace**: one Cargo workspace, one crate per swap-layer
-  (`cpu`, `bus`, `chipset`, `device`, `devices/*`, `video`, `machine`, `cli-core`, `cli-pc`, `upcli`,
+  (`cpu`, `bus`, `chipset`, `device`, `devices/*`, `video`, `machine`, `unemupc`, `pc-harness`,
   `testkit`).
 - **Clippy**: `cargo clippy --all-targets --all-features -- -D warnings` is the
   gate. **Format**: `cargo fmt`, default rustfmt.
 - **Error handling**: `thiserror` for library error enums with stable variants
-  (bus faults, device errors); `anyhow` only in the CLI crates (`cli-core`, `cli-pc`, `upcli`) and tests. Never `unwrap`/
+  (bus faults, device errors); `anyhow` only in the host tools (`unemupc`, `pc-harness`) and tests. Never `unwrap`/
   `expect` in library code outside tests — return a typed error.
 - **Naming**: model real hardware — device types named after the chip
   (`Uart16550`, `Pic8259`, `Pit8253`, `I8042`). One device per module.

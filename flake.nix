@@ -66,6 +66,7 @@
             backlog-md.packages.${system}.default # `backlog` — local-first task tracker
             pkgs.pre-commit
             pkgs.git
+            pkgs.python3 # source-include guard and fixture validation
 
             # --- Rust toolchain (CPU core = x86jit, all crates are Rust) ---
             rustToolchain
@@ -95,13 +96,6 @@
 
             # Fetching the SingleStepTests / ProcessorTests corpus (real-mode oracle)
             pkgs.jq
-
-            # scripts/export-layout.sh decodes +zstd layers without unemu.
-            pkgs.zstd
-          ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
-            # cpal's Linux backend discovers ALSA through pkg-config.
-            pkgs.pkg-config
-            pkgs.alsa-lib
           ];
           # Downloads trust the pinned Mozilla roots, not the host's bundle: an
           # old container's bundle lacks roots that current mirrors chain to.

@@ -49,7 +49,7 @@ frame sinks and keyboard encoder never read host time. Tests inject elapsed host
 durations and a simulated slice clock into `advance_with_slice_clock`; older
 virtual-target tests use `advance_fully`, which supplies zero host cost. The
 frontend neither ticks devices nor injects input during a scheduler call.
-The pure policy lives in `crates/machine-view/src/pacing.rs`; the conversion of a
+The pure policy lives in [`crates/machine-view/src/pacing.rs`](https://github.com/unemu-org/unemu/blob/8702727a5f88dae352d095ba456ab0ca5f529c72/crates/machine-view/src/pacing.rs); the conversion of a
 tick deadline to a retired-instruction cap lives with the PC core, in
 `crates/pc-core/src/pacing.rs`.
 
@@ -996,7 +996,7 @@ session lists none and says `desktop  the delivery log starts with this
 report`, and the later ones list the deliveries since. There is no
 environment switch. The chord belongs to the host, with the pointer
 captured or not: the shell checks it before a key goes to the guest, and
-its D never reaches the guest (`crates/window/src/diagnostics.rs`). Tools ›
+its D never reaches the guest ([`crates/window/src/diagnostics.rs`](https://github.com/unemu-org/unemu/blob/8702727a5f88dae352d095ba456ab0ca5f529c72/crates/window/src/diagnostics.rs)). Tools ›
 Diagnostics › Open diagnostics folder shows that folder in the platform's
 file manager (`open` on macOS, `explorer` on Windows, `xdg-open`
 elsewhere, the opener reaped by a thread), creating it first.
@@ -1180,7 +1180,7 @@ the run.
 
 MEASURED. The open guest `assembly::test_support::deliveries_rom` (its NASM
 listing and SHA-256 are pinned beside it) takes one delivery of each kind and
-halts; its exact trace, in `crates/cli-pc/tests/exception_trace.rs`:
+halts; its exact trace, in [`crates/cli-pc/tests/exception_trace.rs`](https://github.com/unemu-org/unemu/blob/8702727a5f88dae352d095ba456ab0ca5f529c72/crates/cli-pc/tests/exception_trace.rs):
 
 ```text
 delivery 12 fault #UD vector 06 at f800:002e linear 0f802e error - cpl 0->0 bytes 0f ff cd 60 b0 11 e6 20 ax 0000 bx 0000 cx 0000 dx 0000 si 0000 di 0000 bp 0000 ds 0000 es 0000 ss:sp 0000:7000 flags 0046
@@ -1209,8 +1209,8 @@ registers of its last delivery (`ss:sp 1000:0009`), and a summary of 10,922
 stall stop; both stop as without the recording. `delivery_ring_rom` takes
 12,000 software interrupts that never fold, alternating INT 60h and INT 61h:
 the recording holds exactly the last 10,000, deliveries 2,001 to 12,000 at
-their retired counts, and the summary counts 6,000 of each, from upcli and
-from the desktop alike (`crates/window/src/shell.rs`,
+their retired counts, and the summary counts 6,000 of each, from the [unemu front end](https://github.com/unemu-org/unemu)
+command line and desktop alike ([`crates/window/src/shell.rs`](https://github.com/unemu-org/unemu/blob/8702727a5f88dae352d095ba456ab0ca5f529c72/crates/window/src/shell.rs),
 `record_exceptions_writes_the_last_entries_at_every_trigger`, which also
 writes it at each trigger and finds the guest halting at the same retired
 count with the recording on or off). On a bare 80286, fifty distinct INT 21h
