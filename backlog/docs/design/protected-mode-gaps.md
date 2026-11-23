@@ -1,8 +1,22 @@
 # 386 protected-mode gaps
 
+## Current unpaged machine qualification (2026-11-23)
+
+**MEASURED**, CPU pin `99ed385ea653bbc7e66b16cd1de0dfd42366fa75`:
+[the project-owned 386 ROM](i386-pm-test.md) runs on `generic-386-isa`
+from the high reset copy and low shadow, enters USE32 protected mode,
+uses flat and limited segments, handles #GP(0) and software interrupt/trap
+gates, takes three ring-0 and one ring-3 PIT IRQ through the remapped PIC,
+uses a 386 TSS for ring transitions, and returns to real mode. All checks
+pass at 8,120 retired instructions. Deadline/PerClock and run chunks agree.
+This supplies the unpaged coverage of implementation items 1, 7 and 8 below;
+it does not cover paging, a DOS extender, or their full acceptance matrices.
+The investigation verdict and probes below describe their historical pin,
+not the current unpaged CPU capabilities.
+
 ## Context
 
-**Verdict: the investigated core cannot execute a DOS extender's protected-mode
+**Historical verdict: the investigated core cannot execute a DOS extender's protected-mode
 entry or a guest-paged 32-bit program.** The decode groundwork is useful,
 but `Compat32` is a flat application execution context, not an emulated
 80386 system. Legacy protected mode needs changes to the CPU-state, mode,
@@ -24,7 +38,7 @@ Evidence vocabulary throughout:
 - **ASSUMED:** a proposed scope choice or inference requiring later acceptance
   tests. In particular, no complete DOS extender was run.
 
-The current CPU pin is `6cb817b86c1fbf463f7aab8c0da1ce0eec3db0b7`.
+The investigation CPU pin was `6cb817b86c1fbf463f7aab8c0da1ce0eec3db0b7`.
 `Vm::set_cpu_model(CpuModel::I80286)` selects the machine profile on
 `ibm-5170`, fixes the model for the VM lifetime and defaults to
 `ExceptionDelivery::InGuest`. The separate I80386 core model is not selected
@@ -689,6 +703,10 @@ cited here are existing follow-up work filed by the supervisor.
    not the machine decode an IDT itself. Add tests for guest PIC remapping,
    a timer IRQ into USE32 code, IRETD, IF and STI/SS inhibition, pending
    completion blocking and one acknowledgement per accepted request.
+   **MEASURED now:** `i386_pm_test_golden.rs` qualifies a remapped PIC IRQ0
+   in USE32 at CPL 0 and CPL 3, with EOI, IRETD, exact counts and TSS stack
+   frames; see [i386-pm-test.md](i386-pm-test.md). Incomplete-access and
+   failed-delivery cases retain their separate acceptance tests.
    A handler must explicitly EOI the actual PIC. Shutdown from failed #DF
    delivery needs a defined typed stop/reset policy, not a host panic.
 
@@ -909,7 +927,10 @@ existing follow-up beads are in firmware-and-machine-classes.md §3.6.
    state and exact completed steps through an appropriate test API. Record
    CPU revision in golden identity; rerun existing slow goldens when the pin
    moves under supervisor authorization. Before evidence: P1/P2/P3 fail these
-   requirements on the current pin.
+   requirements on the investigation pin.
+   **Partial coverage now:** `i386-pm-test` measures PE/USE32 entry, segments,
+   extended RAM, a recoverable #GP and real-mode return at pin `99ed385e`.
+   Non-identity paging and recoverable #PF remain blocked on `xj-srh.7 (x86jit)`.
 2. **Add extended RAM to the 386 diagnostic configuration.** Dependencies:
    none for the data/model work; 1 for protected execution tests. Acceptance:
    configurable contiguous RAM above 1 MiB, preserved VGA/ROM holes, matching
@@ -959,6 +980,11 @@ existing follow-up beads are in firmware-and-machine-classes.md §3.6.
    no premature interrupt during incomplete port/MMIO access, and a defined
    shutdown result when delivery fails irrecoverably. Before evidence:
    P3 readiness refuses the mode and P4 injects a real-mode frame.
+   **Protected timer IRQ covered:** the new ROM programs both PICs and PIT
+   Mode 2, takes exactly three IRQ0s at CPL 0 and one at CPL 3, checks the
+   privilege frame, EOIs and resumes. Host delivery records require four
+   hardware vector-20h events. This does not close the incomplete-access,
+   interrupt-shadow or failed-delivery matrix above.
 8. **Extend scheduler equivalence fixtures to mixed and paged 32-bit code.**
    Dependencies: 1, 7, x86jit request 5; request 10 for INS/OUTS fixtures.
    Acceptance: existing Deadline and test-only PerClock engines agree on
@@ -966,6 +992,12 @@ existing follow-up beads are in firmware-and-machine-classes.md §3.6.
    PE/PG changes, 32-bit REP, deferred I/O, HLT and bounded caps. Vary run
    chunk sizes; completed stopping accesses are charged once and faults
    preserve the completed prefix. No wall clock or block-count timing.
+   **Partial coverage now:** the unpaged ROM agrees in transcript, exact
+   retired count, virtual time and full delivery records between Deadline
+   and PerClock, and with Deadline chunks of 1 and 17 and PerClock chunks
+   of 257 instructions. Its mode switches, REP table initialization and
+   port I/O run through the existing machine loop. Paging, mixed-width
+   deferred MMIO/INS/OUTS, HLT wakeups and the full state matrix remain open.
 9. **Add protected CPU checkpoint capture and restore qualification.**
    Dependencies: 1, 4, 7–8, x86jit request 13. Acceptance: versioned CPU
    image round-trips hidden caches, CR/table/task state, mode/default sizes,

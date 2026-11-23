@@ -25,6 +25,16 @@ device latches, and reset-storm reports for each source. CF9h stays unmapped:
 SeaBIOS's PCI reset writes fall through to its one-byte-IDT triple fault
 on this ISA board. See machine-files.md §Generic 386 ISA board.
 
+**MEASURED:** the project-owned [i386-pm-test ROM](design/i386-pm-test.md)
+now runs independently of any BIOS on this board at the same CPU pin. It
+checks real-mode identity and port-92h A20, USE32 entry/segmentation, extended
+RAM, recoverable IDT #GP(0), interrupt/trap gates, exactly three ring-0 PIT
+IRQs, ring-3 INT and timer delivery on the TSS stack, and return to real mode.
+The exact port-402h golden reports zero failures and halts after **8,120
+retired instructions**, identically on repeated runs. Delivery records agree
+between Deadline and PerClock and across bounded run chunks. This qualifies
+unpaged execution only: paging, I/O bitmaps and a DOS extender remain pending.
+
 `seabios-1.17.0-isa` remains **Listed**, not boot-qualified. **MEASURED** with
 `machines/generic-386-seabios.toml`: after 3,081 retired instructions, port
 402h contains the version banner and the no-PCI-bridge shadow-unlock diagnostic;
