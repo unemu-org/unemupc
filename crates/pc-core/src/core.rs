@@ -6,7 +6,8 @@
 use crate::machine::PC_FEATURES;
 use unemu_core_api::{
     ConfigDocument, ContractVersion, Core, CoreDescription, CreateRequest, Error, ErrorKind,
-    Machine, Notice, OptionDescription, PlatformDescription, Validated,
+    ExportFormat, ExportReport, ExportRequest, ExportScope, ExportSink, Machine, MediaDescription,
+    Notice, OptionDescription, PlatformDescription, SlotId, Validated,
 };
 
 /// The platform id stored PC images name.
@@ -14,6 +15,9 @@ const PLATFORM: &str = pc_config::launch::PLATFORM;
 
 #[path = "mount.rs"]
 pub(crate) mod mount;
+
+#[path = "export.rs"]
+mod export;
 
 static OPTIONS: [OptionDescription; 2] = [
     OptionDescription::new(
@@ -30,7 +34,12 @@ static PLATFORMS: [PlatformDescription; 1] =
     [PlatformDescription::new(PLATFORM, "IBM PC compatible")
         .with_features(PC_FEATURES)
         .with_config_types(&[pc_config::launch::MEDIA_TYPE])
-        .with_options(&OPTIONS)];
+        .with_options(&OPTIONS)
+        .with_export_formats(&[
+            ExportFormat::new("raw", "Raw disk image", "img", ExportScope::Slot),
+            ExportFormat::new("vhd-fixed", "Fixed VHD", "vhd", ExportScope::Slot),
+            ExportFormat::new("machine", "PC machine file", "toml", ExportScope::Machine),
+        ])];
 
 static NOTICES: [Notice; 2] = [
     Notice::new("Nuked-OPL3", devices::OPL3_NOTICE),
@@ -58,6 +67,33 @@ impl Core for PcCore {
     fn create(&self, request: &CreateRequest<'_>) -> Result<Box<dyn Machine>, Error> {
         self.create_machine(request)
             .map(|machine| Box::new(machine) as Box<dyn Machine>)
+    }
+
+    fn describe_media(
+        &self,
+        platform: &str,
+        config: ConfigDocument<'_>,
+    ) -> Result<Vec<MediaDescription>, Error> {
+        export::describe(platform, config)
+    }
+
+    fn export_slots(
+        &self,
+        platform: &str,
+        config: ConfigDocument<'_>,
+        format_id: &str,
+    ) -> Result<Vec<SlotId>, Error> {
+        export::slots(platform, config, format_id)
+    }
+
+    fn export(
+        &self,
+        platform: &str,
+        config: ConfigDocument<'_>,
+        request: ExportRequest<'_>,
+        sink: &mut dyn ExportSink,
+    ) -> Result<ExportReport, Error> {
+        export::export(platform, config, request, sink)
     }
 
     fn validate(&self, platform: &str, config: ConfigDocument<'_>) -> Result<Validated, Error> {

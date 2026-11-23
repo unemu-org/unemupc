@@ -581,6 +581,8 @@ dependencies = [
  "devices",
  "machine",
  "pc-config",
+ "sha2",
+ "toml",
  "unemu-core-api",
  "video",
 ]
@@ -596,7 +598,9 @@ dependencies = [
  "journal-files",
  "machine",
  "machine-file",
+ "pc-config",
  "pc-harness",
+ "toml",
  "unemu-core-api",
  "unemu-pc-core",
  "video",

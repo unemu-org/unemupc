@@ -3,6 +3,13 @@
 Commands for the PC core and standalone `unemupc`. The front end
 and `setup-unemu` live in [unemu](https://github.com/unemu-org/unemu).
 
+The optional offline contract APIs are exercised by
+`cargo test --offline -p unemu-pc-core -p unemupc --test export`. The PC core
+advertises `raw`, `vhd-fixed` and `machine`; frontends supply current-byte
+readers and an export sink. These APIs do not add a standalone export command.
+Machine exports require the existing loader's firmware search roots because
+ROM references contain only SHA-256 identities, never copied firmware.
+
 ## Standalone PC core command line
 
 ```sh

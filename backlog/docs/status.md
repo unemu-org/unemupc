@@ -7,9 +7,22 @@ beads (`bd ready --exclude-type epic`, `bd list --type epic`).
 
 Update this when a feature lands, breaks, or gets pulled. Stale status is worse than no status.
 
+- **2026-11-23 — Offline PC media description and export:** contract 0.5's
+  optional operations describe configured floppy/fixed-disk slots and their
+  fixed lengths without creating a PC. `raw`, `vhd-fixed` and `machine` export
+  current readers through streamed sinks. VHD footers and machine documents
+  are deterministic; machine files use relative image names, full output
+  SHA-256 pins, volatile writes and hash-only firmware references. Reports
+  disclose settings omitted or changed by the format. Tests cover the shipped
+  floppy/IDE configurations, the existing machine-file loader, an independent
+  VHD parser and fixed footer vector, request-order determinism, bounded reads,
+  validation and reader/sink failures. Emulation and golden expectations are
+  unchanged.
+
 - **2026-11-23 — PC contract 0.4 migration, pinned at 0.5:** `unemu-core-api` and
   `unemu-core-files` use release v0.5.0 at `316dd2a1` (0.5 only adds optional
-  offline media description and export, not implemented by the PC core yet).
+  offline media description and export, implemented by the PC core below the
+  frontend boundary).
   The PC core and About output state contract 0.5. Successful finish enters `Finished`; terminal
   mutations and invalid input return `Usage`. Soft reset works in Ready and
   Halted, clears queued input and held controls, and preserves counters and
