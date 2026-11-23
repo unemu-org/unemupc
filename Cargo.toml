@@ -13,6 +13,7 @@ members = [
     "crates/assembly",
     "crates/testkit",
     "crates/unemupc",
+    "crates/view",
     "crates/pc-harness",
     "crates/pc-core",
     "crates/journal",
@@ -32,6 +33,11 @@ repository = "https://github.com/unemu-org/unemupc"
 publish = false
 
 [workspace.dependencies]
+unemupc = { path = "crates/unemupc", version = "0.0.4" }
+machine-view = { version = "0.0.4", git = "https://github.com/unemu-org/unemu-host", rev = "cfa7c3a08c9307a5c542ef27ce44a7fef462578e" }
+unemu-test-core = { version = "0.0.4", git = "https://github.com/unemu-org/unemu-host", rev = "cfa7c3a08c9307a5c542ef27ce44a7fef462578e" }
+winit = "0.30"
+softbuffer = { version = "0.4.8", default-features = false, features = ["x11", "x11-dlopen", "wayland", "wayland-dlopen"] }
 libc = "0.2"
 serde = { version = "1", features = ["derive"] }
 toml = "1"

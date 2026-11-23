@@ -56,7 +56,61 @@ standalone runner. Firmware comes from the machine file and repeated `--rom-dir 
 `--diag-at` and `--trace-exceptions` retain the machine runner's semantics.
 `--store` and `--no-store` are refused here. Usage names `unemupc`, and
 version/about list only the PC core and its notices. Core release archives
-ship `unemupc`.
+ship `unemupc` and `unemupc-view`.
+
+## Viewing a machine
+
+```sh
+cargo run --offline -p unemupc-view -- --machine machines/at-games-open.toml
+cargo run --offline -p unemupc-view -- --machine machines/at-games.toml --rom-dir /path/to/roms
+cargo run --offline -p unemupc-view -- --machine machines/at-freedos.toml --speed 2
+```
+
+`unemupc-view --machine FILE [--rom-dir DIR]... [--allow-unlisted-firmware]
+[--speed N|unlimited]` uses the same machine-file loading, firmware discovery,
+validation and assembly path as `unemupc run --machine`. `N` is `1` (default),
+`2` or `4`, the speeds offered by `machine-view`; other numbers are refused.
+Audio plays at speed 1; accelerated modes mute it. Audio-device failures warn
+on stderr and leave the picture running. Linux needs ALSA (`libasound.so.2`;
+`libasound2` on Ubuntu 22.04), plus an X11 or Wayland desktop. Building on
+Linux also needs `pkg-config` and `libasound2-dev`; the Nix devShell supplies
+both through `pkg-config` and `alsa-lib`.
+
+The window title is the resolved machine name (the file stem when unnamed).
+It shows the first configured display, cropped to the visible picture,
+scaled with nearest sampling to the machine's stated aspect and letterboxed
+in black. This is a bare picture window, with no menus, overlays or GUI
+chrome beyond the operating system's window frame; the maintainer's GUI
+mock-up rule therefore requires no additional interface design here.
+Messages, warnings and errors go to stderr.
+
+| Host control | Chord |
+| --- | --- |
+| Soft reset | Ctrl+Alt+R |
+| Pause / resume | Ctrl+Alt+P |
+| Finish and quit | Ctrl+Alt+Q, or close the window |
+| Capture the relative pointer | Click inside the picture; this first click is swallowed |
+| Release the pointer | Ctrl+Alt+G; Command+G on macOS also works, as in the front end |
+
+Focus loss, pause and suspension release capture. Pausing keeps the last
+picture and stops advancement; resuming re-anchors pacing without catching
+up the paused interval. Reset works while running, paused or halted and
+preserves pause. Closing calls the contract's `finish`, enters `Finished`
+and closes journals; a storage failure is reported with a failing exit code.
+Keyboard events use physical positions mapped to USB usages by `machine-view`.
+The shared session also handles Ctrl+Alt+M (mute), Ctrl+Alt+F/E (next/eject
+first removable medium), with Shift selecting the second removable slot.
+The minimal viewer does not enable the optional macOS system-key tap:
+shortcuts reserved by the OS remain reserved; no accessibility permission
+is requested.
+
+Manual validation needs a desktop and audio device: boot the open games
+machine, resize across wide/tall/tiny windows, type into DOS, capture and
+release its mouse, check sound at speed 1 and mute at 2/4/unlimited, pause
+and resume after a wait, reset both running and halted guests, and close a
+journal-writing session then reopen it. On macOS also check Command+G and
+focus changes; on Linux check both X11 and Wayland. The automated controller
+tests use a scripted contract machine and never open a window or audio device.
 
 ## Build / run / test
 

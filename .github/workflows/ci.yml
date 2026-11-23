@@ -43,6 +43,14 @@ jobs:
         with:
           persist-credentials: false
 
+      # Host audio is linked by the viewer in clippy and the workspace tests.
+      # The devShell also supplies ALSA for Nix builds.
+      - name: Install Linux audio headers
+        id: alsa
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pkg-config libasound2-dev
+
       # The Nix store (devShell with the Rust toolchain and QEMU, plus the
       # firmware builds), the test-profile target directory, the cache
       # archives and the fixtures lane's downloads (about 330 MB) together
@@ -193,6 +201,7 @@ jobs:
         if: always()
         env:
           OUTCOMES: >-
+            alsa=${{ steps.alsa.outcome }}
             disk=${{ steps.disk.outcome }}
             nix=${{ steps.nix.outcome }}
             nix_token=${{ steps.nix_token.outcome }}

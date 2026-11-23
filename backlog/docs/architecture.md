@@ -9,7 +9,7 @@ The hardware specification is [`design/spec.md`](design/spec.md).
 
 ## Crate map and dependencies
 
-The 17 workspace packages implement the PC core, its host tools and tests.
+The 18 workspace packages implement the PC core, its host tools and tests.
 The root [`Cargo.toml`](../../Cargo.toml) owns the exact CPU and contract pins.
 The desktop and command front end live in [unemu](https://github.com/unemu-org/unemu).
 
@@ -32,12 +32,21 @@ The desktop and command front end live in [unemu](https://github.com/unemu-org/u
 | `testkit` | Single-device `MockBus`, scripted `MockCpu`, golden assertions | `device`, `cpu` | None |
 | `pc-harness` | Machine runners for the PC/AT goldens and the command line: hand-encoded guest programs, key scripts, assembly/policy selection, output capture and stop diagnostics (`StopReason`). Its `tests/` hold the emulation goldens (BIOS POST, FreeDOS boots and sessions, floppy, IDE, VGA, EMS, sound, the scheduler A/B tests) and `tests/support/`. Behind `test-support`, it exports `test_support::{fixtures, session, at_games, fat12}` for front-end tests; `test_support::root()` selects the core fixture checkout via `UNEMUPC_FIXTURE_ROOT` (an existing absolute directory), defaulting to its own repository | `machine-file`, `journal-files`, `assembly`, `device`, `cpu`, `chipset`, `machine`, `devices`, `video`, `anyhow` | `bus`, `testkit`, `toml`, `machine-file/test-support`, `machine/reference-scheduler`, `assembly/reference-scheduler`, `assembly/test-support` |
 | `unemupc` | The standalone PC core command line ([core contract](design/core-contract.md) §12.8): library parser, machine usage lines, dispatch, runner and core-only notices; binary `unemupc` offers `--boot`, `--bios`, `machine check`, `run --machine`, `--version`, `--about`, and `media generations`, `verify`, `rollback`, `commit` (alias `compact`). No store or registry. `execute_with_loader` shares execution with the frontend while leaving its store-backed preparation in `cli-pc` | `pc-harness`, `machine-file`, `unemu-pc-core`, `unemu-core-api`, `assembly`, `machine`, `device`, `video`, `anyhow`, `journal-files` | `cpu`, `assembly/test-support`, `pc-config`, `toml`, `unemu-core-api/test-support` |
+| `unemupc-view` (`crates/view`) | Application: bare winit picture window over `machine-view::Session`; softbuffer nearest sampling and letterboxing, host controls, clean finish. Reuses the standalone loader and machine-file assembler; no GUI toolkit | `unemupc`, `machine-file`, `assembly`, `unemu-pc-core`, `unemu-core-api`, `machine-view` (exact unemu-host pin), `winit`, `softbuffer`, `anyhow` | `unemu-test-core` (same pin), contract and session test support |
 | --- | --- | --- |
 
 | Layer | Workspace crates | May depend on |
 | --- | --- | --- |
 | `emulation` | `device`, `bus`, `cpu`, `video`, `audio`, `devices`, `chipset`, `machine`, `testkit`, `assembly`, `journal`, `unemu-pc-core`, `pc-config` | `contract`, `emulation` |
 | `pc` | `unemupc`, `machine-file`, `journal-files`, `pc-harness` | `contract`, `emulation`, `pc` |
+| `application` | `unemupc-view` | `contract`, `emulation`, `pc`, `application` |
+
+Only the application links window and host-audio crates. `machine-view`
+comes from `unemu-host` at `cfa7c3a08c9307a5c542ef27ce44a7fef462578e`,
+sharing this workspace's contract 0.5 pin. Host elapsed time paces the session;
+it never enters the emulation layer. The window reuses `unemupc::run`'s
+loader, including resolved names and firmware warnings, then calls
+`LoadedMachine::assemble` and wraps `PcMachine` as `dyn Machine`.
 
 The contract is external. `scripts/crate-boundaries.sh` checks every declared
 dependency kind, the exact external-crate list and one resolved copy of

@@ -86,11 +86,12 @@ contract_crate=unemu-core-api
 # document and one allow list.
 # Quoted assignments avoid Bash pipe deadlocks while loading these programs.
 program='
-def layers: ["contract", "emulation", "pc"];
+def layers: ["contract", "emulation", "pc", "application"];
 def may_use: {
   contract: [],
   emulation: ["contract", "emulation"],
-  pc: ["contract", "emulation", "pc"]
+  pc: ["contract", "emulation", "pc"],
+  application: ["contract", "emulation", "pc", "application"]
 };
 def known_layer: . as $l | any(layers[]; . == $l);
 def article: if test("^[aeiou]") then "an \(.)" else "a \(.)" end;
@@ -221,9 +222,9 @@ def article: if test("^[aeiou]") then "an \(.)" else "a \(.)" end;
           | capture("^(?<layer>[a-z]+): (?<crate>[^ ]+) \\((?<kind>run|build|test)\\): (?<reason>[^ ].*)$"))
          // {malformed: true})
       | . + {line: ($line.key + 1), text: $line.value})) as $entries
-| ($entries | map(select((.malformed | not) and (.layer as $l | any(limited[]; . == $l) | not))))
+| ($entries | map(select((.malformed | not) and (.layer as $l | any((limited + ["application"])[]; . == $l) | not))))
   as $unlimited
-| ($entries | map(select((.malformed | not) and (.layer as $l | any(limited[]; . == $l))))) as $valid
+| ($entries | map(select((.malformed | not) and (.layer as $l | any((limited + ["application"])[]; . == $l))))) as $valid
 | (.packages // []) as $packages
 | (.workspace_members // []) as $members
 | ($packages | map({key: .id, value: {
@@ -265,7 +266,7 @@ def article: if test("^[aeiou]") then "an \(.)" else "a \(.)" end;
     | .out
     | group_by($pkg[.id].name)
     | map(min_by(.kind | rank) | {crate: $pkg[.id].name, kind, path});
-  ([limited[] as $layer | {key: $layer, value: reach($layer)}] | from_entries) as $reached
+  ([(limited + ["pc", "application"])[] as $layer | {key: $layer, value: reach($layer)}] | from_entries) as $reached
 | def rule($layer):
     "\($layer | article) crate reaches only the external crates scripts/crate-boundaries.external lists for its layer, each with the kind it is reached by";
   def hit($layer):
@@ -280,6 +281,9 @@ def article: if test("^[aeiou]") then "an \(.)" else "a \(.)" end;
         elif any($lines[]; .kind == $hit.kind) | not then
           "wrong kind: \($hit | hit($layer)), listed as \($lines[0].kind) on line \($lines[0].line); rule: \(rule($layer))"
         else empty end ]
+    + [ $reached.pc[] as $hit
+        | select(any($valid[]; .layer == "application" and .crate == $hit.crate))
+        | "forbidden: \($hit | hit("pc")); rule: window and audio crates belong only to the application layer" ]
     + [ $valid[] as $e
         | select(any($reached[$e.layer][]; .crate == $e.crate) | not)
         | "stale external entry, line \($e.line): \($e.text); the \($e.layer) layer no longer reaches \($e.crate), so delete the line" ]
@@ -307,7 +311,7 @@ check_external() {
         echo "crate boundaries: $count external-crate error(s)" >&2
         return 1
     fi
-    printf '%s' "$result" | jq -r '.reached | to_entries[]
+    printf '%s' "$result" | jq -r '.reached | to_entries[] | select(.key == "contract" or .key == "emulation")
         | "crate boundaries: the \(.key) layer reaches \(.value.run // 0) run-time, \(.value.build // 0) build-time and \(.value.test // 0) test-only external crate(s), all listed"'
 }
 

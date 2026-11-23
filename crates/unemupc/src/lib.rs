@@ -249,19 +249,7 @@ pub fn run(args: &[OsString], output: &mut impl Write, errors: &mut impl Write) 
             }
         };
         execute_with_loader(command, output, errors, |path, options, dirs, errors| {
-            let roots = run::firmware_roots(dirs);
-            let mut warnings = Vec::new();
-            let result = machine_file::prepare_for_assembly_with_firmware_packages(
-                path,
-                &roots,
-                &mut warnings,
-                None,
-            )
-            .and_then(|document| document.load(options));
-            for warning in warnings {
-                writeln!(errors, "warning: {warning}")?;
-            }
-            Ok(result?)
+            run::load_machine(path, options, dirs, errors)
         })
     };
     match result {

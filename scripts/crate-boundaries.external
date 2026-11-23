@@ -1,6 +1,8 @@
 # External crates the core may reach, checked by scripts/crate-boundaries.sh.
 # One `LAYER: CRATE (run|build|test): REASON` per line. LAYER is contract or
-# emulation, the layers an embedder links; the others are not limited here.
+# emulation, the layers an embedder links. Application entries reserve host
+# presentation crates for that layer and must remain reachable; its other
+# transitive dependencies are reviewed through Cargo.lock and cargo-deny.
 # KIND is how the layer reaches the crate: run (linked), build (a procedural
 # macro or build script and what it uses, run on the build host) or test
 # (only through a test dependency of a crate of the layer). The list is exact:
@@ -55,3 +57,11 @@ emulation: quote (build): code generation for the derive macros
 emulation: syn (build): Rust syntax for the derive macros; two versions, version 3 through serde_derive for the PC config codec
 emulation: unicode-ident (build): identifier tables for proc-macro2
 emulation: version_check (build): generic-array's build script reads the compiler version
+
+# Only the application may link host presentation and I/O.
+application: machine-view (run): shared host session, keys, pointer capture, pacing and audio
+application: winit (run): the application's window and physical input events
+application: softbuffer (run): the application's software picture surface
+application: cpal (run): host audio output through machine-view; never linked into the core
+application: unemu-test-core (test): scripted contract machine for window-free application tests
+emulation: memchr (run): pure byte search through toml and winnow, enabled by host dependency feature unification in the workspace resolve

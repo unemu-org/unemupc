@@ -1,0 +1,76 @@
+{
+  "self_test": {
+    "expect": "pass",
+    "message": ""
+  },
+  "packages": [
+    {
+      "name": "api",
+      "metadata": {
+        "unemu": {
+          "layer": "contract"
+        }
+      },
+      "dependencies": []
+    },
+    {
+      "name": "device",
+      "metadata": {
+        "unemu": {
+          "layer": "emulation"
+        }
+      },
+      "dependencies": []
+    },
+    {
+      "name": "assembly",
+      "metadata": {
+        "unemu": {
+          "layer": "emulation"
+        }
+      },
+      "dependencies": [
+        {
+          "name": "device",
+          "source": null,
+          "kind": null
+        },
+        {
+          "name": "api",
+          "source": null,
+          "kind": null
+        }
+      ]
+    },
+    {
+      "name": "unemupc",
+      "metadata": {
+        "unemu": {
+          "layer": "pc"
+        }
+      },
+      "dependencies": [
+        {
+          "name": "assembly",
+          "source": null,
+          "kind": null
+        }
+      ]
+    },
+    {
+      "name": "unemupc-view",
+      "metadata": {
+        "unemu": {
+          "layer": "application"
+        }
+      },
+      "dependencies": [
+        {
+          "name": "unemupc",
+          "source": null,
+          "kind": null
+        }
+      ]
+    }
+  ]
+}

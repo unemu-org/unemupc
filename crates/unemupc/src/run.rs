@@ -59,6 +59,43 @@ pub fn firmware_roots(rom_dirs: &[PathBuf]) -> Vec<machine_file::firmware_discov
         .collect()
 }
 
+/// Load a standalone machine with the command line's firmware discovery and warnings.
+/// Both the headless runner and picture window use this preparation path.
+pub fn load_machine(
+    path: &std::path::Path,
+    options: assembly::AssemblyOptions,
+    rom_dirs: &[PathBuf],
+    errors: &mut (impl Write + ?Sized),
+) -> anyhow::Result<machine_file::LoadedMachine> {
+    load_named_machine(path, options, rom_dirs, errors).map(|(_, loaded)| loaded)
+}
+
+/// The resolved machine name and the same loaded configuration as [`load_machine`].
+/// The name is presentation metadata and does not enter emulation configuration.
+pub fn load_named_machine(
+    path: &std::path::Path,
+    options: assembly::AssemblyOptions,
+    rom_dirs: &[PathBuf],
+    errors: &mut (impl Write + ?Sized),
+) -> anyhow::Result<(Option<String>, machine_file::LoadedMachine)> {
+    let roots = firmware_roots(rom_dirs);
+    let mut warnings = Vec::new();
+    let result = machine_file::prepare_for_assembly_with_firmware_packages(
+        path,
+        &roots,
+        &mut warnings,
+        None,
+    )
+    .and_then(|document| {
+        let name = document.resolved().0.name.clone();
+        document.load(options).map(|loaded| (name, loaded))
+    });
+    for warning in warnings {
+        writeln!(errors, "warning: {warning}")?;
+    }
+    Ok(result?)
+}
+
 /// Run an already prepared machine. The caller owns host firmware lookup.
 pub fn run_machine(
     loaded: machine_file::LoadedMachine,

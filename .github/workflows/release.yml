@@ -107,6 +107,13 @@ jobs:
           rustc --version
           cargo --version
 
+      # The viewer's cpal backend links ALSA; window backends load X11/Wayland.
+      - name: Install Linux audio headers
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pkg-config libasound2-dev
+
       # rustc records source paths in the binary (panic locations, file!()).
       # Rewrite every prefix that names the runner: the workspace (and target/
       # inside it, where generated sources live), cargo's registry sources and
@@ -131,7 +138,7 @@ jobs:
           export UNEMUPC_SOURCE_COMMIT
           export CFLAGS="-ffile-prefix-map=$GITHUB_WORKSPACE=/build/unemupc -ffile-prefix-map=$cargo_home/registry/src=/cargo/registry/src -ffile-prefix-map=$cargo_home/git/checkouts=/cargo/git/checkouts"
           cargo build --locked --release --target "$TARGET" \
-            -p unemupc --bin unemupc
+            -p unemupc --bin unemupc -p unemupc-view --bin unemupc-view
 
       - name: Check the binary
         run: |
@@ -140,7 +147,7 @@ jobs:
           sysroot=$(rustc --print sysroot)
           host=$(rustc -vV | sed -n 's/^host: //p')
           failed=0
-          for bin in unemupc; do
+          for bin in unemupc unemupc-view; do
             file=target/$TARGET/release/$bin
             # Every target builds on its own architecture today; a cross build
             # would keep the static checks and skip only this execution.
@@ -178,13 +185,26 @@ jobs:
                 ;;
               Linux)
                 readelf -d "$file" | grep NEEDED
+                # cpal adds exactly ALSA to the viewer's system-library set.
+                needed='^(libc\.so\.6|libm\.so\.6|libdl\.so\.2|libpthread\.so\.0|librt\.so\.1|libgcc_s\.so\.1|ld-linux-x86-64\.so\.2|ld-linux-aarch64\.so\.1)$'
+                if [[ $bin == unemupc-view ]]; then
+                  needed='^(libc\.so\.6|libm\.so\.6|libdl\.so\.2|libpthread\.so\.0|librt\.so\.1|libgcc_s\.so\.1|ld-linux-x86-64\.so\.2|ld-linux-aarch64\.so\.1|libasound\.so\.2)$'
+                fi
+                if readelf -d "$file" | sed -n 's/.*Shared library: \[\(.*\)\]/\1/p' | grep -vE "$needed"; then
+                  echo "::error::$bin links an unexpected library"
+                  failed=1
+                fi
+                if readelf -d "$file" | grep -E '(RPATH|RUNPATH)'; then
+                  echo "::error::$bin carries a runtime library search path"
+                  failed=1
+                fi
                 echo "$bin needs glibc $(objdump -T "$file" | grep -oE 'GLIBC_[0-9.]+' | sort -uV | tail -n 1)"
                 ;;
             esac
           done
           exit "$failed"
 
-      # The archive holds the binary, the licence, the README, the
+      # The archive holds both binaries, the licence, the README, the
       # third-party licences generated for this target, and the repository's
       # own notices those licences quote, under notices/ at their repository
       # paths, with the standard licence texts of LICENSES/.
@@ -194,8 +214,15 @@ jobs:
           name=unemupc-${TAG#v}-$TARGET
           stage=dist/$name
           mkdir -p "$stage/notices"
-          cp "target/$TARGET/release/unemupc" LICENSE README.md "$stage/"
+          cp "target/$TARGET/release/unemupc" "target/$TARGET/release/unemupc-view" LICENSE README.md "$stage/"
           bash scripts/third-party-licenses.sh "$stage/THIRD-PARTY-LICENSES.md" "$TARGET"
+          # Keep viewer-only dependencies covered when the generator changes.
+          for crate in winit softbuffer cpal machine-view; do
+            if ! grep -q "^| $crate |" "$stage/THIRD-PARTY-LICENSES.md"; then
+              echo "::error::THIRD-PARTY-LICENSES.md omits $crate"
+              exit 1
+            fi
+          done
           # The headings of "Components in this repository" name those files;
           # the licence texts between the fences are skipped.
           awk '
@@ -286,7 +313,8 @@ jobs:
           - macOS on Apple silicon: `unemupc-<version>-aarch64-apple-darwin.tar.gz`
           - macOS on Intel: `unemupc-<version>-x86_64-apple-darwin.tar.gz`
 
-          Each archive holds `unemupc` (the standalone PC core command line), `LICENSE`,
+          Each archive holds `unemupc` (the standalone PC core command line),
+          `unemupc-view` (the minimal picture window), `LICENSE`,
           `README.md`, `THIRD-PARTY-LICENSES.md` and the notices it quotes. Check a download against `SHA256SUMS`:
 
           ```sh
@@ -294,12 +322,15 @@ jobs:
           shasum -a 256 --ignore-missing -c SHA256SUMS     # macOS
           ```
 
+          On Linux the viewer needs ALSA (`libasound.so.2`); install `libasound2`
+          on Ubuntu 22.04. It also needs an X11 or Wayland desktop to open a window.
+
           The macOS binary is not signed or notarized yet, so macOS refuses to
           open it as downloaded. After unpacking, remove the quarantine flag in
           the unpacked folder:
 
           ```sh
-          xattr -d com.apple.quarantine unemupc
+          xattr -d com.apple.quarantine unemupc unemupc-view
           ```
 
           NOTES

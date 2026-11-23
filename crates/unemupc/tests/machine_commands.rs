@@ -185,3 +185,62 @@ fn rom_discovery_requires_explicit_flags_and_reports_skipped_roots() {
     assert!(output.status.success(), "{}", stderr(&output));
     assert!(stderr(&output).contains("warning: <--rom-dir>: skipped"));
 }
+
+#[test]
+fn shared_loader_preserves_machine_config_cards_firmware_policy_and_name() {
+    let files = Files::new(&[0xFA, 0xF4]);
+    let path = files.machine();
+    let mut document = std::fs::read_to_string(&path).unwrap();
+    document = document.replacen("schema=1", "schema=1\nname='named machine'", 1);
+    std::fs::write(&path, document).unwrap();
+    let options = assembly::AssemblyOptions {
+        allow_unlisted_firmware: true,
+    };
+    let prepared = machine_file::prepare_for_assembly_with_firmware_packages(
+        &path,
+        &[],
+        &mut Vec::new(),
+        None,
+    )
+    .unwrap();
+    let original = prepared.load(options).unwrap();
+    let (name, shared) =
+        unemupc::run::load_named_machine(&path, options, &[], &mut Vec::new()).unwrap();
+    assert_eq!(name.as_deref(), Some("named machine"));
+    assert_eq!(shared.config, original.config);
+    assert_eq!(shared.cards, original.cards);
+    let refused = unemupc::run::load_machine(
+        &path,
+        assembly::AssemblyOptions::default(),
+        &[],
+        &mut Vec::new(),
+    )
+    .unwrap();
+    assert!(refused
+        .assemble(&assembly::ObservationPolicy::default())
+        .is_err());
+    let mut original_out = Vec::new();
+    let mut original_errors = Vec::new();
+    let original_code = unemupc::run::run_machine(
+        original,
+        (100, 100, None, false),
+        None,
+        &mut original_out,
+        &mut original_errors,
+    )
+    .unwrap();
+    let mut shared_out = Vec::new();
+    let mut shared_errors = Vec::new();
+    let shared_code = unemupc::run::run_machine(
+        shared,
+        (100, 100, None, false),
+        None,
+        &mut shared_out,
+        &mut shared_errors,
+    )
+    .unwrap();
+    assert_eq!(
+        (shared_code, shared_out, shared_errors),
+        (original_code, original_out, original_errors)
+    );
+}

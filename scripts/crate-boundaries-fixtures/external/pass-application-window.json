@@ -1,0 +1,58 @@
+{
+  "self_test": {
+    "expect": "pass"
+  },
+  "packages": [
+    {
+      "name": "viewer",
+      "id": "viewer",
+      "metadata": {
+        "unemu": {
+          "layer": "application"
+        }
+      },
+      "targets": [
+        {
+          "kind": [
+            "bin"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "winit",
+      "id": "winit",
+      "targets": [
+        {
+          "kind": [
+            "lib"
+          ]
+        }
+      ]
+    }
+  ],
+  "workspace_members": [
+    "viewer"
+  ],
+  "resolve": {
+    "nodes": [
+      {
+        "id": "viewer",
+        "deps": [
+          {
+            "pkg": "winit",
+            "dep_kinds": [
+              {
+                "kind": null
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "winit",
+        "deps": []
+      }
+    ]
+  }
+}

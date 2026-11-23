@@ -1,0 +1,90 @@
+{
+  "self_test": {
+    "expect": "fail",
+    "message": "forbidden: core (pc) \u2192 softbuffer (external)",
+    "errors": 1
+  },
+  "packages": [
+    {
+      "name": "core",
+      "id": "core",
+      "metadata": {
+        "unemu": {
+          "layer": "pc"
+        }
+      },
+      "targets": [
+        {
+          "kind": [
+            "lib"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "softbuffer",
+      "id": "softbuffer",
+      "targets": [
+        {
+          "kind": [
+            "lib"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "viewer",
+      "id": "viewer",
+      "metadata": {
+        "unemu": {
+          "layer": "application"
+        }
+      },
+      "targets": [
+        {
+          "kind": [
+            "bin"
+          ]
+        }
+      ]
+    }
+  ],
+  "workspace_members": [
+    "core",
+    "viewer"
+  ],
+  "resolve": {
+    "nodes": [
+      {
+        "id": "core",
+        "deps": [
+          {
+            "pkg": "softbuffer",
+            "dep_kinds": [
+              {
+                "kind": null
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "softbuffer",
+        "deps": []
+      },
+      {
+        "id": "viewer",
+        "deps": [
+          {
+            "pkg": "softbuffer",
+            "dep_kinds": [
+              {
+                "kind": null
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

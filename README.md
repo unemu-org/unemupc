@@ -62,6 +62,7 @@ cards, firmware and drives. `at-games-open.toml` is the open DOS games machine
 
 ### Standalone program and front end
 
+[`unemupc-view`](backlog/docs/commands.md#viewing-a-machine) opens a minimal picture window for a machine file, with keyboard, pointer and sound.
 `unemupc` runs machines headless, checks machine files and manages persistent
 media journals. The desktop, image library, registries and recipes live in
 [unemu](https://github.com/unemu-org/unemu). The `setup-unemu` action moved
@@ -71,7 +72,7 @@ there with the front end.
 
 Binaries for Linux x86-64 and arm64 (glibc 2.35+), and macOS on Apple silicon and Intel, are attached to each
 [release](https://github.com/unemu-org/unemupc/releases), with `SHA256SUMS`;
-each archive holds `unemupc` (standalone PC core). The release notes say how to check them and how to open the unsigned macOS
+each archive holds `unemupc` (standalone PC core) and `unemupc-view` (picture window). The release notes say how to check them and how to open the unsigned macOS
 binary. On other platforms, build from source as below.
 
 ## Getting started

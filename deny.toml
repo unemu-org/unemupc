@@ -1,7 +1,11 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 [advisories]
-ignore = []
+# The emulation crates have no unmaintained dependency; the one accepted
+# below reaches only the application-layer viewer.
+ignore = [
+    { id = "RUSTSEC-2026-0192", reason = "Accepted 2026-11-23: unemupc-view -> winit (and machine-view -> winit) -> sctk-adwaita -> ab_glyph -> owned_ttf_parser -> ttf-parser 0.25.1 provides Wayland client-side decorations, required for window frames on GNOME. This is an unmaintained crate, not a known vulnerability; no safe upgrade is available; the front end and unemu-host accept it the same way. Keep winit's default wayland-csd-adwaita feature. Review 2027-05-11." },
+]
 
 [licenses]
 # Keep the allowlist limited to the all-features graph: workspace AGPL and
@@ -12,6 +16,9 @@ allow = [
     "Apache-2.0",
     "Unicode-3.0",
     "BSD-3-Clause",
+    "BSD-2-Clause",
+    "ISC",
+    "Zlib",
 ]
 confidence-threshold = 0.9
 
@@ -32,4 +39,5 @@ unknown-git = "deny"
 allow-git = [
     "https://github.com/unemu-org/x86jit",
     "https://github.com/unemu-org/unemu-core-api",
+    "https://github.com/unemu-org/unemu-host",
 ]

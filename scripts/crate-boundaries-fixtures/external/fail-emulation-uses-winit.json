@@ -1,0 +1,90 @@
+{
+  "self_test": {
+    "expect": "fail",
+    "message": "forbidden: core (emulation) \u2192 winit (external)",
+    "errors": 1
+  },
+  "packages": [
+    {
+      "name": "core",
+      "id": "core",
+      "metadata": {
+        "unemu": {
+          "layer": "emulation"
+        }
+      },
+      "targets": [
+        {
+          "kind": [
+            "lib"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "winit",
+      "id": "winit",
+      "targets": [
+        {
+          "kind": [
+            "lib"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "viewer",
+      "id": "viewer",
+      "metadata": {
+        "unemu": {
+          "layer": "application"
+        }
+      },
+      "targets": [
+        {
+          "kind": [
+            "bin"
+          ]
+        }
+      ]
+    }
+  ],
+  "workspace_members": [
+    "core",
+    "viewer"
+  ],
+  "resolve": {
+    "nodes": [
+      {
+        "id": "core",
+        "deps": [
+          {
+            "pkg": "winit",
+            "dep_kinds": [
+              {
+                "kind": null
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "winit",
+        "deps": []
+      },
+      {
+        "id": "viewer",
+        "deps": [
+          {
+            "pkg": "winit",
+            "dep_kinds": [
+              {
+                "kind": null
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

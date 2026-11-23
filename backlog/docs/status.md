@@ -7,6 +7,15 @@ beads (`bd ready --exclude-type epic`, `bd list --type epic`).
 
 Update this when a feature lands, breaks, or gets pulled. Stale status is worse than no status.
 
+- **2026-11-23 — Minimal PC picture window:** `unemupc-view --machine FILE`
+  reuses the standalone machine loader, with shared `unemu-host` sessions for
+  keyboard, pointer capture, pacing and host audio. A winit/softbuffer
+  application shows the aspect-correct picture without GUI chrome. Reset,
+  pause and quit chords and clean `Finished` shutdown are covered without a
+  window by the scripted test core. Window/audio dependencies remain confined
+  to the application layer. All four release archives include the viewer;
+  desktop/audio and hosted release smoke checks remain manual. See
+  [Viewing a machine](commands.md#viewing-a-machine).
 - **2026-11-23 — Offline PC media description and export:** contract 0.5's
   optional operations describe configured floppy/fixed-disk slots and their
   fixed lengths without creating a PC. `raw`, `vhd-fixed` and `machine` export

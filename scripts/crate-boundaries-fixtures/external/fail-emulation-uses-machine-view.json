@@ -1,0 +1,90 @@
+{
+  "self_test": {
+    "expect": "fail",
+    "message": "forbidden: core (emulation) \u2192 machine-view (external)",
+    "errors": 1
+  },
+  "packages": [
+    {
+      "name": "core",
+      "id": "core",
+      "metadata": {
+        "unemu": {
+          "layer": "emulation"
+        }
+      },
+      "targets": [
+        {
+          "kind": [
+            "lib"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "machine-view",
+      "id": "machine-view",
+      "targets": [
+        {
+          "kind": [
+            "lib"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "viewer",
+      "id": "viewer",
+      "metadata": {
+        "unemu": {
+          "layer": "application"
+        }
+      },
+      "targets": [
+        {
+          "kind": [
+            "bin"
+          ]
+        }
+      ]
+    }
+  ],
+  "workspace_members": [
+    "core",
+    "viewer"
+  ],
+  "resolve": {
+    "nodes": [
+      {
+        "id": "core",
+        "deps": [
+          {
+            "pkg": "machine-view",
+            "dep_kinds": [
+              {
+                "kind": null
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "machine-view",
+        "deps": []
+      },
+      {
+        "id": "viewer",
+        "deps": [
+          {
+            "pkg": "machine-view",
+            "dep_kinds": [
+              {
+                "kind": null
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

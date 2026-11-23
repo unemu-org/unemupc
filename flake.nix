@@ -96,6 +96,10 @@
 
             # Fetching the SingleStepTests / ProcessorTests corpus (real-mode oracle)
             pkgs.jq
+          ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
+            # The viewer's cpal backend discovers ALSA through pkg-config.
+            pkgs.pkg-config
+            pkgs.alsa-lib
           ];
           # Downloads trust the pinned Mozilla roots, not the host's bundle: an
           # old container's bundle lacks roots that current mirrors chain to.
