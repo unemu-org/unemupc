@@ -7,6 +7,13 @@ beads (`bd ready --exclude-type epic`, `bd list --type epic`).
 
 Update this when a feature lands, breaks, or gets pulled. Stale status is worse than no status.
 
+- **2026-11-23 — Release 0.0.4:** the first release of the core repository
+  after the split. The workspace version is 0.0.4 and
+  `pc_config::compat::NEXT_RELEASE` is 0.0.5, so a core row for a feature
+  this release does not read names 0.0.5. The release archive holds the
+  standalone `unemupc` only; the desktop and command line `unemu` are
+  released from [unemu](https://github.com/unemu-org/unemu), which pins this
+  release's commit.
 - **2026-11-22 — Repository split point chosen (E4):** the maintainer chose
   `0f279540` as the split point, with hosted CI green. Front-end changes now
   land only on the front-end branch until the re-pin; core changes land on

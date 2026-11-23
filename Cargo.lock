@@ -33,7 +33,7 @@ checksum = "7d902e3d592a523def97af8f317b08ce16b7ab854c1985a0c671e6f15cebc236"
 
 [[package]]
 name = "assembly"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "audio",
  "bus",
@@ -52,7 +52,7 @@ dependencies = [
 
 [[package]]
 name = "audio"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "device",
  "thiserror",
@@ -75,7 +75,7 @@ dependencies = [
 
 [[package]]
 name = "bus"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "device",
  "thiserror",
@@ -89,7 +89,7 @@ checksum = "4e7648175b45a9a48536d676f68d918270699102aa8dab5496df06904c914600"
 
 [[package]]
 name = "chipset"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "device",
  "devices",
@@ -104,7 +104,7 @@ checksum = "7f8f80099a98041a3d1622845c271458a2d73e688351bf3cb999266764b81d48"
 
 [[package]]
 name = "cpu"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "thiserror",
  "x86jit-core",
@@ -131,14 +131,14 @@ dependencies = [
 
 [[package]]
 name = "device"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "thiserror",
 ]
 
 [[package]]
 name = "devices"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "device",
  "testkit",
@@ -232,7 +232,7 @@ dependencies = [
 
 [[package]]
 name = "journal"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "sha2",
  "thiserror",
@@ -241,7 +241,7 @@ dependencies = [
 
 [[package]]
 name = "journal-files"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "journal",
  "libc",
@@ -267,7 +267,7 @@ checksum = "65cd87c9a6d60536580b316ad985726104730a5151c99845f2490428ef91240a"
 
 [[package]]
 name = "machine"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "bus",
  "chipset",
@@ -280,7 +280,7 @@ dependencies = [
 
 [[package]]
 name = "machine-file"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "assembly",
  "audio",
@@ -327,7 +327,7 @@ dependencies = [
 
 [[package]]
 name = "pc-config"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "assembly",
  "serde",
@@ -339,7 +339,7 @@ dependencies = [
 
 [[package]]
 name = "pc-harness"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "anyhow",
  "assembly",
@@ -486,7 +486,7 @@ dependencies = [
 
 [[package]]
 name = "testkit"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "cpu",
  "device",
@@ -572,7 +572,7 @@ dependencies = [
 
 [[package]]
 name = "unemu-pc-core"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "assembly",
  "audio",
@@ -587,7 +587,7 @@ dependencies = [
 
 [[package]]
 name = "unemupc"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "anyhow",
  "assembly",
@@ -622,7 +622,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "video"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "device",
 ]

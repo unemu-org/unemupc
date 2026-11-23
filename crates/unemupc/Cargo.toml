@@ -15,7 +15,7 @@ side = "core"
 
 [dependencies]
 journal-files.workspace = true
-pc-harness = { path = "../pc-harness", version = "0.0.3" }
+pc-harness = { path = "../pc-harness", version = "0.0.4" }
 machine-file.workspace = true
 unemu-pc-core.workspace = true
 unemu-core-api.workspace = true

@@ -25,7 +25,7 @@ impl fmt::Display for Release {
 type AppVersion = Release;
 pub type Row = (&'static str, Release);
 pub const BASELINE: Release = Release(0, 0, 1);
-pub const NEXT_RELEASE: Release = Release(0, 0, 4);
+pub const NEXT_RELEASE: Release = Release(0, 0, 5);
 pub const NEWEST_ROW: Release = Release(0, 0, 3);
 /// Core config release. Application composition supplies CoreDescription::version to readers.
 pub fn package() -> Release {
