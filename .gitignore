@@ -126,3 +126,4 @@ target/
 # Open VGA Mode X test floppy, built from source.
 /vendor/vga-modex-test/build/
 /vendor/vga-modex-test/vga-modex-test-1200.img
+/vendor/vga-modex-test/vga-pas-test-1200.img

@@ -13,7 +13,7 @@
 //! | Figs. 2-19–2-26: general registers | READ: port directions and MSR bit 0 select CRTC, status 1 and feature-control addresses | ASSUMED: inactive pair reads FF; status 0 models a loaded colour monitor from DAC entry 0 with threshold 20h on any component; reserved MSR/feature bits retain writes. RAM-enable gating and IRQ omitted |
 //! | Figs. 2-29–2-37: sequencer | READ: five indexed registers, map mask, chain-4 and independent odd/even write control | Reset signalling, CPU extended-memory gating and cycle-exact display timing omitted; undefined read bits return their masked stored values |
 //! | Fig. 2-58: CRTC protection | READ: R11 bit 7 protects R0–R7 except R7 bit 4 | Polling uses totals/overflow/display-end/retrace-end; other registers retain full bytes, including reserved bits |
-//! | Figs. 2-81–2-89: attribute controller | READ: index/data flip-flop, status reset, PAS, palette widths; R10 mask EF, R11 mask FF, R12 mask 0F | ASSUMED: reserved bits read zero; PAS disables palette writes, but undefined PAS palette reads retain stored data |
+//! | Figs. 2-81–2-89: attribute controller | READ: index/data flip-flop, status reset, PAS, palette widths; R10 mask EF, R11 mask FF, R12 mask 0F | READ: IBM VGA/XGA Technical Reference, Figs. 2-81–2-82, Address Register (IPAS): clear IPAS to load the palette, set for normal display; Type 1 disables PAS=1 palette accesses, Type 2 does not guarantee the addressed colour. COMPATIBILITY POLICY (not verified hardware): accept PAS=1 palette writes because Windows 3.x vga.drv relies on them (driver evidence); PAS=1 palette reads still return stored data. PAS=0 display blanking/overscan is unchanged. ASSUMED: reserved bits read zero |
 //! | Fig. 2-94, pp. 2-104–2-105: DAC | READ: one eight-bit palette address, read/write state, RGB order, six-bit components, increment after three bytes and address writes restart the cycle | ASSUMED: 3C8 reads shared address n during a read cycle (some RAMDACs prefetch n+1); components are stored immediately even if an address write aborts the triple; eight-bit wrap and wrong-direction data accesses use the shared component phase without changing state |
 //! | Fig. 2-94, p. 2-106: PEL mask | READ: mask register address and mode-set value FF | ASSUMED: writable mask ANDs the displayed palette index only; IBM warns against writes, while firmware programs it |
 //! | Fig. 2-25: input status 1 | READ: vertical retrace implies display disable (DE=1) | DERIVED: integer dot clocks from virtual PIT time and programmed totals/retrace; ASSUMED: fixed ~70 Hz fallback before usable CRTC timing, unsupported clock selects use 25.175 MHz |
@@ -585,10 +585,8 @@ impl Vga {
             0x3C0 => {
                 if self.ac_data {
                     let index = usize::from(self.ac_address & 0x1F);
-                    if index >= 16 || !self.palette_address_source() {
-                        if let Some(reg) = self.attribute.get_mut(index) {
-                            *reg = value & AC_MASKS[index];
-                        }
+                    if let Some(reg) = self.attribute.get_mut(index) {
+                        *reg = value & AC_MASKS[index];
                     }
                 } else {
                     self.ac_address = value & 0x3F;

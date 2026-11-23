@@ -7,6 +7,14 @@ beads (`bd ready --exclude-type epic`, `bd list --type epic`).
 
 Update this when a feature lands, breaks, or gets pulled. Stale status is worse than no status.
 
+- **2026-11-23 — VGA palette writes with PAS set:** attribute palette writes
+  now take effect with either PAS value, matching the sequence reported from
+  Windows 3.x vga.drv. This is an explicit compatibility policy, not verified
+  original-hardware behaviour. PAS=1 reads still return stored data; register
+  masks, flip-flop sequencing and PAS=0 display blanking/overscan are unchanged.
+  A separate open mode-12h floppy draws sixteen bars and checks displayed RGB
+  against an independent oracle; it and the mock-bus test fail with the old
+  write gate. See [the evidence and policy](design/vga-modex-test.md#mode-12h-pas-palette-compatibility-regression).
 - **2026-11-23 — VGA diagnostic registers and colour path:** the machine
   diagnostic report now appends an optional register-level VGA section with
   sequencer, CRTC, graphics and attribute registers, PAS/flip-flop phase,

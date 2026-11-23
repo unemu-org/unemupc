@@ -59,3 +59,20 @@ fi
 check_sha256 "$IMAGE" "834038855a9cc34af9b55ca288b086786b37d76209139180a77ba69572b37bc0"
 mv -f "$IMAGE" "$OUT"
 echo "built $OUT ($SIZE bytes)"
+
+PAS_IMAGE="$WORK/vga-pas-test-1200.img"
+PAS_OUT="$HERE/vga-pas-test-1200.img"
+nasm -f bin -Ox -w+all -w-reloc-abs-word -Werror -o "$PAS_IMAGE" "$HERE/vga-pas-test.asm"
+SIZE="$(wc -c < "$PAS_IMAGE" | tr -d '[:space:]')"
+if [ "$SIZE" -ne 1228800 ]; then
+    echo "unexpected palette image size: $SIZE bytes (expected 1228800)" >&2
+    exit 1
+fi
+SIGNATURE="$(od -An -tx1 -j 510 -N 2 "$PAS_IMAGE" | tr -d ' \n')"
+if [ "$SIGNATURE" != "55aa" ]; then
+    echo "missing palette image boot signature 55aa (found $SIGNATURE)" >&2
+    exit 1
+fi
+check_sha256 "$PAS_IMAGE" "d58e531d4a29e0232484f76f26d4504fee8e9df837b251343fae867ec1286490"
+mv -f "$PAS_IMAGE" "$PAS_OUT"
+echo "built $PAS_OUT ($SIZE bytes)"

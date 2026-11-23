@@ -114,3 +114,56 @@ These are hypotheses, not claims about any uninspected guest:
 Any further open reproducer should use only those observed register and
 access sequences, never proprietary bytes. This result does not establish
 that the external application's rendering or freeze is fixed.
+
+## Mode 12h PAS palette compatibility regression
+
+The separate open `vga-pas-test.asm` program in the same fixture directory
+boots BIOS mode 12h and draws sixteen vertical bars, each 40 pixels wide
+and 480 pixels high. The original Mode X image and golden are unchanged.
+The build pins the second image to
+`d58e531d4a29e0232484f76f26d4504fee8e9df837b251343fae867ec1286490`.
+
+**READ:** IBM, *VGA/XGA Technical Reference Manual*, May 1992, Figs. 2-81
+(attribute register addresses) and 2-82 (Address Register, IPAS), pp. 2-89–2-90,
+says to clear IPAS when loading the palette and set it for normal operation.
+Its note distinguishes Type 1, which disables accesses with IPAS set, from
+Type 2, which does not disable them but cannot ensure the addressed colour.
+This does not establish reliable PAS=1 writes on original hardware.
+
+**COMPATIBILITY POLICY:** palette writes are accepted at the selected index
+with either PAS value. The motivation is supervisor-supplied driver evidence:
+Windows 3.x vga.drv writes palette entries with PAS=1; a Program Manager
+diagnostic retained the BIOS mode-12h attribute defaults while DAC entries
+7 and 15 had changed. This evidence is not a hardware measurement made by
+this fixture. Palette reads with PAS=1 retain the existing stored-data
+behaviour; masks, address/data toggling, status reset and PAS=0 display
+blanking/overscan are unchanged.
+
+The program initializes DAC entries 0–63 to `(i, 63-i, i XOR 21)` so BIOS
+palette indices also have distinct colours. It reads 3DAh once, then writes
+pairs `(index OR 20h, index)` to 3C0h for indices 0–15. It draws the bars
+with individual plane masks and halts after an exact COM1 completion line.
+The golden uses `c = floor(x / 40)` and independently computes displayed
+RGB from `(c, 63-c, c XOR 21)`, expanding each six-bit component `v` to
+`4*v + floor(v/16)`. It compares all 307,200 displayed pixels, geometry
+640x480, repeat (1,1), the serial report and halt outcome; it uses no VGA
+renderer helpers to compute the expectation. The CPU pin is shared with
+the original Mode X golden. Machine media remain read-only and hash-pinned.
+
+**MEASURED, 2026-11-23:** before removing the PAS write gate, the new golden
+halts after 6,897,026 retired instructions but fails at `(240,0)`: BIOS DAC
+index 14h displays RGB `(81,174,4)` instead of `(24,231,77)` for bar 6.
+The new mock-bus isolation test also fails before the fix: the PAS=1 write
+leaves palette register 0 at 00h instead of the masked value 2Eh, after the
+PAS=0 cases pass. Both fixture images build twice with identical hashes.
+These are software compatibility regressions, not proof of physical VGA
+behaviour or a rerun of Windows itself.
+
+**MEASURED, after the compatibility change:** the mode-12h golden passes all
+307,200 displayed RGB comparisons and still halts at 6,897,026 retired
+instructions. The original Mode X golden retains 60/60 checked frames,
+30 per page, and 10,817,666 retired instructions. The VGA-filtered isolation
+run passes 73 tests. The affected golden tier passes 2,249 tests (eight
+filtered out), followed by 897 release device tests; all existing golden
+expectations remain unchanged. No Windows rerun or physical-hardware test
+is claimed.

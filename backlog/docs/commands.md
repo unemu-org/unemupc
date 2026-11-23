@@ -76,7 +76,7 @@ UNEMUPC_REQUIRE_FIXTURES=1 cargo test --offline -p pc-harness --test ide_freedos
 UNEMUPC_REQUIRE_FIXTURES=1 cargo test --offline -p pc-harness --test at_pm_test_golden -- --include-ignored --nocapture
 # Open AT LOADALL test floppy: real-mode moves above 1 MiB through LOADALL caches (design/at-loadall-test.md)
 UNEMUPC_REQUIRE_FIXTURES=1 cargo test --offline -p pc-harness --test at_loadall_test_golden -- --include-ignored --nocapture
-# Open VGA 360x240 unchained test: plane writes, latch copies and 60 retrace flips (design/vga-modex-test.md)
+# Open VGA tests: 360x240 plane/latch copies and retrace flips; mode 12h PAS=1 palette colours (design/vga-modex-test.md)
 bash vendor/vga-modex-test/build.sh
 UNEMUPC_REQUIRE_FIXTURES=1 cargo test --offline -p pc-harness --test vga_modex_test_golden -- --ignored --nocapture
 # Open AT privilege-level test floppy: IRET to ring 3, INT, #GP and a call gate back to ring 0 on SS0:SP0 (design/at-privilege-test.md)

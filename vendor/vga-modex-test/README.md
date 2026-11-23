@@ -2,8 +2,9 @@
 
 `vga-modex-test.asm` is project-owned, AGPL-3.0-or-later source. It boots
 without DOS, sets BIOS mode 13h, then programs unchained 360x240 graphics.
-Only source, this README and `build.sh` are committed. The 1.2M floppy
-`vga-modex-test-1200.img` and `build/` are gitignored.
+Only source, this README and `build.sh` are committed. Both 1.2M floppies
+and `build/` are gitignored. The separate `vga-pas-test.asm` fixture covers
+mode 12h palette writes with PAS=1, without changing the Mode X image.
 
 The boot sector loads four sectors (2–5 on track 0, head 0) at `0800:0000h`.
 The program selects the 28 MHz clock, unlocks CRTC R0–R7, programs 90 bytes
@@ -67,3 +68,27 @@ evidence and limitations are in
 - IBM, *VGA/XGA Technical Reference Manual*, May 1992, VGA Function,
   Figs. 2-25, 2-32, 2-36, 2-50, 2-53–2-54, 2-58, 2-60–2-65 and 2-75:
   status, plane selection, addressing, timing, start latch and write modes.
+
+## Mode 12h palette compatibility regression
+
+The same build also creates `vga-pas-test-1200.img` (1,228,800 bytes, 55AAh
+boot signature), pinned to:
+
+```text
+d58e531d4a29e0232484f76f26d4504fee8e9df837b251343fae867ec1286490
+```
+
+Its boot sector uses the same four-sector loading convention. After BIOS
+mode 12h, it sets DAC entries 0–63 to `(i, 63-i, i XOR 21)` and writes
+attribute entries 0–15 to identity with pairs `(index OR 20h, index)` at
+3C0h, leaving PAS set throughout. It draws sixteen 40-pixel-wide vertical
+bars over all 480 rows through individual plane masks, reports
+`vga-pas-test: bars ready` on COM1 and halts. All bytes are project-owned;
+this reproduces an observed Windows 3.x vga.drv access sequence without
+containing driver code.
+
+The existing CI fixtures lane builds both images through `build.sh`.
+`media_fixtures.rs` checks their geometry, signatures and pinned hashes;
+the mode-12h golden in `vga_modex_test_golden.rs` checks every displayed RGB
+against logical bar coordinates. IBM's IPAS access restriction and our
+explicit compatibility policy are documented in the design note.

@@ -73,6 +73,11 @@ const PINNED_SCRIPTS: &[(&str, &str, &str)] = &[
         "check_sha256 \"$IMAGE\" \"",
     ),
     (
+        "vga-modex-test/vga-pas-test-1200.img",
+        include_str!("../../../vendor/vga-modex-test/build.sh"),
+        "check_sha256 \"$PAS_IMAGE\" \"",
+    ),
+    (
         "vga-modex-test/vga-modex-test-1200.img",
         include_str!("../../../vendor/vga-modex-test/build.sh"),
         "check_sha256 \"$IMAGE\" \"",
@@ -130,6 +135,8 @@ fn freedos_floppy_fixtures_have_pinned_geometry_signature_and_hash() {
         ("freedos/freedos.img", 1_474_560),
         ("freedos/freedos-1200.img", 1_228_800),
         ("freedos/freedos-tools-1200.img", 1_228_800),
+        ("vga-modex-test/vga-modex-test-1200.img", 1_228_800),
+        ("vga-modex-test/vga-pas-test-1200.img", 1_228_800),
     ] {
         let Some(bytes) = fixtures::fixture(relative) else {
             continue;

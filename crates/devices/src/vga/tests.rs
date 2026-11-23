@@ -164,7 +164,7 @@ fn attribute_flip_flop_pas_and_active_status_reset() {
     assert_eq!(input(&mut b, 0x3C1), 0x2B);
     out(&mut b, 0x3C0, 0x23);
     out(&mut b, 0x3C0, 0x11);
-    assert_eq!(input(&mut b, 0x3C1), 0x2B);
+    assert_eq!(input(&mut b, 0x3C1), 0x11);
     assert!(card(&mut b).palette_address_source());
     out(&mut b, 0x3C0, 0x34);
     out(&mut b, 0x3C0, 7);
@@ -1043,6 +1043,38 @@ fn diagnostic_shown_colours_follow_scanout_plane_enable_p54s_select_and_pel_mask
             let scanout = b.device().graphics_scanout().unwrap();
             assert_eq!(scanout.colours[13] & state.pel_mask, expected);
             assert_eq!(scanout.palette[usize::from(scanout.colours[13])], expanded);
+        }
+    }
+}
+
+#[test]
+fn attribute_palette_writes_accept_both_pas_values_without_changing_protocol() {
+    for pas in [0, 0x20] {
+        let mut b = bus();
+        out(&mut b, 0x3C6, 0xFF);
+        out(&mut b, 0x3C0, 0x12);
+        out(&mut b, 0x3C0, 15);
+        out(&mut b, 0x3C8, 0x2E);
+        for value in [13, 27, 42] {
+            out(&mut b, 0x3C9, value);
+        }
+        for index in 0..16 {
+            input(&mut b, 0x3BA);
+            out(&mut b, 0x3C0, index | pas);
+            assert!(card(&mut b).diagnostic_state().attribute_expects_data);
+            assert_eq!(input(&mut b, 0x3C0), index | pas);
+            input(&mut b, 0x3C1);
+            assert!(card(&mut b).diagnostic_state().attribute_expects_data);
+            out(&mut b, 0x3C0, 0xEE);
+            let state = card(&mut b).diagnostic_state();
+            assert!(!state.attribute_expects_data);
+            assert_eq!(state.attribute_address, index | pas);
+            assert_eq!(card(&mut b).attribute()[usize::from(index)], 0x2E);
+            assert_eq!(input(&mut b, 0x3C1), 0x2E);
+            assert_eq!(state.shown[usize::from(index)], (0x2E, [13, 27, 42]));
+            let scanout = b.device().planar_text_scanout().unwrap();
+            assert_eq!(scanout.palette[usize::from(index)], [52, 109, 170]);
+            assert_eq!(scanout.enabled, pas != 0);
         }
     }
 }

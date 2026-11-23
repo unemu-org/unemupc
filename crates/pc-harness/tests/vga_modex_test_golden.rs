@@ -19,6 +19,7 @@ mod fixtures;
 
 const CPU_REV: &str = "6cb817b86c1fbf463f7aab8c0da1ce0eec3db0b7";
 const IMAGE: &str = "vga-modex-test/vga-modex-test-1200.img";
+const PAS_IMAGE: &str = "vga-modex-test/vga-pas-test-1200.img";
 const OPEN_BIOS: &str = "unemu-at-bios/bios-unemu-at.bin";
 const OPEN_BIOS_SHA256: &str = "6938dc8b665fa120f33775163ab6bacc559389525db87adedf734416f9ef2442";
 const VGA_BIOS: &str = "vgabios/vgabios-std.bin";
@@ -56,7 +57,7 @@ fn toml_string(path: &Path) -> String {
     quoted
 }
 
-fn machine_file(directory: &Path) -> PathBuf {
+fn machine_file(directory: &Path, image: &str, image_hash: &str) -> PathBuf {
     let text = format!(
         "schema = 1\nextends = \"preset:ibm-5170\"\nname = \"vga-modex-test\"\n\
          [board]\ndisplay_switch = \"colour\"\n\
@@ -74,8 +75,8 @@ fn machine_file(directory: &Path) -> PathBuf {
          sha256 = \"{}\"\n",
         toml_string(&vendor(OPEN_BIOS)),
         toml_string(&vendor(VGA_BIOS)),
-        toml_string(&vendor(IMAGE)),
-        image_sha256()
+        toml_string(&vendor(image)),
+        image_hash
     );
     let path = directory.join("vga-modex-test.toml");
     std::fs::write(&path, text).unwrap();
@@ -147,7 +148,7 @@ fn open_bios_modex_pixels_latch_copies_and_sixty_retrace_flips() {
         }
     }
     let temporary = TempDir::new("vga-modex-test");
-    let file = machine_file(temporary.path());
+    let file = machine_file(temporary.path(), IMAGE, image_sha256());
     let loaded = machine_file::load_for_assembly(&file, AssemblyOptions::default()).unwrap();
     let observation = ObservationPolicy {
         routes: vec![
@@ -226,4 +227,81 @@ fn open_bios_modex_pixels_latch_copies_and_sixty_retrace_flips() {
     );
     assert_eq!(checked, [30, 30]);
     assert!(failure.is_none(), "{}", failure.unwrap_or_default());
+}
+
+#[test]
+#[ignore = "slow golden: open AT/VGA BIOS POST, then mode 12h PAS=1 palette writes"]
+fn open_bios_mode_twelve_palette_writes_with_pas_set_show_sixteen_colours() {
+    assert!(
+        include_str!("../../../Cargo.lock").contains(CPU_REV),
+        "CPU pin drifted"
+    );
+    for relative in [OPEN_BIOS, VGA_BIOS, PAS_IMAGE] {
+        if fixtures::fixture(relative).is_none() {
+            return;
+        }
+    }
+    let image_hash = fixtures::parse_pin(
+        include_str!("../../../vendor/vga-modex-test/build.sh"),
+        "check_sha256 \"$PAS_IMAGE\" \"",
+    )
+    .unwrap();
+    let temporary = TempDir::new("vga-pas-test");
+    let file = machine_file(temporary.path(), PAS_IMAGE, image_hash);
+    let loaded = machine_file::load_for_assembly(&file, AssemblyOptions::default()).unwrap();
+    let observation = ObservationPolicy {
+        routes: vec![
+            ObservationRequest {
+                device: DeviceId::Uart,
+                output: OutputKind::Bytes(ByteStreamKind::SerialTx),
+                byte_limit: 65536,
+            },
+            ObservationRequest {
+                device: DeviceId::Vga,
+                output: OutputKind::TextScanout,
+                byte_limit: 0,
+            },
+        ],
+        ..Default::default()
+    };
+    let mut assembled = loaded.assemble(&observation).unwrap();
+    let outcome = assembled
+        .run_session(&RunPolicy::natural(
+            Some(CAP),
+            Some(pc_harness::BIOS_IDLE_LIMIT),
+        ))
+        .unwrap();
+    let transcript = assembled
+        .observation
+        .drain_bytes(DeviceId::Uart, ByteStreamKind::SerialTx)
+        .unwrap();
+    let video::Frame::Pixels(frame) = assembled.capture_text(DeviceId::Vga).unwrap().frame else {
+        panic!("expected mode 12h graphics");
+    };
+    eprintln!(
+        "vga-pas-test: stop={outcome:?}, retired={}",
+        assembled.machine.cpu().retired()
+    );
+    assembled.finish_persistence().unwrap();
+    assert_eq!(outcome, RunOutcome::Halted);
+    assert_eq!(transcript, b"vga-pas-test: bars ready\r\n");
+    assert_eq!(
+        (frame.width, frame.height, frame.repeat),
+        (640, 480, (1, 1))
+    );
+    assert_eq!(frame.indices.len(), 640 * 480);
+    // Logical bars and RGB values are independent of VGA address/scanout helpers.
+    for y in 0..480 {
+        for x in 0..640 {
+            let colour = (x / 40) as u8;
+            let expected =
+                [colour, 63 - colour, colour ^ 21].map(|component| component * 4 + component / 16);
+            let index = frame.indices[y * 640 + x];
+            let actual = frame.palette[usize::from(index)];
+            assert_eq!(
+                actual, expected,
+                "displayed RGB at ({x},{y}), index {index:02x}"
+            );
+        }
+    }
 }
