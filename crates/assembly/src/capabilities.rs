@@ -308,8 +308,14 @@ pub fn describe(draft: &Draft, path: &str) -> Option<FieldDescriptor> {
     };
     match path {
         "board.model" => return Some(names(&[draft.config.board.id()])),
-        "cpu.model" => return Some(names(&["80286"])),
-        "cpu.fpu" => return Some(names(&["none", "80287"])),
+        "cpu.model" => return Some(names(&[draft.config.cpu.chip.name()])),
+        "cpu.fpu" => {
+            return Some(names(if draft.config.board == BoardModel::Generic386Isa {
+                &["none"]
+            } else {
+                &["none", "80287"]
+            }))
+        }
         "board.display_switch" => return Some(names(&["auto", "mono", "colour"])),
         "cpu.rate_steps" | "cpu.rate_pit_clocks" => {
             return Some(number(
@@ -322,8 +328,22 @@ pub fn describe(draft: &Draft, path: &str) -> Option<FieldDescriptor> {
                 None,
             ))
         }
-        "memory.conventional_kib" => return Some(number(CONVENTIONAL_KIB, Some("KiB"))),
-        "memory.extended_kib" => return Some(number(EXTENDED_KIB, Some("KiB"))),
+        "memory.conventional_kib" => {
+            return Some(number(
+                IntegerDomain {
+                    min: if draft.config.board == BoardModel::Generic386Isa {
+                        640
+                    } else {
+                        CONVENTIONAL_KIB.min
+                    },
+                    ..CONVENTIONAL_KIB
+                },
+                Some("KiB"),
+            ))
+        }
+        "memory.extended_kib" => {
+            return Some(number(extended_kib(draft.config.board), Some("KiB")))
+        }
         _ => {}
     }
     if let Some((slot_kind, required, _)) = firmware_slot(draft, path) {
@@ -819,8 +839,13 @@ pub fn validate_draft(draft: &Draft) -> Validation {
             }
         }
         config.memory.mmio.sort_by_key(|window| window.base);
-        config.memory.ram =
-            ram_regions(conventional, extended, &config.memory.mmio, &config.images);
+        config.memory.ram = ram_regions_for_board(
+            config.board,
+            conventional,
+            extended,
+            &config.memory.mmio,
+            &config.images,
+        );
         config.memory.address_space_bytes = 0x100000 + extended;
     }
     let primary_ata = config
@@ -887,8 +912,13 @@ pub fn validate_draft(draft: &Draft) -> Validation {
             .memory
             .mmio
             .retain(|window| !removed.contains(&window.device));
-        config.memory.ram =
-            ram_regions(conventional, extended, &config.memory.mmio, &config.images);
+        config.memory.ram = ram_regions_for_board(
+            config.board,
+            conventional,
+            extended,
+            &config.memory.mmio,
+            &config.images,
+        );
     }
     located.config = config.clone();
     for (index, _, path) in &pending_images {

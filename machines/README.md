@@ -1,5 +1,18 @@
 # Machine descriptions
 
+`generic-386-seabios.toml` describes the first 80386DX ISA board: 640 KiB
+conventional plus 15 MiB extended RAM, unmodified SeaBIOS 1.17.0 ISA,
+register-level VGA and COM1. The board supplies 128-byte CMOS, port 92h,
+fw_cfg with `etc/sercon-port`, and the 402h debug console. SeaVGABIOS is not
+included yet. Build the pinned firmware with `vendor/seabios/fetch.sh` in
+the firmware devShell, then use `unemupc machine check` on this file.
+Validation and assembly work; starting execution currently reports the
+unsupported 386 reset fetch at FFFFFFF0h (`xj-srh.12 (x86jit)`). This file
+is not yet a bootable profile. See
+[the board description](../backlog/docs/design/machine-files.md#generic-386-isa-board)
+for RAM limits and the current 4 GiB backend backing requirement.
+
+
 `at-freedos.toml` and its equivalent `at-freedos.yaml` describe the current
 IBM PC/AT-class FreeDOS machine:
 Xi8088 open BIOS, MDA and VGA text cards, an unwired COM1, and a 1.44 MB

@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+schema = 1
+name = "generic-386-seabios"
+description = "80386DX ISA board with unmodified SeaBIOS; execution awaits CPU reset support"
+
+[board]
+model = "generic-386-isa"
+
+[board.rtc]
+start = "2000-01-01T00:00:00"
+nvram = "derived"
+
+[cpu]
+model = "80386dx"
+rate = 1
+
+[memory]
+conventional_kib = 640
+extended_kib = 15360
+
+[firmware.bios]
+image = "../vendor/seabios/bios-1.17.0-isa.bin"
+sha256 = "07add88892bb47898ec712322870b8de7bdb6016dc7f4c3dd169d748be004a13"
+
+[[card]]
+kind = "vga"
+
+[[card]]
+kind = "uart-16550"
+port = 0x3F8
+irq = 4

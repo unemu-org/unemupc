@@ -7,6 +7,26 @@ hardware coverage guide the crate boundaries. Corrected timing and deadline
 dispatch are adopted; design documents distinguish implementation from proposals.
 The hardware specification is [`design/spec.md`](design/spec.md).
 
+## Generic 386 ISA board
+
+`assembly::BoardModel::Generic386Isa` composes the AT peripherals with an
+80386DX CPU selected through x86jit's `CpuModel::I80386`, a 128-byte CMOS RTC,
+port 92h and emulator-only fw_cfg and debug console. Its own validation
+requires these resources, 640 KiB conventional RAM, and up to 63 MiB of
+extended RAM in 64 KiB steps. Firmware shadow RAM covers C0000h–FFFFFh;
+the Listed SeaBIOS ISA image is preloaded at E0000h and separately mapped
+read-only at FFFE0000h–FFFFFFFFh. Reset retains both memories independently.
+The backend uses a 4 GiB flat virtual span without mapping the address gap;
+the pinned core's sparse region allocator is not implemented. IBM 5170
+assembly keeps its original 24-bit map and read-only adapter space.
+
+The shipped `machines/generic-386-seabios.toml` validates and assembles with
+register-level VGA and COM1. CPU reset entry execution remains unavailable
+at pin `6cb817b8` (`xj-srh.12 (x86jit)`), reported as a typed error naming
+FFFFFFF0h. This is board qualification, not a SeaBIOS POST/boot result.
+See [machine files](design/machine-files.md#generic-386-isa-board) and
+[firmware requirements](design/firmware-and-machine-classes.md#36-phase-b-firmware-requirements-seabios-on-generic-386-isa).
+
 ## Crate map and dependencies
 
 The 18 workspace packages implement the PC core, its host tools and tests.

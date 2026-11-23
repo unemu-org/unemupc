@@ -172,7 +172,25 @@ impl X86JitCpu {
         segments: RealSegments,
         fpu_present: bool,
     ) -> Result<Self, CpuError> {
-        Self::new_machine_bare(space_bytes, cs, ip, segments, fpu_present, false)
+        Self::new_machine_bare(
+            space_bytes,
+            cs,
+            ip,
+            segments,
+            fpu_present,
+            false,
+            CpuModel::I80286,
+        )
+    }
+
+    /// Build an Intel 80386DX machine at a real-mode entry with no coprocessor.
+    ///
+    /// Intel 80386 Programmer's Reference Manual, §10.1 Initialization: the
+    /// reset fetch uses the top of the 32-bit physical bus. The flat backing
+    /// spans 4 GiB; only configured RAM, MMIO and the BIOS copies are mapped.
+    /// See `backlog/docs/design/machine-files.md` §Generic 386 ISA board.
+    pub fn new_i386_bare(cs: u16, ip: u16, segments: RealSegments) -> Result<Self, CpuError> {
+        Self::new_machine_bare(1 << 32, cs, ip, segments, false, false, CpuModel::I80386)
     }
 
     fn new_machine_bare(
@@ -182,6 +200,7 @@ impl X86JitCpu {
         segments: RealSegments,
         fpu_present: bool,
         low_reset_fetch: bool,
+        model: CpuModel,
     ) -> Result<Self, CpuError> {
         let fpu = if fpu_present {
             FpuModel::Present
@@ -189,7 +208,7 @@ impl X86JitCpu {
             FpuModel::None
         };
         let mut vm = Vm::new(VmConfig::flat(space_bytes));
-        vm.set_cpu_model(CpuModel::I80286);
+        vm.set_cpu_model(model);
         vm.set_exception_delivery(ExceptionDelivery::InGuest);
         vm.set_fpu_model(fpu);
         let mut cpu = vm.new_vcpu();
@@ -197,7 +216,11 @@ impl X86JitCpu {
         // Installing the real-mode entry replaces the FPU policy inherited
         // from the VM, so restore the board's choice on the vCPU as well.
         cpu.set_fpu_model(fpu);
-        cpu.cpu.legacy.cr0 = 0xFFF0;
+        cpu.cpu.legacy.cr0 = if model == CpuModel::I80386 {
+            0x10
+        } else {
+            0xFFF0
+        };
         cpu.set_reg(Reg::Rsp, u64::from(segments.sp));
         cpu.set_reg(Reg::Rip, u64::from(ip));
         cpu.set_fpu_emulation(false);
@@ -225,7 +248,7 @@ impl X86JitCpu {
         ip: u16,
         segments: RealSegments,
     ) -> Result<Self, CpuError> {
-        Self::new_machine_bare(space_bytes, cs, ip, segments, true, true)
+        Self::new_machine_bare(space_bytes, cs, ip, segments, true, true, CpuModel::I80286)
     }
 
     /// Map a conventional RAM window `[base, base + size)` as `RWX` `Ram`.
@@ -697,7 +720,13 @@ impl X86JitCpu {
             Exit::UnsupportedSystemContext {
                 addr, operation, ..
             } => Err(CpuError::UnsupportedSystem {
-                operation: format!("{operation:?}"),
+                operation: if self.vm.cpu_model() == Some(CpuModel::I80386)
+                    && self.cpu.cpu.legacy.reset_fetch != 0
+                {
+                    format!("80386 reset fetch at 0xfffffff0 is unsupported by the pinned x86jit core ({operation:?})")
+                } else {
+                    format!("{operation:?}")
+                },
                 cs: self.cpu.cpu.cs,
                 ip: addr,
             }),
@@ -789,7 +818,12 @@ impl Cpu for X86JitCpu {
             state.legacy.a20_enabled = u8::from(a20_enabled);
             state.legacy.cr0 = 0xFFF0;
             if !self.low_reset_fetch {
-                state.legacy.segments[0].base = 0xFF0000;
+                state.legacy.segments[0].base = if self.vm.cpu_model() == Some(CpuModel::I80386) {
+                    state.legacy.cr0 = 0x10;
+                    0xFFFF0000
+                } else {
+                    0xFF0000
+                };
                 state.legacy.reset_fetch = 1;
             }
             state.fs = 0;
@@ -815,6 +849,18 @@ impl Cpu for X86JitCpu {
         max_steps: u64,
         options: StepRunOptions,
     ) -> Result<CpuStepRun, CpuError> {
+        // A capability probe retires nothing. The core currently validates the
+        // unsupported high reset entry even for zero steps; construction already
+        // selected the step-capable machine profile.
+        if max_steps == 0
+            && self.vm.cpu_model() == Some(CpuModel::I80386)
+            && self.cpu.cpu.legacy.reset_fetch != 0
+        {
+            return Ok(CpuStepRun {
+                steps: 0,
+                stop: CpuStepStop::Exit(CpuStop::BudgetExhausted),
+            });
+        }
         let machine = self.vm.execution_profile() == ExecutionProfile::Machine;
         let mut steps = 0;
         // Bounded returns in a row with no instruction retired between them.
@@ -2763,5 +2809,59 @@ mod tests {
             other => panic!("expected an unexpected-exit error, got {other:?}"),
         }
         assert_eq!(cpu.run(None).expect("run"), CpuStop::Halt);
+    }
+}
+
+#[cfg(test)]
+mod i386_tests {
+    use super::*;
+
+    #[test]
+    fn i386_constructor_selects_machine_model_and_executes_real_entry() {
+        let mut cpu = X86JitCpu::new_i386_bare(0, 0x1000, RealSegments::flat(0)).unwrap();
+        assert_eq!(cpu.vm.cpu_model(), Some(CpuModel::I80386));
+        assert_eq!(cpu.vm.execution_profile(), ExecutionProfile::Machine);
+        cpu.map_ram(0, 0x10000).unwrap();
+        cpu.write_mem(0x1000, &[0x66, 0xB8, 0x78, 0x56, 0x34, 0x12, 0xF4])
+            .unwrap();
+        assert_eq!(
+            cpu.run_steps(10, StepRunOptions::default()).unwrap().stop,
+            CpuStepStop::Exit(CpuStop::Halt)
+        );
+        assert_eq!(cpu.reg(CpuReg::Rax), 0x12345678);
+    }
+
+    #[test]
+    fn i386_reset_fetch_returns_typed_error_without_retiring_or_changing_ram() {
+        let mut cpu = X86JitCpu::new_i386_bare(0, 0x1000, RealSegments::flat(0)).unwrap();
+        cpu.map_ram(0, 0x10000).unwrap();
+        cpu.write_mem(0x600, &[0xA5]).unwrap();
+        cpu.map_rom(0xFFFE0000, &vec![0xF4; 0x20000]).unwrap();
+        cpu.reset().unwrap();
+        assert_eq!(cpu.cpu.cpu.legacy.segments[0].base, 0xFFFF0000);
+        assert_eq!(
+            cpu.run_steps(0, StepRunOptions::default()).unwrap().steps,
+            0
+        );
+        for error in [
+            cpu.run_steps(1, StepRunOptions::default()).unwrap_err(),
+            cpu.run(Some(1)).unwrap_err(),
+        ] {
+            assert!(matches!(
+                error,
+                CpuError::UnsupportedSystem {
+                    cs: 0xF000,
+                    ip: 0xFFF0,
+                    ..
+                }
+            ));
+            assert!(error
+                .to_string()
+                .contains("80386 reset fetch at 0xfffffff0"));
+        }
+        assert_eq!(cpu.retired(), 0);
+        let mut byte = [0];
+        cpu.read_mem(0x600, &mut byte).unwrap();
+        assert_eq!(byte, [0xA5]);
     }
 }

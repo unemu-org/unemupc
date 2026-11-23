@@ -335,6 +335,13 @@ pub enum ConfigError {
         addr: u64,
     },
 
+    /// The emulator ISA board's CPU, RAM or fixed firmware wiring is invalid.
+    #[error("board \"{board}\" {reason}")]
+    BoardConfiguration {
+        board: &'static str,
+        reason: &'static str,
+    },
+
     /// Configured memory must leave the board's fixed ROM alias to assembly.
     #[error("board \"{board}\" high ROM alias overlaps configured memory at {addr:#x}")]
     HighRomAliasOverlap {

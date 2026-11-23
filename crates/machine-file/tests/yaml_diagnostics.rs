@@ -81,7 +81,6 @@ fn every_reserved_board_model_explains_the_missing_board_support() {
         ),
         ("compaq-deskpro", "needs a Compaq Deskpro motherboard model"),
         ("tandy-1000", "needs a Tandy 1000 motherboard model"),
-        ("generic-386-isa", "needs a 386 ISA motherboard model"),
         ("i440fx-piix3", "needs i440FX and PIIX3 chipset models"),
         ("i440bx-piix4", "needs i440BX and PIIX4 chipset models"),
     ] {

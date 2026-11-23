@@ -458,6 +458,34 @@ impl FirmwareEntry {
     };
 }
 
+/// Unmodified SeaBIOS ISA build. SeaBIOS rel-1.17.0, POST shadow RAM and
+/// QEMU CMOS memory sizing; see firmware-and-machine-classes.md §3.6.
+pub const SEABIOS_1_17_0_ISA: FirmwareEntry = FirmwareEntry {
+    id: "seabios-1.17.0-isa",
+    kind: FirmwareKind::SystemBios,
+    sha256: "07add88892bb47898ec712322870b8de7bdb6016dc7f4c3dd169d748be004a13",
+    size: 131072,
+    base: FirmwareBase::TopOfFirstMib,
+    scan_window: None,
+    video_scan_window: None,
+    rom_offset: 0,
+    provides: &[FirmwareService::Floppy, FirmwareService::FixedDisk],
+    capabilities: &[FirmwareCapability::CmosQemuLayout],
+    requires: &[FirmwarePart::Kbc8042, FirmwarePart::RtcCmos128, FirmwarePart::PicCascade],
+    cpu_min: FirmwareCpu::I80386,
+    boards: &["generic-386-isa"],
+    distribution: FirmwareDistribution::Open {
+        fetch: "vendor/seabios/fetch.sh",
+        license: "LGPL-3.0-only",
+        provenance: "coreboot/seabios b52ca86e094d19b58e2304417787e96b940e39c6 (rel-1.17.0), ISA configuration",
+        source_archive_sha256: None,
+    },
+    parts: &[],
+    status: FirmwareStatus::Listed,
+    cmos_layout: None,
+    superseded_by: None,
+};
+
 /// Unmodified Xi 8088 build pinned by `vendor/kiselev-bios/fetch.sh`.
 /// The catalogue promises the tested 286 machine, rather than upstream's wider
 /// CPU support. See `vendor/kiselev-bios/README.md`, Image size and mapping.
@@ -1035,6 +1063,7 @@ pub fn check_entry_requirements(
     }
     let cpu = match config.cpu.chip {
         CpuChip::I80286 => FirmwareCpu::I80286,
+        CpuChip::I80386 => FirmwareCpu::I80386,
     };
     if cpu < entry.cpu_min {
         return Err(ConfigError::FirmwareNeedsCpu {

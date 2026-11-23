@@ -83,6 +83,7 @@ pub fn materialize(hardware: &mut Table, config: &assembly::MachineConfig) -> Re
         "model".into(),
         match config.cpu.chip {
             assembly::CpuChip::I80286 => "80286",
+            assembly::CpuChip::I80386 => "80386dx",
         }
         .into(),
     );

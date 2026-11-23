@@ -11,6 +11,9 @@ deciders: Mikołaj Mikołajczyk
 ## Status
 
 Accepted — 2026-11-11. Amends rule 5 of [[decision-18]] (phase B firmware).
+Board wiring, shadow RAM, the separate pristine high copy and the Listed
+SeaBIOS catalogue entry are implemented for `generic-386-isa` (2026-11-23).
+Execution/boot qualification still waits for `xj-srh.12 (x86jit)` and a re-pin.
 Part of phase B of [[decision-16]]. The requirement list is in
 [`backlog/docs/design/firmware-and-machine-classes.md`](../docs/design/firmware-and-machine-classes.md)
 (phase B firmware requirements); the CPU-core side is in

@@ -94,7 +94,9 @@ pub use image::{
     interleave_parts, FirmwareService, ImageKind, ImagePart, ImageSource, Lane, LoadImage,
 };
 pub use machine::MachineConfig;
-pub use memory::{MemoryConfig, MmioWindow, RamRegion, IBM5170_MAX_EXTENDED_KIB};
+pub use memory::{
+    MemoryConfig, MmioWindow, RamRegion, GENERIC386_MAX_EXTENDED_KIB, IBM5170_MAX_EXTENDED_KIB,
+};
 pub use memory_image::{MemoryImage, MemoryKind, MemoryRegion};
 pub use mount::{DiskBase, ImageBytes, InlineMount, JournalStore, MachineMount, Mount, MountError};
 pub use observation::{

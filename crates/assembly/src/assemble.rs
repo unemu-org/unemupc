@@ -560,16 +560,13 @@ pub fn assemble_preverified(
         machine = machine
             .with_reset_signal(reset_signal)
             .with_a20_line(move || (line.change_count(), line.enabled()))
-            // The reset fetch reaches the ROM with the gate off until the first
-            // CS load (decision-42; machine-config.md §A20 line and System
-            // Control Port A, "Reset fetch with the gate off"). The window lasts while CS still
-            // holds the 80286 reset image, selector F000h with hidden base
-            // FF0000h; any CS load replaces it. Bare rigs' low reset entry
-            // (base F0000h) never opens it.
-            // The selector check is a field read; the hidden base needs the
-            // diagnostic picture, so it is read only while CS is F000h.
+            // Reset fetches reach the ROM before the first CS load, even with
+            // the board gate off (Intel 80286 PRM, Appendix C, Address after
+            // Reset; Intel 80386 PRM, §10.1 Initialization). Bare low entries
+            // never open this window. Read the hidden base only for reset CS.
             .with_reset_fetch_probe(|cpu: &cpu::X86JitCpu| {
-                cpu.code_segment() == 0xF000 && cpu.diagnostic_state().cs().base == 0xFF_0000
+                cpu.code_segment() == 0xF000
+                    && matches!(cpu.diagnostic_state().cs().base, 0xFF_0000 | 0xFFFF_0000)
             });
     }
     let mut ems_map = None;
@@ -719,6 +716,7 @@ pub fn build_cpu_with_mapping_trace(
     let board_memory = config.board == crate::BoardModel::Ibm5170;
     let physical_end = match config.board {
         crate::BoardModel::Ibm5170 => crate::memory::AT_PHYSICAL_END,
+        crate::BoardModel::Generic386Isa => crate::memory::I386_PHYSICAL_END,
         crate::BoardModel::Bare => config.memory.address_space_bytes,
     };
     let mut cpu = match (config.board, config.cpu.chip) {
@@ -729,6 +727,18 @@ pub fn build_cpu_with_mapping_trace(
             config.cpu.segments.into(),
             config.cpu.fpu == crate::FpuChip::I80287,
         )?,
+        (_, crate::CpuChip::I80386) => X86JitCpu::new_i386_bare(
+            config.cpu.reset.cs(),
+            config.cpu.reset.ip(),
+            config.cpu.segments.into(),
+        )?,
+        (crate::BoardModel::Generic386Isa, crate::CpuChip::I80286) => {
+            return Err(ConfigError::BoardConfiguration {
+                board: config.board.id(),
+                reason: "requires an 80386DX CPU",
+            }
+            .into());
+        }
         (crate::BoardModel::Bare, crate::CpuChip::I80286) if has_a20_source(config) => {
             X86JitCpu::new_a20_bare(
                 physical_end,
@@ -760,7 +770,7 @@ pub fn build_cpu_with_mapping_trace(
         cpu.map_mmio(base, end - base)?;
         record_mapping(base, end, "mmio");
     }
-    if firmware_board {
+    if firmware_board && config.board != crate::BoardModel::Generic386Isa {
         // Physical adapter decoding belongs to the board, independently of
         // whether this firmware searches for option ROMs.
         let end = crate::firmware::system_bios(config)?.base;
@@ -802,6 +812,17 @@ pub fn build_cpu_with_mapping_trace(
     for image in &config.images {
         let bytes = load_image_bytes(&image.source)?;
         match image.kind {
+            ImageKind::Rom if config.board == crate::BoardModel::Generic386Isa => {
+                cpu.write_mem(image.base, &bytes)?;
+                if std::ptr::eq(image, crate::firmware::system_bios(config)?) {
+                    cpu.map_rom(crate::memory::I386_HIGH_BIOS_BASE, &bytes)?;
+                    record_mapping(
+                        crate::memory::I386_HIGH_BIOS_BASE,
+                        crate::memory::I386_PHYSICAL_END,
+                        "rom",
+                    );
+                }
+            }
             ImageKind::Rom => {
                 cpu.map_rom(image.base, &bytes)?;
                 record_mapping(image.base, image.base + bytes.len() as u64, "rom");
@@ -838,7 +859,9 @@ pub fn build_cpu_with_mapping_trace(
             record(crate::memory::AT_HIGH_ALIAS_BASE, physical_end, "rom");
         }
     }
-    if board_memory && matches!(config.cpu.reset, crate::ResetSpec::ResetVector { .. }) {
+    if (board_memory || config.board == crate::BoardModel::Generic386Isa)
+        && matches!(config.cpu.reset, crate::ResetSpec::ResetVector { .. })
+    {
         cpu::Cpu::reset(&mut cpu)?;
     }
     Ok(cpu)
@@ -1854,3 +1877,7 @@ pub fn floppy_cmos_type(geometry: &FloppyGeometry) -> u8 {
         0
     }
 }
+
+#[cfg(test)]
+#[path = "generic386_tests.rs"]
+mod generic386_tests;

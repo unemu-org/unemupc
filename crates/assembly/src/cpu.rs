@@ -18,17 +18,28 @@ pub enum CpuChip {
     /// Intel 80286.
     #[default]
     I80286,
+    /// Intel 80386DX with a 32-bit physical bus.
+    I80386,
 }
 
 impl CpuChip {
+    /// Schema spelling for the selected processor chip.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::I80286 => "80286",
+            Self::I80386 => "80386dx",
+        }
+    }
+
     /// Physical address bus width. IBM Personal Computer AT Technical Reference,
     /// Section 1 "System Board", I/O Channel: the 80286 AT has 24 address lines.
     /// Width is metadata, not a flat-VM allocation policy. The AT decode is
-    /// fixed at 24 bits. A wider processor such as a 386 needs a separate sparse
-    /// mapping design and is outside the current board model.
+    /// fixed at 24 bits. Intel 80386 Programmer's Reference Manual, §2.1
+    /// Memory Organization: the DX provides 32 physical address lines.
     pub const fn physical_address_bits(self) -> u8 {
         match self {
             Self::I80286 => 24,
+            Self::I80386 => 32,
         }
     }
 }

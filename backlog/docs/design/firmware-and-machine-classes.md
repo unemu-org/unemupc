@@ -330,7 +330,7 @@ contract (machine-config.md). A board model has these parts:
 | `ibm-5170` | at | 80286 (80287 later) | none | **Kiselev Xi 8088 1.0.2** (tested; SHA-256 `1ad458ac…81a8`, MEASURED by `fetch.sh`), plus XUB AT r638 option ROM | IBM 5170 BIOS (even/odd pair) | **available now** |
 | `ibm-5160` | xt | 8088, v20 (reserved) | none | GLaBIOS `ARCH_5160`, Kiselev `MACHINE_XT`, Super PC/Turbo XT | IBM 5160 BIOS | reserved until `xj-50w.2 (x86jit)` |
 | `ibm-5150` | xt | 8088 (reserved) | none | GLaBIOS `ARCH_5150` | IBM 5150 BIOS | optional, later |
-| `generic-386-isa` | at386 | 80386 (reserved) | port 92h; emulator-only fw_cfg at 510h/511h | Unmodified SeaBIOS `CONFIG_QEMU`, serial console first; SeaVGABIOS later; Bochs `rombios` legacy fallback (decision-19, §3.6) | — | reserved until phase B |
+| `generic-386-isa` | at386 | 80386DX | port 92h; emulator-only fw_cfg at 510h/511h | Unmodified SeaBIOS `CONFIG_QEMU`, serial console first; SeaVGABIOS later; Bochs `rombios` legacy fallback (decision-19, §3.6) | — | board available; execution waits for `xj-srh.12 (x86jit)` |
 | `i440fx-piix3` | pci | Pentium Pro / Pentium II (reserved) | 82441FX PAM/SMRAM, PIIX3 PIRQ/ELCR | SeaBIOS (QEMU `pc` config); Bochs `rombios` | — | candidate for phases C/D |
 | `i440bx-piix4` | pci + AGP | Pentium II/III | 82443BX, PIIX4 | none for a real board (see §3.4) | Award/AMI/Phoenix images of named boards | enthusiast |
 | `neat-286` | at | 286 / 386SX | C&T CS8221 index/data registers (ASSUMED 22h/23h) | none | AMI/Phoenix NEAT BIOSes | enthusiast |
@@ -557,13 +557,27 @@ hostname suffix, before checking output SHA-256.
 
 | Fixture | Build state (2026-11-11) | Catalogue / board |
 |---|---|---|
-| `vendor/seabios/bios-1.17.0-isa.bin` | Built; two independent builds matched (MEASURED by the supervisor); output SHA-256 pinned in the fixture | No catalogue entry yet; waits for `generic-386-isa` and the x86jit 386 CPU model |
+| `vendor/seabios/bios-1.17.0-isa.bin` | Built; two independent builds matched (MEASURED by the supervisor); output SHA-256 pinned in the fixture | `seabios-1.17.0-isa`, Listed, on `generic-386-isa`; execution waits for `xj-srh.12 (x86jit)` |
 
-This adds no board or catalogue entry and qualifies no boot. QEMU's prebuilt
+The board and catalogue entry now assemble; this qualifies no boot. QEMU's prebuilt
 `bios.bin` is not used; its MPTABLE and other platform settings deliberately
 differ. Input and output hashes are recorded in the fixture README, together
 with the 2026-11-11 two-build measurement on macOS arm64 using i686-elf GCC
 15.2.0 and binutils 2.46 from the flake-pinned nixpkgs.
+
+**Implemented catalogue entry.** `seabios-1.17.0-isa` is **Listed**, not
+Tested: a 131,072-byte system BIOS at E0000h, SHA-256
+`07add88892bb47898ec712322870b8de7bdb6016dc7f4c3dd169d748be004a13`.
+It is open firmware (LGPL-3.0-only), built by `vendor/seabios/fetch.sh`
+from unmodified rel-1.17.0 at `b52ca86e094d19b58e2304417787e96b940e39c6`.
+It requires an 80386, AT keyboard/PICs and 128-byte CMOS, belongs only to
+`generic-386-isa`, provides floppy/fixed-disk services and enables
+`cmos-qemu-layout`. It has no pre-mapped ROM scan window. The shipped
+`machines/generic-386-seabios.toml` supplies register-level VGA and COM1;
+the board supplies fw_cfg/SERCON, port 92h and the 402h console.
+SeaVGABIOS delivery remains pending. See
+[machine-files.md §Generic 386 ISA board](machine-files.md#generic-386-isa-board)
+for RAM limits, the current 4 GiB flat backing and reset-fetch refusal.
 
 **Memory and reset (READ).** C0000h–FFFFFh must be writable RAM at POST,
 with the 128 KiB BIOS preloaded at E0000h–FFFFFh. SeaBIOS writes F-segment
@@ -578,7 +592,7 @@ QEMU `isapc` uses an `isa-bios` alias of the BIOS region
 (`x86-common.c:1117–1120`). That high window is not a pristine copy:
 SeaBIOS takes the "no pristine copy" branch (`shadow.c:178–186`).
 
-Our board's `upc-o0j.12` will instead supply writable C0000h–DFFFFh,
+Our board's `upc-o0j.12` supplies writable C0000h–DFFFFh,
 the preloaded BIOS RAM and a **separate read-only pristine copy** at
 FFFE0000h–FFFFFFFFh on the 386DX bus, as required by decision-19 rule 3.
 This is our design for the RAM-preserving CPU reset in `upc-o0j.14`;
@@ -671,8 +685,8 @@ records existing components, not demonstrated SeaBIOS compatibility.
 | Big real mode after `transition16big` | `romlayout.S:87–117`; `stacks.c:291` | Missing: fixed real-mode limit (`lift/mod.rs:4962`) | R2: `xj-srh.4 (x86jit)` acceptance |
 | Fixed EFLAGS.ID, CPUID #UD | `x86.c:10–23` | Missing: CPUID lifted in every mode (`lift/mod.rs:2371`) | R3: `xj-srh.17 (x86jit)` |
 | Triple-fault CPU reset, port 92h bit 0 | `misc.c:134–145`; `resume.c:141` | 92h device reset on Bare uses existing warm-restart path (documented edge/readback; pulse timing ASSUMED); triple-fault reset pending | `upc-o0j.14`; `xj-srh.6 (x86jit)` |
-| Writable C0000h–FFFFFh, preloaded images | `post.c:290–299`; `shadow.c:117–147`; `optionroms.c:467` | Missing: adapter-space RAM rejected | `upc-o0j.12` |
-| BIOS copy at FFFE0000h–FFFFFFFFh | `shadow.c:22,169–196` | Missing; high reset fetch alone is insufficient | `upc-o0j.12`; `xj-srh.12 (x86jit)` |
+| Writable C0000h–FFFFFh, preloaded images | `post.c:290–299`; `shadow.c:117–147`; `optionroms.c:467` | Implemented on generic-386-isa; IBM 5170 unchanged | `upc-o0j.12` |
+| BIOS copy at FFFE0000h–FFFFFFFFh | `shadow.c:22,169–196` | Separate read-only copy implemented; CPU reset fetch still blocked | `upc-o0j.12`; `xj-srh.12 (x86jit)` |
 | At least ~1.25 MiB contiguous RAM | `malloc.c:413–456` | Partial | `upc-o0j.6` |
 | CMOS 30h/31h, 34h/35h, 5Bh–5Dh | `paravirt.c:240–254,588` | Partial: `cmos-qemu-layout` capability exists; enabled by the SeaBIOS entry with the board. Full derivation and a Rust-configured 128-byte DS12887-compatible RTC exist on Bare rigs; validation requires `rtc-cmos-128`, preventing high RAM fields from aliasing type-47 geometry | `upc-o0j.11`; `upc-o0j.6` |
 | CMOS 32h, 38h/3Dh, 39h, 5Fh | `clock.c:48`; `boot.c:471–489`; `block.c:84–90`; `paravirt.c:535` | 32h holds `RtcStart.year / 100` in BCD for every derived AT layout, independently of firmware capabilities; images retain the supplied byte and journals retain the persisted byte. The other fields are partial: `cmos-qemu-layout` capability exists; enabled by the SeaBIOS entry with the board. A Rust-configured 128-byte RTC satisfies `rtc-cmos-128` on Bare rigs, preventing a false CPU count from 5Fh aliasing 1Fh; images/journals remain 64-byte only, without machine-file size syntax | `upc-o0j.11` |
@@ -772,16 +786,12 @@ remain ASSUMED until checked in the corresponding device work.
   - an FDC without CCR;
   - an 8-bit card limit and IRQ ≤ 7;
   - the 8088 CPU model (`xj-50w.2 (x86jit)`).
-- **`generic-386-isa`, phase B:**
-  - all of the 5170 items;
-  - port 92h A20 and CPU reset, plus A20 **masking** in the CPU core
-    (`upc-o0j.5`, `upc-o0j.14`; decision-8 revisit);
-  - extended RAM with firmware-owned CMOS (`upc-o0j.6`, `upc-o0j.11`);
-  - emulator-only fw_cfg for SeaBIOS SERCON and later VGA/option ROMs
-    (`upc-o0j.13`, decision-19);
-  - writable shadow RAM and a pristine high BIOS copy (`upc-o0j.12`);
-  - 8254 read-back (`upc-o0j.10`) and, later, a VGA ROM with a register-level
-    VGA (`upc-o0j.15`). See §3.6 for the full source-backed requirements.
+- **`generic-386-isa`, phase B:** board wiring, 128-byte QEMU CMOS,
+  extended RAM, port 92h/A20, fw_cfg/SERCON, writable shadow RAM, pristine
+  high BIOS copy, 8254 read-back and register-level VGA now assemble.
+  SeaVGABIOS delivery, execution of the 386 reset fetch (`xj-srh.12 (x86jit)`),
+  the rest of the 386 real-mode integer ISA and boot qualification remain
+  pending. See §3.6 for the source-backed requirements.
 
 ## 5. Config expression
 
@@ -859,7 +869,7 @@ firmware-loaded option ROMs are the board-specific extension in §3.6):
     report `MissingSystemBios`; the highest address is never a fallback.
   - `base = 1 MiB − size`, which puts the reset vector F000:FFF0 at offset
     `size − 16`. The size must be a multiple of 8 KiB.
-  - `generic-386-isa` will map a separate read-only pristine copy at
+  - `generic-386-isa` maps a separate read-only pristine copy at
     `4 GiB − size`, not an alias of its writable shadow RAM (§3.6,
     `upc-o0j.12`). PCI boards alias the image at `4 GiB − size`, as SeaBIOS
     expects (`shadow.c`: "the bios at 0xf0000 is also at 0xffff0000").
@@ -1205,9 +1215,9 @@ The fallback, if the CPU seam is late, is the 8088 build `ide_xt`, which uses
 source build with AT defaults. Prefer waiting for the seam.
 
 **(b) Phase B.** Decision-19 selects **unmodified SeaBIOS `CONFIG_QEMU`**
-on `generic-386-isa`. The board will use the pinned 128 KiB build from
+on `generic-386-isa`. The board uses the pinned 128 KiB build from
 `upc-o0j.9` and emulator-only fw_cfg for serial-console goldens first.
-Register-level VGA and SeaVGABIOS follow. Writable shadow RAM, the high
+Register-level VGA is wired; SeaVGABIOS delivery follows. Writable shadow RAM, the high
 BIOS copy, firmware-owned CMOS and CPU/device prerequisites are detailed in
 §3.6. It provides AT services and builds with gcc (READ). The firmware
 family is also planned for phases C/D on `i440fx-piix3`. Bochs legacy

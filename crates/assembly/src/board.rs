@@ -4,6 +4,9 @@
 //! IBM Personal Computer AT Technical Reference, Section 1 "System Board":
 //! "System Interrupts", "System Timers", "Direct Memory Access", "I/O Address
 //! Map", "Keyboard Controller", and "Real-Time Clock/CMOS RAM Information".
+//! Intel 80386 Programmer's Reference Manual, §2.1 and §10.1 define the DX
+//! physical bus and reset address. QEMU Firmware Configuration Device
+//! specification, Selector and Data Registers defines the emulator-only port.
 //! See `backlog/docs/design/machine-config.md` §Board model for the coverage table.
 
 use crate::device::{
@@ -17,6 +20,8 @@ use crate::device::{
 pub enum MachineClass {
     /// AT interrupt, keyboard and CMOS wiring.
     At,
+    /// ISA board with a 32-bit 80386DX bus.
+    At386,
 }
 
 /// Named motherboard constraints on the flat device list.
@@ -29,6 +34,8 @@ pub enum MachineClass {
 pub enum BoardModel {
     /// AT with the documented IBM 5170 device coverage.
     Ibm5170,
+    /// Emulator ISA board with writable firmware shadow RAM.
+    Generic386Isa,
     /// Hand-wired Rust test rigs, without motherboard constraints or a class.
     Bare,
 }
@@ -38,6 +45,7 @@ impl BoardModel {
     pub const fn id(self) -> &'static str {
         match self {
             Self::Ibm5170 => "ibm-5170",
+            Self::Generic386Isa => "generic-386-isa",
             Self::Bare => "bare",
         }
     }
@@ -53,7 +61,7 @@ impl BoardModel {
                 retired_per_pit_clock: 8,
                 retired_per_pit_clock_denominator: 13,
             },
-            Self::Bare => crate::ClockConfig::default(),
+            Self::Bare | Self::Generic386Isa => crate::ClockConfig::default(),
         }
     }
 
@@ -65,7 +73,7 @@ impl BoardModel {
     pub const fn cpu_clocks_mhz(self) -> (u32, &'static [u32]) {
         match self {
             Self::Ibm5170 => (6, &[6, 8]),
-            Self::Bare => (0, &[]),
+            Self::Bare | Self::Generic386Isa => (0, &[]),
         }
     }
 
@@ -87,6 +95,7 @@ impl BoardModel {
                 crate::FirmwareEntry::XUB_R638_AT,
                 crate::FirmwareEntry::XUB_R638_XTP_ATA1F0,
             ],
+            Self::Generic386Isa => &[crate::firmware::SEABIOS_1_17_0_ISA],
             Self::Bare => &[],
         }
     }
@@ -95,6 +104,7 @@ impl BoardModel {
     pub const fn class(self) -> Option<MachineClass> {
         match self {
             Self::Ibm5170 => Some(MachineClass::At),
+            Self::Generic386Isa => Some(MachineClass::At386),
             Self::Bare => None,
         }
     }
@@ -112,7 +122,7 @@ impl BoardModel {
             return Vec::new();
         }
         use DeviceId::*;
-        vec![
+        let mut devices = vec![
             DeviceConfig::new(
                 MasterPic,
                 DeviceKind::Pic(PicCfg { cascade: true }),
@@ -172,7 +182,41 @@ impl BoardModel {
                 DeviceKind::Post(PostPortCfg { port: 0x80 }),
                 vec![PortWindow::single(0x80)],
             ),
-        ]
+        ];
+        if self == Self::Generic386Isa {
+            if let DeviceKind::Rtc(cfg) = &mut devices[6].kind {
+                cfg.ram = crate::CmosRam::Bytes128;
+            }
+            devices.extend([
+                DeviceConfig::new(
+                    SysCtrlPortA,
+                    DeviceKind::SysCtrlPortA,
+                    vec![PortWindow::single(0x92)],
+                ),
+                DeviceConfig::new(
+                    DebugConsole,
+                    DeviceKind::DebugConsole(crate::DebugConsoleCfg::default()),
+                    vec![PortWindow::single(0x402)],
+                ),
+                DeviceConfig::new(
+                    FwCfg,
+                    DeviceKind::FwCfg(crate::FwCfgCfg {
+                        sercon_from_com1: true,
+                        ..Default::default()
+                    }),
+                    crate::FwCfgCfg::port_windows(),
+                ),
+            ]);
+        }
+        devices
+    }
+
+    /// Processor selected by this board's physical bus.
+    pub const fn cpu_chip(self) -> crate::CpuChip {
+        match self {
+            Self::Generic386Isa => crate::CpuChip::I80386,
+            Self::Ibm5170 | Self::Bare => crate::CpuChip::I80286,
+        }
     }
 }
 

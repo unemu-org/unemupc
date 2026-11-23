@@ -215,7 +215,7 @@ the owning `DeviceId`; lowering derives the windows from the card kinds.
 
 | Field | Type | Default | v1 | Lowers to |
 |---|---|---|---|---|
-| `model` | string | required | `"ibm-5170"` | `MachineConfig.board`, plus the board device set |
+| `model` | string | required | `"ibm-5170"`, `"generic-386-isa"` | `MachineConfig.board`, plus the board device set |
 | `post_port` | u16 or `"none"` | `0x80` on `ibm-5170` | yes | the `Post` device; also the DMA page-register decode |
 | `rtc` | table | see below | yes | the `Rtc` device |
 | `mouse` | boolean | `false` | yes | attach a standard PS/2 mouse to the 8042 auxiliary port; reserve IRQ12 |
@@ -298,6 +298,60 @@ video option ROM at C0000h derives own-BIOS (00). Explicit NVRAM images are not
 rewritten, so their equipment byte must agree with the chosen switch and cards.
 See [machine-config.md §Primary display](machine-config.md#primary-display)
 for the hardware references, no-card policy and snapshot behavior.
+
+### Generic 386 ISA board
+
+`model = "generic-386-isa"` selects `MachineClass::At386` and defaults to
+`cpu.model = "80386dx"` (x86jit `CpuModel::I80386`); selecting a 286 or an
+80287 is refused. The IBM 5170 retains its 80286 CPU and existing rules.
+The 386 board has the same AT IRQ/DMA wiring and device order, with a
+128-byte DS12887-class RTC replacing the 64-byte RTC, then port 92h,
+the byte debug console at 402h and emulator-only fw_cfg at 510h/511h.
+These motherboard devices are required, with fixed resources. fw_cfg serves
+`etc/sercon-port` as a little-endian COM1 port number from the installed
+`uart-16550` card. A COM1 card is required by that default. VGA uses the
+register-level `vga` card; SeaVGABIOS and firmware-loaded option ROMs remain
+separate work. The shared 8042/92h A20 line retains OR arbitration; either
+source can enable A20. No selectable chipset or shadow-register model is added.
+
+Conventional RAM is 640 KiB. Extended RAM starts at 1 MiB, in 64 KiB
+steps, from zero through **64,512 KiB (63 MiB)**. The chosen population cap
+bounds guest RAM at 64 MiB and covers the first ISA board's needs; it is an
+emulator policy, not an 80386DX bus limit. The CPU has 32 physical address
+lines. C0000h–FFFFFh is writable RAM, with the 128 KiB BIOS preloaded at
+E0000h–FFFFFh. A separate, guest-read-only copy lives at
+FFFE0000h–FFFFFFFFh. CPU resets retain both shadow RAM contents and this
+pristine copy; firmware can copy the pristine bytes back during reboot.
+`ibm-5170` still refuses writable adapter space and retains its 24-bit map.
+
+The backend currently requests a **4 GiB zeroed heap allocation per machine**,
+even though only configured low memory, device windows and the high BIOS copy
+are guest-mapped. Guest population, reserved host address space and committed
+host memory are separate quantities: the 64 MiB low-memory population cap
+does not cap the heap request or host commitment. This is not an OS address
+reservation with selective commitment. Windows can require roughly 4 GiB of
+commit; strict-overcommit hosts can refuse the allocation, which aborts the
+process in the pinned core.
+
+At pin `6cb817b8`, `VmConfig::reserved` through `Vm::new` makes the same full-span
+heap allocation. `Vm::with_backend_host_ram` accepts one caller-owned contiguous
+span and requires the caller to implement OS reservation, commitment and release;
+the core supplies no portable allocator for it. `Memory::map` has no parameter
+for a separate region buffer, and every `SoftMmu` constructor reaches its
+unimplemented region allocator on mapping. A portable sparse backing API in
+x86jit is therefore required before this host-allocation blocker can be fixed.
+
+[`machines/generic-386-seabios.toml`](../../../machines/generic-386-seabios.toml)
+uses 15 MiB of extended RAM and the `seabios-1.17.0-isa` catalogue entry.
+It validates and assembles without running firmware. Execution remains blocked
+at pin `6cb817b8`: `xj-srh.12 (x86jit)` must supply the 386 reset fetch at
+FFFFFFF0h. Starting execution returns a typed `UnsupportedSystem` error
+with that physical address. The ignored SeaBIOS boot probe names this
+prerequisite and reports it explicitly when selected by the golden runner.
+Full 386 real-mode integer coverage (`xj-srh.16`), the TSS I/O bitmap and
+paging are still separate CPU-core work; assembly is not boot qualification.
+The board's default rate is one retired step per PIT clock, an uncalibrated
+deterministic policy rather than an instruction-cycle model.
 
 ### Serial mouse
 
@@ -425,7 +479,7 @@ format, recovery diagnostics, host failures and offline tools follow
 
 | Field | Type | Default | v1 | Lowers to |
 |---|---|---|---|---|
-| `model` | string | from the board (`"80286"` on `ibm-5170`) | `"80286"` | `CpuConfig.chip` |
+| `model` | string | from the board (`"80286"` on `ibm-5170`, `"80386dx"` on `generic-386-isa`) | `"80286"`, `"80386dx"` | `CpuConfig.chip` |
 | `fpu` | string | `"none"` | `"none"` or `"80287"` on `ibm-5170` | `CpuConfig.fpu`; derived CMOS 14h bit 1 follows the choice |
 | `rate` | `"A/B"` string or a positive integer `A` | board default (`"8/13"` on `ibm-5170`) | yes | `ClockConfig` A/B. Both parts must be positive. It is a ratio of completed steps per PIT input clock, not a frequency. |
 
@@ -454,7 +508,7 @@ coprocessor control wiring remain unimplemented.
 | Field | Type | Default | v1 | Lowers to |
 |---|---|---|---|---|
 | `conventional_kib` | integer, multiple of 16, at most 640 | 640 | yes | RAM `[0, conventional)` |
-| `extended_kib` | integer, multiple of 64, at most 15232 on ibm-5170 | 0 | yes | RAM `[1 MiB, 1 MiB + extended)`. Also sets `address_space_bytes`; assembly uses a fixed 16 MiB AT VM. READ: the AT System Memory Map ends expansion RAM at FE0000h, directly below the high alias. CPU A20 gating remains unwired. |
+| `extended_kib` | integer, multiple of 64, at most 15232 on ibm-5170 or 64512 on generic-386-isa | 0 | yes | RAM `[1 MiB, 1 MiB + extended)`. Also sets `address_space_bytes`; assembly uses a fixed 16 MiB AT VM. READ: the AT System Memory Map ends expansion RAM at FE0000h, directly below the high alias. CPU A20 gating remains unwired. |
 
 **The RAM rule (`ibm-5170`).** Upper probe RAM is [A0000h, C0000h), minus
 card MMIO and loaded images, joined to adjacent conventional RAM. The model
@@ -1526,7 +1580,7 @@ spike owns the board-model and firmware entries.
 | `[board] model` | `ibm-5160`, `ibm-5150`, `bare`, `compaq-deskpro`, `tandy-1000`, `i440fx-piix3`, `i440bx-piix4` |
 | `[board]` | `a20 = "kbc" \| "port-92" \| "both"`, `kbc = "at" \| "ps2"`, `keyboard = "xt-83" \| "at-84" \| "mf2-101"`, `keyboard_layout`, `dip_switches` (XT), `chipset` (a table of chipset registers), `speaker` |
 | `[board.rtc]` | `start = "host"` (rejected: this is the run option `--rtc-start host`) |
-| `[cpu] model` | `8086`, `8088`, `v20`, `80386sx`, `80386dx`, `80486`, `pentium`, `pentium-ii`, `pentium-iii` |
+| `[cpu] model` | `8086`, `8088`, `v20`, `80386sx`, `80486`, `pentium`, `pentium-ii`, `pentium-iii` |
 | `[cpu]` | `turbo = { rate, initial = "on" \| "off" }` |
 | `[memory]` | `shadow`, `umb`, `upper = "ram" \| "open-bus"` |
 | `[firmware]` | `basic = { image, base }` (ROM BASIC); `provides` values `video`, `serial`, `network-boot` |

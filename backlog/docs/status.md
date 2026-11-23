@@ -1,5 +1,23 @@
 # Status
 
+## Generic 386 ISA board (2026-11-23)
+
+The `generic-386-isa` board accepts the 80386DX CPU model, 640 KiB conventional
+RAM and up to 63 MiB extended RAM (64 KiB steps). Board-local 128-byte CMOS,
+port 92h, fw_cfg and debug console 402h are wired. C0000h–FFFFFh is writable
+shadow RAM; the 128 KiB SeaBIOS image at E0000h has a separate read-only copy
+at FFFE0000h that survives RAM-preserving CPU resets. IBM 5170 retains its
+original memory map and goldens. The backend currently needs a 4 GiB flat
+virtual backing span; guest RAM population remains capped at 64 MiB.
+
+`seabios-1.17.0-isa` is Listed. `machines/generic-386-seabios.toml` validates
+and assembles with register-level VGA and COM1/SERCON. SeaVGABIOS delivery
+remains pending. Execution returns a clear typed error for the unsupported
+386 reset fetch at FFFFFFF0h on pin `6cb817b8`; `xj-srh.12 (x86jit)` must land
+before the ignored boot probe can qualify SeaBIOS. The rest of the 386
+real-mode integer ISA, TSS I/O bitmap and paging remain CPU-core gaps.
+
+
 2026-11-22 — The front end moved to [unemu](https://github.com/unemu-org/unemu) at `0f279540`; entries above this marker are the core's own.
 
 Snapshot of what works, what's in flight, what's broken. **Not the roadmap** — open work lives in

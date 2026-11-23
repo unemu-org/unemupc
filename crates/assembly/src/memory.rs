@@ -10,6 +10,14 @@ use crate::device::DeviceId;
 /// See `backlog/docs/design/machine-config.md` §MemoryConfig.
 pub const IBM5170_MAX_EXTENDED_KIB: u32 = 15232;
 
+/// Emulator board policy: 63 MiB of extended RAM, a 64 MiB RAM ceiling.
+/// Intel 80386 Programmer's Reference Manual, §2.1 Memory Organization permits
+/// a 4 GiB physical bus; this smaller population bounds the configured guest RAM population.
+/// See `backlog/docs/design/machine-files.md` §Generic 386 ISA board.
+pub const GENERIC386_MAX_EXTENDED_KIB: u32 = 63 * 1024;
+pub(crate) const I386_HIGH_BIOS_BASE: u64 = 0xFFFE0000;
+pub(crate) const I386_PHYSICAL_END: u64 = 1 << 32;
+
 /// IBM Personal Computer AT Technical Reference, Section 1 "System Board",
 /// System Memory Map: FE0000h–FFFFFFh duplicates E0000h–FFFFFh.
 pub(crate) const AT_HIGH_ALIAS_BASE: u64 = 0xFE0000;
@@ -21,7 +29,8 @@ pub(crate) const AT_PHYSICAL_END: u64 = 0x1000000;
 /// A contiguous region of guest RAM (§4).
 ///
 /// Plain read/write/execute system memory. Firmware scan space is excluded on
-/// catalogue boards. IBM Personal Computer AT Technical Reference, Section 1
+/// IBM 5170 catalogue boards; the generic 386 board instead supplies writable
+/// shadow RAM. IBM Personal Computer AT Technical Reference, Section 1
 /// "System Board", System Memory Map assigns C0000h–DFFFFh to I/O expansion
 /// ROM, E0000h–EFFFFh to reserved space, and F0000h–FFFFFh to system ROM. See
 /// `backlog/docs/design/machine-config.md` §MemoryConfig. Loaded ROMs live in
@@ -86,8 +95,10 @@ pub struct MemoryConfig {
     /// MMIO window, and loaded image must fit inside `[0, address_space_bytes)`.
     /// IBM 5170 assembly uses exactly 16 MiB for its fixed 24-bit board decode
     /// and rejects mappings outside it. Bare rigs retain this configured size.
-    /// Wider CPUs need a separate sparse-mapping design, not an automatic larger
-    /// flat allocation. Assembly adds empty bus and the AT's board alias.
+    /// The generic 386 board uses a separate 4 GiB backing span for its 32-bit
+    /// bus, with only its configured regions and high BIOS copy mapped. This
+    /// field describes its low RAM population, not the backend allocation.
+    /// Assembly adds empty bus and the high alias only on the AT board.
     /// IBM Personal Computer AT Technical Reference, Section 1 "System Board",
     /// System Memory Map; see `backlog/docs/design/machine-config.md` §MemoryConfig.
     pub address_space_bytes: u64,

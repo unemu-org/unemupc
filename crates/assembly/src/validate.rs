@@ -454,6 +454,9 @@ impl MachineConfig {
         };
         let protected_end = size.map_or(0xFFFF1, |size| protected_base.saturating_add(size));
         for ram in &self.memory.ram {
+            if self.board == BoardModel::Generic386Isa {
+                continue;
+            }
             if ram.size > 0 && ranges_overlap(protected_base, protected_end, ram.base, ram.end()) {
                 return Err(ConfigError::SystemBiosOverlapsRam {
                     board: self.board.id(),
@@ -599,6 +602,12 @@ impl MachineConfig {
     fn check_rtc_ram(&self) -> Result<(), ConfigError> {
         for device in &self.devices {
             if let DeviceKind::Rtc(cfg) = &device.kind {
+                if self.board == BoardModel::Generic386Isa && cfg.ram != crate::CmosRam::Bytes128 {
+                    return Err(ConfigError::BoardConfiguration {
+                        board: self.board.id(),
+                        reason: "requires a 128-byte CMOS RTC",
+                    });
+                }
                 if cfg.ram == crate::CmosRam::Bytes128 {
                     if self.board == BoardModel::Ibm5170 {
                         return Err(ConfigError::Ibm5170RtcRam);
@@ -633,6 +642,18 @@ impl MachineConfig {
     fn check_board(&self) -> Result<(), ConfigError> {
         if self.board == BoardModel::Bare {
             return Ok(());
+        }
+        if self.cpu.chip != self.board.cpu_chip() {
+            return Err(ConfigError::BoardConfiguration {
+                board: self.board.id(),
+                reason: "CPU model does not match the board",
+            });
+        }
+        if self.board == BoardModel::Generic386Isa && self.cpu.fpu != crate::FpuChip::None {
+            return Err(ConfigError::BoardConfiguration {
+                board: self.board.id(),
+                reason: "requires cpu.fpu = none",
+            });
         }
         let mut expected = self.board.motherboard_devices();
         let post = self.devices.iter().find(|d| d.id == DeviceId::Post);
@@ -723,7 +744,7 @@ impl MachineConfig {
                     && matches!(&d.kind, DeviceKind::Pic(cfg) if !cfg.cascade)
             }) {
                 "no slave PIC".into()
-            } else if self.board != BoardModel::Ibm5170 {
+            } else if !matches!(self.board, BoardModel::Ibm5170 | BoardModel::Generic386Isa) {
                 format!("unsupported board {}", self.board.id())
             } else {
                 continue;
@@ -744,6 +765,7 @@ impl MachineConfig {
             (&actual.kind, &expected.kind),
             (DeviceKind::Rtc(_), DeviceKind::Rtc(_))
                 | (DeviceKind::Keyboard(_), DeviceKind::Keyboard(_))
+                | (DeviceKind::FwCfg(_), DeviceKind::FwCfg(_))
         ) {
             expected.kind = actual.kind.clone();
         }
@@ -834,7 +856,7 @@ impl MachineConfig {
     fn check_fw_cfg(&self) -> Result<(), ConfigError> {
         for device in &self.devices {
             if let DeviceKind::FwCfg(cfg) = &device.kind {
-                if self.board != BoardModel::Bare {
+                if !matches!(self.board, BoardModel::Bare | BoardModel::Generic386Isa) {
                     return Err(ConfigError::FwCfgBoard);
                 }
                 if device.ports != crate::FwCfgCfg::port_windows()
@@ -852,7 +874,7 @@ impl MachineConfig {
     fn check_sys_ctrl_port_a(&self) -> Result<(), ConfigError> {
         for device in &self.devices {
             if matches!(device.kind, DeviceKind::SysCtrlPortA) {
-                if self.board != BoardModel::Bare {
+                if !matches!(self.board, BoardModel::Bare | BoardModel::Generic386Isa) {
                     return Err(ConfigError::SysCtrlPortABoard);
                 }
                 if device.ports != [PortWindow::single(0x92)]
@@ -869,7 +891,7 @@ impl MachineConfig {
     fn check_debug_console(&self) -> Result<(), ConfigError> {
         for device in &self.devices {
             if let DeviceKind::DebugConsole(cfg) = device.kind {
-                if self.board != BoardModel::Bare {
+                if !matches!(self.board, BoardModel::Bare | BoardModel::Generic386Isa) {
                     return Err(ConfigError::DebugConsoleBoard);
                 }
                 if device.ports != [PortWindow::single(cfg.port)]
@@ -1106,6 +1128,9 @@ impl MachineConfig {
     /// range as machine files. IBM Personal Computer AT Technical Reference,
     /// Section 1 "System Board", System Memory Map (READ).
     fn check_board_memory(&self) -> Result<(), ConfigError> {
+        if self.board == BoardModel::Generic386Isa {
+            return self.check_386_memory();
+        }
         if self.board != BoardModel::Ibm5170 {
             return Ok(());
         }
@@ -1181,6 +1206,90 @@ impl MachineConfig {
                     addr: window.base.max(0xE0000),
                 });
             }
+        }
+        Ok(())
+    }
+
+    /// Intel 80386 Programmer's Reference Manual, §2.1 and §10.1: a 32-bit
+    /// bus and a high reset address. SeaBIOS rel-1.17.0, shadow.c make_bios_writable
+    /// needs low RAM independently of the pristine reboot source.
+    fn check_386_memory(&self) -> Result<(), ConfigError> {
+        let invalid = |reason| ConfigError::BoardConfiguration {
+            board: self.board.id(),
+            reason,
+        };
+        let covers = |base, end| {
+            let mut cursor = base;
+            while cursor < end {
+                let next = self
+                    .memory
+                    .ram
+                    .iter()
+                    .filter(|r| r.base <= cursor && cursor < r.end())
+                    .map(|r| r.end())
+                    .max()
+                    .unwrap_or(cursor);
+                if next == cursor {
+                    return false;
+                }
+                cursor = next;
+            }
+            true
+        };
+        if !covers(0, 0xA0000) || !covers(0xC0000, 0x100000) {
+            return Err(invalid(
+                "requires 640 KiB conventional RAM and writable shadow RAM at 0xc0000..0x100000",
+            ));
+        }
+        let limit = 0x100000 + u64::from(crate::GENERIC386_MAX_EXTENDED_KIB) * 1024;
+        for ram in &self.memory.ram {
+            if ram.end() > limit {
+                return Err(ConfigError::ExtendedRamLimit {
+                    board: self.board.id(),
+                    max_kib: crate::GENERIC386_MAX_EXTENDED_KIB,
+                    addr: ram.base.max(limit),
+                });
+            }
+            if ram.end() > 0x100000 && (ram.base != 0x100000 || !ram.size.is_multiple_of(65536)) {
+                return Err(invalid("extended RAM must start at 1 MiB in 64 KiB steps"));
+            }
+        }
+        for window in &self.memory.mmio {
+            if window.end() > crate::memory::I386_PHYSICAL_END
+                || ranges_overlap(
+                    window.base,
+                    window.end(),
+                    crate::memory::I386_HIGH_BIOS_BASE,
+                    crate::memory::I386_PHYSICAL_END,
+                )
+            {
+                return Err(ConfigError::HighRomAliasOverlap {
+                    board: self.board.id(),
+                    addr: window.base,
+                });
+            }
+        }
+        for image in &self.images {
+            let end = image
+                .base
+                .saturating_add(image.source.known_len().unwrap_or(0));
+            if end > crate::memory::I386_PHYSICAL_END
+                || ranges_overlap(
+                    image.base,
+                    end,
+                    crate::memory::I386_HIGH_BIOS_BASE,
+                    crate::memory::I386_PHYSICAL_END,
+                )
+            {
+                return Err(ConfigError::HighRomAliasOverlap {
+                    board: self.board.id(),
+                    addr: image.base,
+                });
+            }
+        }
+        let bios = crate::firmware::system_bios(self)?;
+        if bios.base != 0xE0000 || bios.source.known_len().is_some_and(|size| size != 0x20000) {
+            return Err(invalid("requires a 128 KiB BIOS at 0xe0000"));
         }
         Ok(())
     }

@@ -22,6 +22,8 @@ impl ImageReader for Images {
             } else {
                 1_474_560
             }
+        } else if name == "bios-1.17.0-isa.bin" {
+            131072
         } else if name.contains("ide_xtp") {
             8192
         } else {
@@ -190,6 +192,7 @@ fn repository_machine_file_parity() {
         ("machines/at-games.toml".into(), "803c59aaa00a7b9c78a66a52ea37193d7bde6e5bb63a4077322e5f3e52e02c74".into()),
         // The open AT BIOS's mono display switch.
         ("machines/at-ide.toml".into(), "e42872c37de7d3674033a09efaf304ff1e47f95392af3baa9f2ed2553ab8a60d".into()),
+        ("machines/generic-386-seabios.toml".into(), "954de502cba8fc199bcea13428c7eb6ee10f7b1fea651a7abec458d4073ee285".into()),
         ("machines/presets/ibm-5170.toml".into(), "resolve:<repo>/machines/presets/ibm-5170.toml:16: firmware.bios.image: required fields are missing: firmware.bios.image (<repo>/machines/presets/ibm-5170.toml:16); inheritance chain: <repo>/machines/presets/ibm-5170.toml".into()),
     ];
     assert_eq!(observed, expected);

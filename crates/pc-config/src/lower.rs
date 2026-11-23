@@ -1269,6 +1269,7 @@ impl<R: ImageReader> Context<'_, R> {
                     .filter_map(|i| self.images.get(*i).cloned())
                     .collect()
             }
+            BoardConfiguration { .. } => vec!["board.model".into()],
             InvalidCpuRate { .. } | StepBoundedCpuRequired(_) => vec!["cpu".into()],
             RegionOutOfSpace { .. } => self.images.clone(),
             ImageRead { .. } => vec!["firmware".into()],
@@ -1472,6 +1473,7 @@ fn lower_tracked_mode<R: ImageReader>(
     )?;
     let board = match board {
         v1::BoardModel::Ibm5170 => BoardModel::Ibm5170,
+        v1::BoardModel::Generic386Isa => BoardModel::Generic386Isa,
     };
     let mut devices = board.motherboard_devices();
     if let Some(settings) = &document.board {
@@ -1506,7 +1508,10 @@ fn lower_tracked_mode<R: ImageReader>(
             }
         }
         if let Some(rtc) = &settings.rtc {
-            let cfg = context.rtc(rtc)?;
+            let mut cfg = context.rtc(rtc)?;
+            if board == BoardModel::Generic386Isa {
+                cfg.ram = assembly::CmosRam::Bytes128;
+            }
             if let Some(device) = devices.iter_mut().find(|d| d.id == DeviceId::Rtc) {
                 device.kind = DeviceKind::Rtc(cfg);
             }
@@ -1584,12 +1589,13 @@ fn lower_tracked_mode<R: ImageReader>(
             "must be a multiple of 16 KiB, at most 640 KiB",
         ));
     }
-    if !assembly::descriptors::EXTENDED_KIB.contains(extended) {
+    if !assembly::descriptors::extended_kib(board).contains(extended) {
         return Err(context.error(
             "memory.extended_kib",
             format!(
-                "must be a multiple of 64 KiB, at most {} KiB on ibm-5170",
-                assembly::IBM5170_MAX_EXTENDED_KIB
+                "must be a multiple of 64 KiB, at most {} KiB on {}",
+                assembly::descriptors::extended_kib(board).max,
+                board.id()
             ),
         ));
     }
@@ -1598,13 +1604,15 @@ fn lower_tracked_mode<R: ImageReader>(
         clock.retired_per_pit_clock = rate.steps.get();
         clock.retired_per_pit_clock_denominator = rate.pit_clocks.get();
     }
-    let chip = match document
-        .cpu
-        .as_ref()
-        .and_then(|cpu| cpu.model)
-        .unwrap_or(v1::CpuModel::I80286)
-    {
+    let chip = match document.cpu.as_ref().and_then(|cpu| cpu.model).unwrap_or(
+        if board == BoardModel::Generic386Isa {
+            v1::CpuModel::I80386
+        } else {
+            v1::CpuModel::I80286
+        },
+    ) {
         v1::CpuModel::I80286 => CpuChip::I80286,
+        v1::CpuModel::I80386 => CpuChip::I80386,
     };
     let display_switch = match document
         .board
@@ -1631,7 +1639,8 @@ fn lower_tracked_mode<R: ImageReader>(
         clock,
         memory: MemoryConfig {
             address_space_bytes: MIB + u64::from(extended) * 1024,
-            ram: assembly::descriptors::ram_regions(
+            ram: assembly::descriptors::ram_regions_for_board(
+                board,
                 u64::from(conventional) * 1024,
                 u64::from(extended) * 1024,
                 &mmio,

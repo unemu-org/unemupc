@@ -49,13 +49,12 @@ macro_rules! named_values {
 
 named_values! {
     /// Implemented board spellings; reserved names appear only in parse errors.
-    BoardModel, "board model" { Ibm5170 => "ibm-5170" } reserved {
+    BoardModel, "board model" { Ibm5170 => "ibm-5170", Generic386Isa => "generic-386-isa" } reserved {
         "ibm-5160" => "needs the XT 8255 PPI keyboard interface and an 8088 CPU model",
         "ibm-5150" => "needs the XT 8255 PPI keyboard interface and an 8088 CPU model",
         "bare" => "file-based bare-board composition is not implemented; use Rust test rigs",
         "compaq-deskpro" => "needs a Compaq Deskpro motherboard model",
         "tandy-1000" => "needs a Tandy 1000 motherboard model",
-        "generic-386-isa" => "needs a 386 ISA motherboard model",
         "i440fx-piix3" => "needs i440FX and PIIX3 chipset models",
         "i440bx-piix4" => "needs i440BX and PIIX4 chipset models",
     }
@@ -83,12 +82,11 @@ impl<'de> Deserialize<'de> for FpuModel {
 
 named_values! {
     /// CPU model names; instruction-set and board compatibility are separate.
-    CpuModel, "cpu model" { I80286 => "80286" } reserved {
+    CpuModel, "cpu model" { I80286 => "80286", I80386 => "80386dx" } reserved {
         "8086" => "needs an 8086 instruction model, which the CPU core does not have yet",
         "8088" => "needs an 8088 instruction model, which the CPU core does not have yet",
         "v20" => "needs a V20 instruction model, which the CPU core does not have yet",
         "80386sx" => "needs an 80386SX CPU model for firmware machines",
-        "80386dx" => "needs an 80386DX CPU model for firmware machines",
         "80486" => "needs an 80486 CPU model for firmware machines",
         "pentium" => "needs a Pentium CPU model for firmware machines",
         "pentium-ii" => "needs a Pentium II CPU model for firmware machines",

@@ -26,7 +26,7 @@ type AppVersion = Release;
 pub type Row = (&'static str, Release);
 pub const BASELINE: Release = Release(0, 0, 1);
 pub const NEXT_RELEASE: Release = Release(0, 0, 5);
-pub const NEWEST_ROW: Release = Release(0, 0, 3);
+pub const NEWEST_ROW: Release = NEXT_RELEASE;
 /// Core config release. Application composition supplies CoreDescription::version to readers.
 pub fn package() -> Release {
     Release(
@@ -155,6 +155,7 @@ pub const MACHINE_KEYS: &[Row] = &[
 /// Firmware catalogue entries, by id (`assembly::BoardModel::firmware_catalogue`). A
 /// release that does not list an entry refuses its bytes.
 pub const CATALOGUE: &[Row] = &[
+    ("seabios-1.17.0-isa", NEXT_RELEASE),
     ("kiselev-xi8088-1.0.2", BASELINE),
     ("kiselev-xi8088-1.0.2-atreset", BASELINE),
     ("unemu-at-bios-1.0.2-unemu.3", BASELINE),
@@ -190,7 +191,13 @@ pub fn machine(table: &toml::Table) -> image::Result<Release> {
 /// Rate ROM bytes by the catalogue the core actually accepts, whole or split.
 pub fn firmware(sha256: &str, size: u64) -> image::Result<Release> {
     let mut release = BASELINE;
-    for entry in assembly::BoardModel::Ibm5170.firmware_catalogue() {
+    for entry in [
+        assembly::BoardModel::Ibm5170,
+        assembly::BoardModel::Generic386Isa,
+    ]
+    .into_iter()
+    .flat_map(|board| board.firmware_catalogue())
+    {
         let chip = entry
             .parts
             .iter()
@@ -258,6 +265,7 @@ fn machine_values(machine: &schema::MachineFile) -> AppVersion {
 pub fn board_model(value: schema::BoardModel) -> AppVersion {
     match value {
         schema::BoardModel::Ibm5170 => BASELINE,
+        schema::BoardModel::Generic386Isa => NEXT_RELEASE,
     }
 }
 
@@ -265,6 +273,7 @@ pub fn board_model(value: schema::BoardModel) -> AppVersion {
 pub fn cpu_model(value: schema::CpuModel) -> AppVersion {
     match value {
         schema::CpuModel::I80286 => BASELINE,
+        schema::CpuModel::I80386 => NEXT_RELEASE,
     }
 }
 
@@ -612,6 +621,8 @@ mod tests {
         use schema::*;
         let mut all = vec![
             board_model(BoardModel::Ibm5170),
+            board_model(BoardModel::Generic386Isa),
+            cpu_model(CpuModel::I80386),
             cpu_model(CpuModel::I80286),
         ];
         all.extend([FpuModel::None, FpuModel::I80287].map(fpu_model));
@@ -664,8 +675,14 @@ mod tests {
 
     #[test]
     fn newest_row_and_catalogue_coverage_are_core_owned() {
-        let catalogue = assembly::BoardModel::Ibm5170.firmware_catalogue();
-        for entry in catalogue {
+        let catalogue: Vec<_> = [
+            assembly::BoardModel::Ibm5170,
+            assembly::BoardModel::Generic386Isa,
+        ]
+        .into_iter()
+        .flat_map(|board| board.firmware_catalogue())
+        .collect();
+        for entry in &catalogue {
             assert!(lookup(&[CATALOGUE], entry.id).is_some(), "{}", entry.id);
         }
         assert_eq!(CATALOGUE.len(), catalogue.len());

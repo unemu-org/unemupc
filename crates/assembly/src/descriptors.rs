@@ -372,3 +372,33 @@ pub fn ram_regions(
     }
     joined
 }
+
+/// RAM population for the selected board. SeaBIOS rel-1.17.0 shadow.c,
+/// make_bios_writable and qemu_prep_reset require writable firmware workspace.
+/// See `backlog/docs/design/machine-files.md` §Generic 386 ISA board.
+pub fn ram_regions_for_board(
+    board: BoardModel,
+    conventional: u64,
+    extended: u64,
+    mmio: &[MmioWindow],
+    images: &[LoadImage],
+) -> Vec<RamRegion> {
+    let mut ram = ram_regions(conventional, extended, mmio, images);
+    if board == BoardModel::Generic386Isa {
+        ram.push(RamRegion::new(0xC0000, 0x40000));
+        ram.sort_by_key(|r| r.base);
+    }
+    ram
+}
+
+/// Extended-memory guest population domain. The 386 cap bounds populated low
+/// memory at 64 MiB; it does not bound host commitment or address reservation.
+pub const fn extended_kib(board: BoardModel) -> IntegerDomain {
+    IntegerDomain {
+        max: match board {
+            BoardModel::Generic386Isa => GENERIC386_MAX_EXTENDED_KIB,
+            _ => IBM5170_MAX_EXTENDED_KIB,
+        },
+        ..EXTENDED_KIB
+    }
+}

@@ -59,7 +59,7 @@ impl Draft {
             board,
             display_switch: DisplaySwitch::Auto,
             cpu: CpuConfig {
-                chip: CpuChip::I80286,
+                chip: board.cpu_chip(),
                 fpu: FpuChip::None,
                 reset: ResetSpec::reset_vector(),
                 segments: SegmentSeed::flat(0xF000),
@@ -67,7 +67,8 @@ impl Draft {
             clock: board.default_clock(),
             memory: MemoryConfig {
                 address_space_bytes: 0x100000 + u64::from(EXTENDED_KIB.default) * 1024,
-                ram: ram_regions(
+                ram: ram_regions_for_board(
+                    board,
                     u64::from(CONVENTIONAL_KIB.default) * 1024,
                     u64::from(EXTENDED_KIB.default) * 1024,
                     &[],
@@ -149,7 +150,7 @@ pub fn fields(draft: &Draft) -> Vec<Field> {
         "cpu.model".into(),
         "Processor",
         Group::System,
-        Value::Name("80286".into()),
+        Value::Name(config.cpu.chip.name().into()),
     );
     push(
         "cpu.fpu".into(),
