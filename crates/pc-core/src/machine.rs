@@ -428,6 +428,16 @@ impl PcMachine {
         self.assembled.diagnostic_report(status)
     }
 
+    /// An owned image of every system RAM region at this completed run boundary,
+    /// in physical address order, independent of A20. ROM and device windows
+    /// are omitted; no guest access or device synchronisation occurs, so the
+    /// run stays unchanged. Contains guest bytes for local diagnosis only;
+    /// never add an image to a repository. See `assembly::memory_image` and
+    /// `backlog/docs/design/observation.md` §Guest RAM image.
+    pub fn memory_image(&self) -> Result<assembly::MemoryImage, cpu::CpuError> {
+        self.assembled.memory_image(&self.config.memory)
+    }
+
     /// The session's reset total, for its end; nothing when none happened.
     pub fn reset_summary(&self) -> Option<String> {
         (self.cpu_resets != 0).then(|| format!("cpu resets in session: {}", self.cpu_resets))

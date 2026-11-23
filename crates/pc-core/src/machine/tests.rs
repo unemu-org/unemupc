@@ -37,6 +37,173 @@ fn keyboard_state(assembled: &AssembledMachine) -> Vec<u8> {
     assembled.machine.bus().device(index).unwrap().save()
 }
 
+fn memory_image_machine() -> PcMachine {
+    let program = vec![
+        0xFA, 0x31, 0xC0, 0x8E, 0xD8, // CLI; XOR AX,AX; MOV DS,AX
+        0xC7, 0x06, 0x00, 0x05, 0x5C, 0xA1, // MOV WORD [0500h],A15Ch
+        0xB8, 0xFF, 0xFF, 0x8E, 0xD8, // MOV AX,FFFFh; MOV DS,AX
+        0xC7, 0x06, 0x10, 0x05, 0x6D, 0xB2, // MOV WORD [0510h],B26Dh (100500h)
+        0xB8, 0x00, 0xD0, 0x8E, 0xD8, // MOV AX,D000h; MOV DS,AX
+        0xC7, 0x06, 0x20, 0x00, 0x7E, 0xC3, // MOV WORD [0020h],C37Eh
+        0xB0, 0xD1, 0xE6, 0x64, 0xB0, 0x01, 0xE6, 0x60, // 8042: A20 off
+        0xB8, 0xFF, 0xFF, 0x8E, 0xD8, // MOV AX,FFFFh; MOV DS,AX
+        0xA1, 0x10, 0x05, // MOV AX,[0510h] (aliases 0500h)
+        0x31, 0xDB, 0x8E, 0xDB, 0xA3, 0x04, 0x05, // XOR BX,BX; MOV DS,BX; MOV [0504h],AX
+        0xFF, 0x06, 0x02, 0x05, 0xEB, 0xFA, // INC WORD [0502h]; JMP to INC
+    ];
+    let mut config = assembly::at_boot(program);
+    config.memory.address_space_bytes = 0x110000;
+    // Deliberately unordered: image regions must be in physical order.
+    config.memory.ram = vec![
+        assembly::RamRegion::new(0x100000, 0x10000),
+        assembly::RamRegion::new(0xD0000, 0x4000),
+        assembly::RamRegion::new(0, 0xA0000),
+    ];
+    config.memory.mmio = vec![assembly::MmioWindow::new(0xA0000, 0x20000, DeviceId::Vga)];
+    config.images.push(assembly::LoadImage {
+        base: 0xE0000,
+        source: assembly::ImageSource::Inline(vec![0xF4; 0x1000]),
+        kind: assembly::ImageKind::Rom,
+        provides: Vec::new(),
+    });
+    let vga = config
+        .devices
+        .iter_mut()
+        .find(|d| d.id == DeviceId::Vga)
+        .unwrap();
+    vga.kind = DeviceKind::VgaRegisters(assembly::VgaCfg {});
+    vga.ports = assembly::VgaCfg::port_windows();
+    PcMachine::from_assembled(&config, assembly::assemble(&config).unwrap()).unwrap()
+}
+
+#[test]
+fn memory_image_copies_guest_writes_in_every_ram_region_with_a20_off() {
+    let mut machine = memory_image_machine();
+    assert_eq!(
+        machine.run(RunLimit::until(Ticks(1_000))),
+        Ok(Stop::Deadline)
+    );
+    assert!(!machine.diagnostic_report().cpu.a20);
+    let image = machine.memory_image().unwrap();
+    assert_eq!(
+        image
+            .regions
+            .iter()
+            .map(|r| (r.base, r.kind, r.bytes.len()))
+            .collect::<Vec<_>>(),
+        [
+            (0, assembly::MemoryKind::Ram, 0xA0000),
+            (0xD0000, assembly::MemoryKind::Ram, 0x4000),
+            (0x100000, assembly::MemoryKind::Ram, 0x10000),
+        ]
+    );
+    assert_eq!(&image.regions[0].bytes[0x500..0x502], &[0x5C, 0xA1]);
+    assert_eq!(
+        &image.regions[0].bytes[0x504..0x506],
+        &[0x5C, 0xA1],
+        "CPU reads alias with A20 off"
+    );
+    assert_eq!(&image.regions[1].bytes[0x20..0x22], &[0x7E, 0xC3]);
+    assert_eq!(
+        &image.regions[2].bytes[0x500..0x502],
+        &[0x6D, 0xB2],
+        "the image uses physical addresses"
+    );
+    assert_eq!(
+        image.to_string(),
+        concat!(
+            "memory image\n",
+            "ram      base 0x00000000, length 0xa0000\n",
+            "ram      base 0x000d0000, length 0x4000\n",
+            "ram      base 0x00100000, length 0x10000\n",
+        )
+    );
+    machine.run(RunLimit::until(Ticks(2_000))).unwrap();
+    assert_ne!(
+        machine.memory_image().unwrap().regions[0].bytes,
+        image.regions[0].bytes,
+        "an owned image keeps the bytes at its capture boundary"
+    );
+}
+
+fn device_states(machine: &PcMachine) -> Vec<Vec<u8>> {
+    let bus = machine.assembled_ref().machine.bus();
+    (0..)
+        .map_while(|index| bus.device(index).map(|device| device.save()))
+        .collect()
+}
+
+#[test]
+fn memory_image_leaves_time_cpu_devices_and_the_subsequent_run_unchanged() {
+    let mut plain = memory_image_machine();
+    let mut imaged = memory_image_machine();
+    for machine in [&mut plain, &mut imaged] {
+        machine.enable_code_trail();
+        machine.enable_delivery_log().unwrap();
+        assert_eq!(
+            machine.run(RunLimit::until(Ticks(1_000))),
+            Ok(Stop::Deadline)
+        );
+        assert!(machine.assembled.type_scancodes(&[0x1E, 0x9E]));
+        let bus = machine.assembled.machine.bus_mut();
+        for (port, value) in [
+            (0x3C4, 0x0F02),
+            (0x3C4, 0x0604),
+            (0x3CE, 0x0506),
+            (0x3CE, 0x0005),
+            (0x3CE, 0xFF08),
+        ] {
+            bus.port_write(port, 2, value).unwrap();
+        }
+        bus.mmio_write(0xA0000, 1, 0xA5).unwrap();
+        assert_eq!(bus.mmio_read(0xA0000, 1).unwrap(), 0xA5);
+        bus.mmio_write(0xA0001, 1, 0x5A).unwrap();
+    }
+    let before = (
+        imaged.now(),
+        imaged.steps(),
+        imaged.status(),
+        imaged.assembled.machine.virtual_time(),
+        imaged.assembled.machine.cpu().diagnostic_state(),
+        device_states(&imaged),
+    );
+    let image = imaged.memory_image().unwrap();
+    assert_eq!(image.regions.len(), 3, "device windows are omitted");
+    assert_eq!(
+        before,
+        (
+            imaged.now(),
+            imaged.steps(),
+            imaged.status(),
+            imaged.assembled.machine.virtual_time(),
+            imaged.assembled.machine.cpu().diagnostic_state(),
+            device_states(&imaged)
+        )
+    );
+    eprintln!(
+        "image capture unchanged: retired {}, steps {}, clock {} ticks; CPU and every device identical",
+        before.4.retired, before.1, before.0.0
+    );
+    for until in [2_000, 4_000, 8_000] {
+        assert_eq!(
+            plain.run(RunLimit::until(Ticks(until))),
+            imaged.run(RunLimit::until(Ticks(until)))
+        );
+        assert_eq!(plain.diagnostic_report(), imaged.diagnostic_report());
+        assert_eq!(device_states(&plain), device_states(&imaged));
+        assert_eq!(
+            plain.memory_image().unwrap(),
+            imaged.memory_image().unwrap()
+        );
+    }
+    eprintln!(
+        "subsequent twins identical: retired {}, steps {}, clock {} ticks; reports, devices and RAM equal",
+        imaged.assembled.machine.cpu().diagnostic_state().retired,
+        imaged.steps(),
+        imaged.now().0
+    );
+}
+
 /// The same keys and the same chunks, once through `dyn Machine` and once
 /// through the assembled machine with the encoder and the cap the desktop
 /// drove it with before the contract existed, end in the same machine.

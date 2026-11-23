@@ -944,6 +944,30 @@ queued) and PIT counter 2's GATE low, takes a report every 997 steps, most at
 a halt; after the same run its twin that took none has the same CPU state,
 time and snapshot of every device.
 
+### Guest RAM image
+
+`PcMachine::memory_image(&self)` returns an owned `assembly::MemoryImage`
+(or a CPU memory-read error) beside the machine report. Assembly copies every
+system RAM range in the machine's validated memory description, sorted by
+physical base: conventional RAM, extended RAM, and any configured upper-memory
+or shadow RAM. Each region has a `u64` physical base, a `Ram`/`Rom` kind, and
+the bytes as stored. The current capture includes RAM only. ROM, unmapped
+gaps and all configured device windows are omitted, including an EMS page
+frame whose CPU mapping temporarily holds a device page as RAM.
+
+Capture uses the backend's physical host read API, bypassing CPU address
+translation and A20 gating. It neither accesses nor synchronises a device;
+in particular, it never reads VGA memory or changes its latches. Retired
+counts, virtual time and subsequent execution remain unchanged. The image
+owns its bytes, so later guest writes do not change a captured image. Its
+`Display` is a short plain-text summary: one line per region with kind, base
+and byte length in hexadecimal. The front end decides the dump file format;
+the core performs no file I/O and supplies no flattening helper.
+
+Images contain guest bytes, potentially including proprietary software and
+private data. They are for local diagnosis only and must **never be added to
+a repository**. The image is diagnostic data, not a restorable snapshot.
+
 ### The code trail
 
 When enabled (`Machine::enable_code_trail`, `PcMachine::enable_code_trail`),

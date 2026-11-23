@@ -56,6 +56,7 @@ mod fw_cfg;
 mod image;
 mod machine;
 mod memory;
+pub mod memory_image;
 mod mount;
 mod observation;
 mod output;
@@ -94,6 +95,7 @@ pub use image::{
 };
 pub use machine::MachineConfig;
 pub use memory::{MemoryConfig, MmioWindow, RamRegion, IBM5170_MAX_EXTENDED_KIB};
+pub use memory_image::{MemoryImage, MemoryKind, MemoryRegion};
 pub use mount::{DiskBase, ImageBytes, InlineMount, JournalStore, MachineMount, Mount, MountError};
 pub use observation::{
     Observation, ObservationError, ObservationPolicy, ObservationRequest, ObservationRoute,

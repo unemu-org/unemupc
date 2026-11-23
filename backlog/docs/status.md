@@ -7,6 +7,13 @@ beads (`bd ready --exclude-type epic`, `bd list --type epic`).
 
 Update this when a feature lands, breaks, or gets pulled. Stale status is worse than no status.
 
+- **2026-11-23 — Guest RAM diagnostic image:** `PcMachine::memory_image`
+  copies every configured system RAM region in physical address order,
+  including extended and upper-memory RAM, independently of A20. Device
+  windows and ROM are omitted; capture leaves time, CPU and devices unchanged.
+  The owned regions and plain-text summary let front ends save a local dump
+  beside the report. Guest bytes must never enter a repository. See
+  [observation §Guest RAM image](design/observation.md#guest-ram-image).
 - **2026-11-23 — Open 360x240 VGA regression fixture:** the bootable
   `vga-modex-test` programs unchained byte addressing, single-plane drawing,
   one-pixel glyphs, write-mode-1 copies, 28 MHz retrace polling and two-page
