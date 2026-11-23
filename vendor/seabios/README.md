@@ -9,14 +9,29 @@ The clone (`src/`), temporary exports (`build/`) and ROM are gitignored.
 The firmware catalogue lists this image as `seabios-1.17.0-isa` for the
 `generic-386-isa` board (`machines/generic-386-seabios.toml`). Existing 286
 machines do not use it. CI builds it in the fixtures lane. There is no SeaBIOS
-boot qualification yet. At CPU pin `99ed385e`, reset executes and port 402h
-emits the version banner, build tools and `Unable to unlock ram - bridge not
-found`. After 3,081 retired instructions, x86jit refuses protected-mode
-`BT EDX,21` (`0F BA E2 15`) at CS:EIP `0008:000F5067`, linear `000F5067h`,
-with `UnsupportedSystem { operation: "LegacyInstruction", cs: 8, ip: 1003623 }`.
-The UART stream is empty. The diskless POST test
-remains ignored with this precise CPU blocker, checked when selected by the
-golden runner. POST end and INT 15h memory services are unqualified; see [firmware requirements §3.6](../../backlog/docs/design/firmware-and-machine-classes.md#36-phase-b-firmware-requirements-seabios-on-generic-386-isa).
+boot qualification yet. **MEASURED at CPU pin `deae5bac`:** reset executes,
+and port 402h emits the version banner, build tools,
+`Unable to unlock ram - bridge not found` and `Found QEMU fw_cfg`.
+After **3,582 retired instructions**, protected-mode CPL 0 `BSWAP EAX`
+(`0F C8`) at CS:EIP `0008:000F510B`, linear `000F510Bh`, raises #UD
+on the 80386. SeaBIOS's empty protected-mode IDT (`src/misc.c:134–145`)
+cannot deliver the fault or #DF. x86jit shuts down; the board returns
+`ResetRequested`. An isolated outward-delivery probe reports
+`Exit::Exception { addr: 1003787, vector: 6, .. }` without an error code.
+The UART stream is empty. The former protected-mode BT refusal is gone.
+
+**READ at rel-1.17.0:** `src/fw/paravirt.c:703–705` converts the fw_cfg
+directory count from big endian. `src/byteorder.h:15–17` explicitly emits
+`bswapl`, despite `Makefile:64` selecting `-march=i386`. This unmodified
+fixture therefore needs a firmware/CPU-target policy decision before it can
+complete POST on the current 80386 model. The board applies no workaround.
+
+Both ignored SeaBIOS probes check this exact shutdown boundary when selected
+by the golden runner. POST end, INT 15h memory services and keyboard
+reset/resume after complete POST remain unqualified. The version's no-device
+messages are `No bootable device.` and
+`No bootable device.  Retrying in %d seconds.` (`src/boot.c:965–980`);
+neither is reached. See [firmware requirements §3.6](../../backlog/docs/design/firmware-and-machine-classes.md#36-phase-b-firmware-requirements-seabios-on-generic-386-isa).
 
 ## Build and tools
 

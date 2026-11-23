@@ -332,10 +332,11 @@ device windows. Unpopulated holes remain uncommitted and guest-unmapped;
 reservation alone does not populate guest RAM. Host-page rounding can add a
 small amount of commitment. The 64 MiB low-memory population cap is independent
 of the 32-bit address reservation. Adapter diagnostics expose the sparse backing
-kind and reserved span. At this pin, x86jit's numeric committed-byte statistic
-is unavailable for sparse backing; numeric commitment reporting arrives with a
-later pin. Regression tests check the sparse backing and exact mapped-byte total,
-including the high ROM copy, and verify that unpopulated gaps have no mapping.
+kind, reserved span and numeric committed-byte count. Regression tests bound
+commitment by the populated regions, including the high ROM copy and device
+windows, and verify that unpopulated gaps have no mapping. The tested board
+regions are all 64 KiB aligned, so host-page rounding adds no bytes on supported
+hosts; their committed-byte count equals the exact mapped-byte total.
 Host commitment is separate from RSS and excludes tracking metadata.
 
 Linux/macOS reserve inaccessible pages and commit mapped ranges with page
@@ -347,7 +348,7 @@ flat backing and memory maps.
 
 [`machines/generic-386-seabios.toml`](../../../machines/generic-386-seabios.toml)
 uses 15 MiB of extended RAM and the `seabios-1.17.0-isa` catalogue entry.
-At CPU pin `a70d115c` (x86jit), reset installs the core's
+At CPU pin `deae5bac` (x86jit), reset installs the core's
 `CpuState::i386_reset`: CS=F000h, hidden base FFFF0000h, EIP=FFF0h and
 EDX=0303h. Intel 80386 PRM §10.1 specifies DH=03h; DL=03h is the core's
 assumed stepping. CR0.ET reflects the FPU model (clear on this no-FPU board).
@@ -394,22 +395,32 @@ a RAM marker and checking the 386 reset signature, CS hidden base, A20 source
 combinations and reset-storm report. No IBM 5170 reset wiring is changed.
 
 The ignored `generic386_seabios_keyboard_reset_reaches_resume` fixture probe
-is bounded to 20 million retired instructions. It records the protected-mode
-BT refusal below before reset/resume can be qualified. Once POST can proceed,
-it pulses the 8042 with CMOS 0Fh=0 and requires the debug log to reach
-`In resume (status=0)` (`resume.c:24–29`). This is pending acceptance, not
-a measured SeaBIOS reboot result.
+is bounded to 20 million retired instructions. It checks the BSWAP shutdown
+below before attempting reset/resume. After POST can complete, it pulses the
+8042 with CMOS 0Fh=0 and requires `In resume (status=0)` (`resume.c:24–29`).
+The marker alone after an incomplete POST does not qualify a working reboot.
 
-**MEASURED:** the shipped diskless machine retires 3,081 instructions and
-prints the SeaBIOS 1.17.0 version banner on port 402h. COM1 remains
-empty. POST stops at protected-mode `BT EDX,21` (`0F BA E2 15`), CS:EIP
-`0008:000F5067`, linear `000F5067h`; x86jit returns
-`UnsupportedSystem { operation: "LegacyInstruction", cs: 8, ip: 1003623 }`.
-The ignored `generic386_seabios_reaches_diskless_post_end` probe names and
-checks that refusal when explicitly selected. The firmware remains Listed;
-POST end and INT 15h AH=88h/E801h/E820h await this CPU-core fix. Remaining
-real-mode MOV DR/TR and NT=1 IRET coverage (`xj-srh.16`, x86jit), TSS I/O
-bitmap and paging are separate work.
+**MEASURED at CPU pin `deae5bac`:** the shipped diskless machine retires
+**3,582 instructions** and prints the version banner, build tools,
+`Unable to unlock ram - bridge not found` and `Found QEMU fw_cfg` on port
+402h. COM1 is empty. At protected-mode CPL 0, CS:EIP `0008:000F510B`
+(linear `000F510Bh`), `BSWAP EAX` (`0F C8`) raises #UD on the 80386.
+SeaBIOS's empty protected-mode IDT (`misc.c:134–145`) cannot deliver the
+fault or #DF, so x86jit shuts down and the board returns `ResetRequested`.
+An isolated outward-delivery probe at the same address reports
+`Exit::Exception { addr: 1003787, vector: 6, .. }`, without an error code;
+this is an absent CPU-model instruction, not `LegacyInstruction` refusal.
+
+**READ:** the fw_cfg file-directory count is converted from big endian in
+SeaBIOS rel-1.17.0 `fw/paravirt.c:703–705`; `byteorder.h:15–17` uses inline
+`bswapl` even though the compiler flags select `-march=i386`. No port,
+CMOS or memory-map fault was encountered before this boundary. Both ignored
+SeaBIOS probes check the exact address, bytes, protected mode, CPL, empty IDT
+and retired count when the golden runner selects them. The fixture remains
+Listed; POST end, INT 15h AH=88h/E801h/E820h and reset/resume after complete
+POST remain unqualified. No firmware or CPU workaround is applied.
+The old BT refusal is gone. TSS I/O bitmap, paging and SeaVGABIOS are
+separate work.
 
 Headless reproduction (the CLI prints COM1; the test also captures port 402h):
 

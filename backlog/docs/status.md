@@ -12,12 +12,12 @@ address span with sparse backing, committing only configured RAM, the 256 KiB
 shadow, the 128 KiB high copy and mapped device windows (plus host-page
 rounding). Unpopulated holes remain uncommitted. Guest RAM population remains
 capped at 64 MiB; allocation commitment is separate from RSS and tracking
-metadata. Reservation/commit failures return typed CPU memory errors. The current
-CPU pin reports no numeric sparse commitment count; that statistic arrives with
-a later pin. Tests verify the sparse backing, 4 GiB reservation, exact mapped
-population and unmapped gaps instead.
+metadata. Reservation/commit failures return typed CPU memory errors. Tests
+verify the sparse backing, 4 GiB reservation, numeric committed bytes bounded
+by the mapped population, and unmapped gaps. The tested 64 KiB-aligned regions
+need no host-page rounding on supported hosts.
 
-The CPU pin is `a70d115c` (x86jit). The adapter installs
+The CPU pin is `deae5bac` (x86jit). The adapter installs
 `CpuState::i386_reset`, then reapplies the retained board A20 line. Synthetic
 CPU and board tests execute the high reset copy, retain its hidden base across
 a near jump, reload CS into low memory and preserve RAM over repeated resets.
@@ -42,19 +42,27 @@ retired instructions**, identically on repeated runs. Delivery records agree
 between Deadline and PerClock and across bounded run chunks. This qualifies
 unpaged execution only: paging, I/O bitmaps and a DOS extender remain pending.
 
-`seabios-1.17.0-isa` remains **Listed**, not boot-qualified. **MEASURED** with
-`machines/generic-386-seabios.toml`: after 3,081 retired instructions, port
-402h contains the version banner and the no-PCI-bridge shadow-unlock diagnostic;
-COM1 has emitted no bytes. x86jit refuses protected-mode `BT EDX,21`
-(`0F BA E2 15`) at CS:EIP `0008:000F5067`, linear `000F5067h`, with
-`UnsupportedSystem { operation: "LegacyInstruction", cs: 8, ip: 1003623 }`.
-The ignored diskless POST probe checks that precise blocker when selected by
-the golden runner. No POST-end or INT 15h AH=88h/E801h/E820h qualification is
-claimed. This is a protected-mode CPU gap, distinct from the remaining
-real-mode MOV DR/TR and NT=1 IRET work (`xj-srh.16`, x86jit).
-TSS I/O bitmap, paging and SeaVGABIOS remain pending.
-The ignored `generic386_seabios_keyboard_reset_reaches_resume` test records
-the same BT blocker; its bounded 8042-reset/resume acceptance remains pending.
+`seabios-1.17.0-isa` remains **Listed**, not boot-qualified. **MEASURED** at
+`deae5bac` with `machines/generic-386-seabios.toml`: after **3,582 retired
+instructions**, port 402h contains the version banner, build tools,
+no-PCI-bridge shadow-unlock diagnostic and `Found QEMU fw_cfg`; COM1 is empty.
+Protected-mode CPL 0 `BSWAP EAX` (`0F C8`) at `0008:000F510B`, linear
+`000F510Bh`, raises #UD on the 80386. SeaBIOS's empty IDT cannot deliver
+#UD or #DF, so x86jit shuts down and the board returns `ResetRequested`.
+An isolated outward-delivery probe reports
+`Exit::Exception { addr: 1003787, vector: 6, .. }` without an error code.
+**READ:** SeaBIOS rel-1.17.0 `byteorder.h:15–17` explicitly emits `bswapl`;
+`fw/paravirt.c:703–705` uses it for the fw_cfg directory count despite
+`-march=i386`. This requires a firmware/CPU-target policy decision, not a
+board device workaround. The previous protected-mode BT refusal is gone;
+real-mode MOV DR/TR and NT=1 IRET are also supplied by this CPU pin.
+
+Both ignored SeaBIOS probes now check this exact shutdown boundary, including
+mode, CPL, IDT limit, bytes and count. No POST-end or INT 15h
+AH=88h/E801h/E820h qualification is claimed. The keyboard-reset/resume
+acceptance after completed POST remains pending; seeing a resume marker after
+the early shutdown does not qualify that path. TSS I/O bitmap, paging and
+SeaVGABIOS remain pending.
 
 
 2026-11-22 — The front end moved to [unemu](https://github.com/unemu-org/unemu) at `0f279540`; entries above this marker are the core's own.

@@ -77,6 +77,7 @@ pub struct MemoryBackingStats {
     /// Host virtual address span reserved for guest memory.
     pub reserved_bytes: u64,
     /// Committed backing bytes, or `None` when the backing owner cannot report them.
+    /// Owned flat and sparse backings report a count; sparse regions round to host pages.
     pub committed_bytes: Option<u64>,
 }
 
@@ -2835,7 +2836,7 @@ mod i386_tests {
             MemoryBackingStats {
                 sparse: true,
                 reserved_bytes: 1 << 32,
-                committed_bytes: None,
+                committed_bytes: Some(0),
             }
         );
     }

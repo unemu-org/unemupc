@@ -137,8 +137,29 @@ fn generic386_toml_yaml_defaults_and_memory_limits_match() {
     }
 }
 
+/// SeaBIOS rel-1.17.0, byteorder.h:15–17 and paravirt.c:703–705 use BSWAP
+/// for the fw_cfg directory count. Its empty protected-mode IDT (misc.c:134–145)
+/// cannot deliver #UD or #DF. Intel 80386 PRM §9.8.6 (Invalid Opcode) and §9.8.8
+/// (Double Fault): shutdown requests a board CPU reset instead of retiring BSWAP.
+fn assert_seabios_bswap_shutdown(machine: &machine::Machine<cpu::X86JitCpu>) {
+    assert_eq!(machine.cpu().code_address(), (8, 0xF510B));
+    assert_eq!(machine.cpu().retired(), 3582);
+    let system = machine.cpu().diagnostic_state().system.unwrap();
+    assert!(system.protected());
+    assert_eq!(system.cpl, 0);
+    assert_eq!(system.idtr.limit, 0);
+    let mut bytes = [0; 2];
+    machine.cpu().read_mem(0xF510B, &mut bytes).unwrap();
+    assert_eq!(bytes, [0x0F, 0xC8]);
+    eprintln!(
+        "blocked: protected mode CPL 0, 0008:000F510B, linear 000F510B, \
+         bytes {bytes:02X?}, BSWAP EAX; #UD -> #DF -> shutdown -> ResetRequested; \
+         retired: 3582"
+    );
+}
+
 #[test]
-#[ignore = "x86jit refuses protected-mode BT EDX,21 (0F BA E2 15) at 0008:000F5067; POST is not qualified"]
+#[ignore = "SeaBIOS BSWAP EAX (0F C8) at 0008:000F510B raises #UD on the 386 and shuts down; POST is not qualified"]
 fn generic386_seabios_reaches_diskless_post_end() {
     let Some(config) = shipped() else {
         return;
@@ -172,26 +193,19 @@ fn generic386_seabios_reaches_diskless_post_end() {
     eprintln!("debug console:\n{}", String::from_utf8_lossy(&debug));
     if let Err(machine::MachineError::Cpu(error)) = &result {
         eprintln!("retired: {}", machine.machine.cpu().retired());
-        if let cpu::CpuError::UnsupportedSystem {
-            operation,
-            cs: 8,
-            ip: 0xF5067,
-        } = error
-        {
-            assert_eq!(operation, "LegacyInstruction");
-            let mut bytes = [0; 4];
-            machine.machine.cpu().read_mem(0xF5067, &mut bytes).unwrap();
-            assert_eq!(bytes, [0x0F, 0xBA, 0xE2, 0x15]);
-            assert!(debug.starts_with(b"SeaBIOS (version 1.17.0"));
-            eprintln!("blocked: {error}; linear 000F5067, bytes {bytes:02X?}; BT EDX,21");
-            return;
-        }
         if let Some(report) = machine.machine.cpu().stop_report(error) {
             eprintln!("{report}");
         }
     }
+    if matches!(result, Ok(machine::RunOutcome::ResetRequested)) {
+        assert_seabios_bswap_shutdown(&machine.machine);
+        assert!(debug.starts_with(b"SeaBIOS (version 1.17.0"));
+        assert!(debug.ends_with(b"Found QEMU fw_cfg\n"));
+        assert!(serial.is_empty());
+        return;
+    }
     result.unwrap();
-    // SeaBIOS rel-1.17.0, bootsplash.c / output.c and boot.c boot_fail.
+    // SeaBIOS rel-1.17.0, boot.c:965–980: boot_fail prints and waits for IRQs.
     for expected in ["SeaBIOS (version 1.17.0", "No bootable device."] {
         assert!(
             serial
@@ -206,7 +220,7 @@ fn generic386_seabios_reaches_diskless_post_end() {
 }
 
 #[test]
-#[ignore = "x86jit refuses protected-mode BT EDX,21 at 0008:000F5067 before SeaBIOS can initialize its resume path"]
+#[ignore = "SeaBIOS BSWAP EAX at 0008:000F510B shuts down before POST completes; reset/resume is not qualified"]
 fn generic386_seabios_keyboard_reset_reaches_resume() {
     let Some(config) = shipped() else {
         return;
@@ -221,24 +235,8 @@ fn generic386_seabios_keyboard_reset_reaches_resume() {
     };
     let mut assembled = machine_file::assemble_with_observation(&config, &policy).unwrap();
     let result = assembled.machine.run_bounded(Some(10_000_000));
-    if let Err(machine::MachineError::Cpu(cpu::CpuError::UnsupportedSystem {
-        operation,
-        cs: 8,
-        ip: 0xF5067,
-    })) = &result
-    {
-        assert_eq!(operation, "LegacyInstruction");
-        let mut bytes = [0; 4];
-        assembled
-            .machine
-            .cpu()
-            .read_mem(0xF5067, &mut bytes)
-            .unwrap();
-        assert_eq!(bytes, [0x0F, 0xBA, 0xE2, 0x15]);
-        assert_eq!(assembled.machine.cpu().retired(), 3081);
-        eprintln!(
-            "blocked before reset/resume: protected-mode BT EDX,21 after 3081 retired instructions"
-        );
+    if matches!(result, Ok(machine::RunOutcome::ResetRequested)) {
+        assert_seabios_bswap_shutdown(&assembled.machine);
         return;
     }
     result.unwrap();

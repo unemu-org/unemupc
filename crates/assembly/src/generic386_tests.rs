@@ -75,6 +75,13 @@ fn generic386_sparse_backing_maps_only_the_populated_regions() {
             let populated = 0xA0000 + extended + 0x40000 + 0x20000;
             let video_bytes = if video_window { 0x20000 } else { 0 };
             assert_eq!(mapped_bytes, populated + video_bytes);
+            let committed = stats
+                .committed_bytes
+                .expect("sparse commitment is reported");
+            // Every boundary is 64 KiB aligned, so supported host pages fit exactly.
+            assert_eq!(committed, mapped_bytes);
+            assert!(committed <= populated + video_bytes);
+            assert!(committed < stats.reserved_bytes / 32);
             eprintln!(
                 "extended={extended} video={video_window}: {stats:?}, mapped_bytes={mapped_bytes}"
             );
