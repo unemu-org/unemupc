@@ -278,9 +278,11 @@ pub fn notice() -> String {
     use unemu_core_api::Core;
     let description = unemu_pc_core::PcCore.description();
     let mut text = format!(
-        "{} {}\ncore {} {} ({}), contract {}\nAGPL-3.0-or-later\nsource: {}\nThird-party licence texts: THIRD-PARTY-LICENSES.md\n",
+        "{} {}\ncore {} {} ({}), contract {}\nAGPL-3.0-or-later\nsource: {}\n{}Third-party licence texts: THIRD-PARTY-LICENSES.md\n",
         description.id, description.version, description.id, description.version,
-        description.name, description.implements, env!("CARGO_PKG_REPOSITORY"),
+        description.name, description.implements,
+        source_pointer(option_env!("UNEMUPC_SOURCE_REV")),
+        commit_line(option_env!("UNEMUPC_SOURCE_COMMIT")),
     );
     for notice in description.notices {
         text.push('\n');
@@ -289,6 +291,22 @@ pub fn notice() -> String {
     }
     text
 }
+
+fn source_pointer(revision: Option<&str>) -> String {
+    let repository = env!("CARGO_PKG_REPOSITORY");
+    match revision.filter(|revision| !revision.is_empty()) {
+        Some(revision) => format!("{repository}/tree/{revision}"),
+        None => format!("{repository}, version {}", env!("CARGO_PKG_VERSION")),
+    }
+}
+
+fn commit_line(commit: Option<&str>) -> String {
+    match commit.filter(|commit| !commit.is_empty()) {
+        Some(commit) => format!("commit: {commit}\n"),
+        None => String::new(),
+    }
+}
+
 /// The frontend's remaining machine usage lines, before image import.
 #[macro_export]
 macro_rules! machine_usage {
@@ -331,6 +349,57 @@ pub fn usage() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn source_metadata_revision_set() {
+        assert_eq!(
+            source_pointer(Some("v9.9.9")),
+            format!("{}/tree/v9.9.9", env!("CARGO_PKG_REPOSITORY"))
+        );
+    }
+
+    #[test]
+    fn source_metadata_revision_empty() {
+        assert_eq!(
+            source_pointer(Some("")),
+            format!(
+                "{}, version {}",
+                env!("CARGO_PKG_REPOSITORY"),
+                env!("CARGO_PKG_VERSION")
+            )
+        );
+    }
+
+    #[test]
+    fn source_metadata_revision_absent() {
+        assert_eq!(
+            source_pointer(None),
+            format!(
+                "{}, version {}",
+                env!("CARGO_PKG_REPOSITORY"),
+                env!("CARGO_PKG_VERSION")
+            )
+        );
+    }
+
+    #[test]
+    fn source_metadata_commit_set() {
+        assert_eq!(
+            commit_line(Some("0123456789abcdef0123456789abcdef01234567")),
+            "commit: 0123456789abcdef0123456789abcdef01234567\n"
+        );
+    }
+
+    #[test]
+    fn source_metadata_commit_empty() {
+        assert_eq!(commit_line(Some("")), "");
+    }
+
+    #[test]
+    fn source_metadata_commit_absent() {
+        assert_eq!(commit_line(None), "");
+    }
+
     /// The PC command a command line parses to.
     fn pc(args: &[OsString]) -> Command {
         parse(args).expect("a PC command").unwrap()

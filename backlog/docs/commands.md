@@ -517,8 +517,11 @@ standard texts of its licences come from `LICENSES/` (MIT, Apache-2.0, Zlib).
 limits the crates to one platform's build; without it every platform's crates
 are listed. It needs only cargo and jq; set `CARGO_NET_OFFLINE=true` to read
 the dependency sources from cargo's cache only. The release build sets
-`UNEMUPC_SOURCE_REV` to its tag or commit, so `--about` names the exact source
-(`<repository>/tree/<rev>`); without it, the repository and the version.
+`UNEMUPC_SOURCE_REV` to its tag or commit, so `--about` and `--version` name the
+exact source (`<repository>/tree/<rev>`); when unset or empty, they name the
+repository and the package version. A non-empty `UNEMUPC_SOURCE_COMMIT` adds
+`commit: <commit>` immediately after the source line. Both variables are read
+at compile time.
 
 ### User-supplied ROM tests
 
@@ -565,8 +568,9 @@ The binaries are built outside Nix, with rustup at the devShell's Rust
 (`RUSTUP_TOOLCHAIN` in the workflow; a step checks it against
 `rust-version`), `--locked --release`, `--remap-path-prefix` for the
 workspace, cargo's registry sources and git checkouts and the toolchain, and
-`UNEMUPC_SOURCE_REV` set to the tag, so `--about` names
-`<repository>/tree/<tag>`. A check step fails the job when `strings` finds
+`UNEMUPC_SOURCE_REV` set to the tag and `UNEMUPC_SOURCE_COMMIT` to the full
+40-hex commit, so `--about` and `--version` name `<repository>/tree/<tag>`
+followed by `commit: <commit>`. A check step fails the job when `strings` finds
 the runner's home, the workspace, cargo's home or the toolchain in a binary,
 or, on macOS, when `otool -L` lists a library outside `/usr/lib` and
 `/System/Library`.

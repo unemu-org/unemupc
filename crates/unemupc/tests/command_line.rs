@@ -42,6 +42,18 @@ fn standalone_usage_and_notices_name_only_the_pc_core() {
     assert!(text.starts_with(&format!("{} {}\n", description.id, description.version)));
     assert!(text.contains(&format!("contract {}\n", description.implements)));
     assert!(text.contains("AGPL-3.0-or-later") && text.contains(env!("CARGO_PKG_REPOSITORY")));
+    let repository = env!("CARGO_PKG_REPOSITORY");
+    let source = match option_env!("UNEMUPC_SOURCE_REV").filter(|rev| !rev.is_empty()) {
+        Some(rev) => format!("{repository}/tree/{rev}"),
+        None => format!("{repository}, version {}", env!("CARGO_PKG_VERSION")),
+    };
+    let commit = match option_env!("UNEMUPC_SOURCE_COMMIT").filter(|commit| !commit.is_empty()) {
+        Some(commit) => format!("commit: {commit}\n"),
+        None => String::new(),
+    };
+    assert!(text.contains(&format!(
+        "\nsource: {source}\n{commit}Third-party licence texts: THIRD-PARTY-LICENSES.md\n"
+    )));
     for notice in description.notices {
         assert!(text.contains(notice.text));
     }
