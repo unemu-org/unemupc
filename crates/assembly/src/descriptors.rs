@@ -392,7 +392,8 @@ pub fn ram_regions_for_board(
 }
 
 /// Extended-memory guest population domain. The 386 cap bounds populated low
-/// memory at 64 MiB; it does not bound host commitment or address reservation.
+/// memory at 64 MiB. Sparse backing commits mapped population (plus host-page
+/// rounding) within a separately reserved 4 GiB physical address span.
 pub const fn extended_kib(board: BoardModel) -> IntegerDomain {
     IntegerDomain {
         max: match board {

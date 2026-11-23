@@ -69,7 +69,28 @@ pub struct X86JitCpu {
     delivery_records: Vec<x86jit_core::DeliveryRecord>,
 }
 
+/// Guest backing allocation diagnostics, excluding tracking metadata and RSS.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MemoryBackingStats {
+    /// Whether the backing commits mapped regions within a sparse reservation.
+    pub sparse: bool,
+    /// Host virtual address span reserved for guest memory.
+    pub reserved_bytes: u64,
+    /// Committed backing bytes, or `None` when the backing owner cannot report them.
+    pub committed_bytes: Option<u64>,
+}
+
 impl X86JitCpu {
+    /// Inspect backing commitment independently of the guest's address span.
+    pub fn memory_backing_stats(&self) -> MemoryBackingStats {
+        let stats = self.vm.memory_stats();
+        MemoryBackingStats {
+            sparse: self.vm.mem.is_sparse(),
+            reserved_bytes: stats.guest_ram_reserved,
+            committed_bytes: stats.guest_ram_committed,
+        }
+    }
+
     /// Build a CPU over a flat guest address space of `ram_bytes`, load `code`
     /// at `entry`, and set RIP there.
     ///
@@ -187,8 +208,8 @@ impl X86JitCpu {
     /// Build an Intel 80386DX machine at a real-mode entry with no coprocessor.
     ///
     /// Intel 80386 Programmer's Reference Manual, §10.1 Initialization: the
-    /// reset fetch uses the top of the 32-bit physical bus. The flat backing
-    /// spans 4 GiB; only configured RAM, MMIO and the BIOS copies are mapped.
+    /// reset fetch uses the top of the 32-bit physical bus. Sparse backing
+    /// reserves 4 GiB but commits only mapped RAM, MMIO and BIOS copies.
     /// See `backlog/docs/design/machine-files.md` §Generic 386 ISA board.
     pub fn new_i386_bare(cs: u16, ip: u16, segments: RealSegments) -> Result<Self, CpuError> {
         Self::new_machine_bare(1 << 32, cs, ip, segments, false, false, CpuModel::I80386)
@@ -208,7 +229,12 @@ impl X86JitCpu {
         } else {
             FpuModel::None
         };
-        let mut vm = Vm::new(VmConfig::flat(space_bytes));
+        let mut vm = if model == CpuModel::I80386 {
+            Vm::sparse(VmConfig::reserved(space_bytes))
+                .map_err(|e| CpuError::Memory(format!("{e:?}")))?
+        } else {
+            Vm::new(VmConfig::flat(space_bytes))
+        };
         vm.set_cpu_model(model);
         vm.set_exception_delivery(ExceptionDelivery::InGuest);
         vm.set_fpu_model(fpu);
@@ -2800,6 +2826,46 @@ mod tests {
 #[cfg(test)]
 mod i386_tests {
     use super::*;
+
+    #[test]
+    fn i386_sparse_backing_reserves_the_physical_span_without_mapping_memory() {
+        let cpu = X86JitCpu::new_i386_bare(0, 0x1000, RealSegments::flat(0)).unwrap();
+        assert_eq!(
+            cpu.memory_backing_stats(),
+            MemoryBackingStats {
+                sparse: true,
+                reserved_bytes: 1 << 32,
+                committed_bytes: None,
+            }
+        );
+    }
+
+    #[test]
+    fn i386_invalid_sparse_reservation_returns_a_memory_error() {
+        let result = X86JitCpu::new_machine_bare(
+            0,
+            0,
+            0,
+            RealSegments::flat(0),
+            false,
+            false,
+            CpuModel::I80386,
+        );
+        assert!(matches!(result, Err(CpuError::Memory(message)) if message == "InvalidSpan"));
+    }
+
+    #[test]
+    fn i286_keeps_flat_backing_before_any_region_is_mapped() {
+        let cpu = X86JitCpu::new_i286_bare(1 << 24, 0, 0, RealSegments::flat(0)).unwrap();
+        assert_eq!(
+            cpu.memory_backing_stats(),
+            MemoryBackingStats {
+                sparse: false,
+                reserved_bytes: 1 << 24,
+                committed_bytes: Some(1 << 24),
+            }
+        );
+    }
 
     #[test]
     fn i386_constructor_selects_machine_model_and_executes_real_entry() {

@@ -33,6 +33,59 @@ fn board() -> MachineConfig {
 }
 
 #[test]
+fn generic386_sparse_backing_maps_only_the_populated_regions() {
+    for extended in [0, 15 << 20, 63 << 20] {
+        for video_window in [false, true] {
+            let mut config = board();
+            config.memory.address_space_bytes = 1 << 32;
+            if extended == 0 {
+                config.memory.ram.pop();
+            } else {
+                config.memory.ram[2].size = extended;
+            }
+            if video_window {
+                config
+                    .memory
+                    .mmio
+                    .push(crate::MmioWindow::new(0xA0000, 0x20000, DeviceId::Vga));
+            }
+            let mut mappings = Vec::new();
+            let cpu = build_cpu_with_mapping_trace(&config, |base, end, kind| {
+                mappings.push((base, end, kind));
+            })
+            .unwrap();
+            let stats = cpu.memory_backing_stats();
+            assert!(stats.sparse, "{stats:?}");
+            assert_eq!(stats.reserved_bytes, 1 << 32);
+            let mut expected = vec![
+                (0, 0xA0000, "ram"),
+                (0xC0000, 0x100000, "ram"),
+                (0xFFFE0000, 1 << 32, "rom"),
+            ];
+            if extended != 0 {
+                expected.push((0x100000, 0x100000 + extended, "ram"));
+            }
+            if video_window {
+                expected.push((0xA0000, 0xC0000, "mmio"));
+            }
+            mappings.sort_unstable();
+            expected.sort_unstable();
+            assert_eq!(mappings, expected);
+            let mapped_bytes: u64 = mappings.iter().map(|(base, end, _)| end - base).sum();
+            let populated = 0xA0000 + extended + 0x40000 + 0x20000;
+            let video_bytes = if video_window { 0x20000 } else { 0 };
+            assert_eq!(mapped_bytes, populated + video_bytes);
+            eprintln!(
+                "extended={extended} video={video_window}: {stats:?}, mapped_bytes={mapped_bytes}"
+            );
+            let mut byte = [0];
+            assert!(cpu.read_mem(0x40000000, &mut byte).is_err());
+            assert!(cpu.read_mem(0xFFFDFFFF, &mut byte).is_err());
+        }
+    }
+}
+
+#[test]
 fn generic386_board_accepts_its_devices_and_requires_fixed_wiring() {
     let config = board();
     config.validate().unwrap();

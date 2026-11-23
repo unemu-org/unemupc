@@ -324,26 +324,30 @@ FFFE0000h–FFFFFFFFh. CPU resets retain both shadow RAM contents and this
 pristine copy; firmware can copy the pristine bytes back during reboot.
 `ibm-5170` still refuses writable adapter space and retains its 24-bit map.
 
-The backend currently requests a **4 GiB zeroed heap allocation per machine**,
-even though only configured low memory, device windows and the high BIOS copy
-are guest-mapped. Guest population, reserved host address space and committed
-host memory are separate quantities: the 64 MiB low-memory population cap
-does not cap the heap request or host commitment. This is not an OS address
-reservation with selective commitment. Windows can require roughly 4 GiB of
-commit; strict-overcommit hosts can refuse the allocation, which aborts the
-process in the pinned core.
+The 386 backend reserves a **4 GiB host virtual address span** using x86jit's
+sparse backing (`Vm::sparse(VmConfig::reserved(1 << 32))`). Only mapped
+regions commit backing: conventional and configured extended RAM, the
+256 KiB shadow, the separate 128 KiB high BIOS copy, and configured trapped
+device windows. Unpopulated holes remain uncommitted and guest-unmapped;
+reservation alone does not populate guest RAM. Host-page rounding can add a
+small amount of commitment. The 64 MiB low-memory population cap is independent
+of the 32-bit address reservation. Adapter diagnostics expose the sparse backing
+kind and reserved span. At this pin, x86jit's numeric committed-byte statistic
+is unavailable for sparse backing; numeric commitment reporting arrives with a
+later pin. Regression tests check the sparse backing and exact mapped-byte total,
+including the high ROM copy, and verify that unpopulated gaps have no mapping.
+Host commitment is separate from RSS and excludes tracking metadata.
 
-At pin `6cb817b8`, `VmConfig::reserved` through `Vm::new` makes the same full-span
-heap allocation. `Vm::with_backend_host_ram` accepts one caller-owned contiguous
-span and requires the caller to implement OS reservation, commitment and release;
-the core supplies no portable allocator for it. `Memory::map` has no parameter
-for a separate region buffer, and every `SoftMmu` constructor reaches its
-unimplemented region allocator on mapping. A portable sparse backing API in
-x86jit is therefore required before this host-allocation blocker can be fixed.
+Linux/macOS reserve inaccessible pages and commit mapped ranges with page
+protection changes; Windows reserves and commits with VirtualAlloc. Reservation
+and mapping failures return the adapter's `CpuError::Memory`, without aborting
+on a full-span allocation. Sparse VMs use the checked interpreter, preserving
+exact retired-instruction counts. The 286 constructors keep their existing
+flat backing and memory maps.
 
 [`machines/generic-386-seabios.toml`](../../../machines/generic-386-seabios.toml)
 uses 15 MiB of extended RAM and the `seabios-1.17.0-isa` catalogue entry.
-At CPU pin `99ed385e` (`xj-srh.12`, x86jit), reset installs the core's
+At CPU pin `a70d115c` (x86jit), reset installs the core's
 `CpuState::i386_reset`: CS=F000h, hidden base FFFF0000h, EIP=FFF0h and
 EDX=0303h. Intel 80386 PRM §10.1 specifies DH=03h; DL=03h is the core's
 assumed stepping. CR0.ET reflects the FPU model (clear on this no-FPU board).
@@ -405,8 +409,7 @@ The ignored `generic386_seabios_reaches_diskless_post_end` probe names and
 checks that refusal when explicitly selected. The firmware remains Listed;
 POST end and INT 15h AH=88h/E801h/E820h await this CPU-core fix. Remaining
 real-mode MOV DR/TR and NT=1 IRET coverage (`xj-srh.16`, x86jit), TSS I/O
-bitmap and paging are separate work. The 4 GiB flat backing remains in use
-until sparse backing (`xj-srh.28`, x86jit).
+bitmap and paging are separate work.
 
 Headless reproduction (the CLI prints COM1; the test also captures port 402h):
 

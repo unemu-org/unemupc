@@ -7,10 +7,17 @@ RAM and up to 63 MiB extended RAM (64 KiB steps). Board-local 128-byte CMOS,
 port 92h, fw_cfg and debug console 402h are wired. C0000h–FFFFFh is writable
 shadow RAM; the 128 KiB SeaBIOS image at E0000h has a separate read-only copy
 at FFFE0000h that survives RAM-preserving CPU resets. IBM 5170 retains its
-original memory map and goldens. The backend currently needs a 4 GiB flat
-virtual backing span; guest RAM population remains capped at 64 MiB.
+original memory map and goldens. The 386 backend now reserves a 4 GiB virtual
+address span with sparse backing, committing only configured RAM, the 256 KiB
+shadow, the 128 KiB high copy and mapped device windows (plus host-page
+rounding). Unpopulated holes remain uncommitted. Guest RAM population remains
+capped at 64 MiB; allocation commitment is separate from RSS and tracking
+metadata. Reservation/commit failures return typed CPU memory errors. The current
+CPU pin reports no numeric sparse commitment count; that statistic arrives with
+a later pin. Tests verify the sparse backing, 4 GiB reservation, exact mapped
+population and unmapped gaps instead.
 
-The CPU pin is `99ed385e` (`xj-srh.12`, x86jit). The adapter installs
+The CPU pin is `a70d115c` (x86jit). The adapter installs
 `CpuState::i386_reset`, then reapplies the retained board A20 line. Synthetic
 CPU and board tests execute the high reset copy, retain its hidden base across
 a near jump, reload CS into low memory and preserve RAM over repeated resets.
@@ -44,8 +51,8 @@ COM1 has emitted no bytes. x86jit refuses protected-mode `BT EDX,21`
 The ignored diskless POST probe checks that precise blocker when selected by
 the golden runner. No POST-end or INT 15h AH=88h/E801h/E820h qualification is
 claimed. This is a protected-mode CPU gap, distinct from the remaining
-real-mode MOV DR/TR and NT=1 IRET work (`xj-srh.16`, x86jit). Sparse backing
-(`xj-srh.28`, x86jit), TSS I/O bitmap, paging and SeaVGABIOS remain pending.
+real-mode MOV DR/TR and NT=1 IRET work (`xj-srh.16`, x86jit).
+TSS I/O bitmap, paging and SeaVGABIOS remain pending.
 The ignored `generic386_seabios_keyboard_reset_reaches_resume` test records
 the same BT blocker; its bounded 8042-reset/resume acceptance remains pending.
 
