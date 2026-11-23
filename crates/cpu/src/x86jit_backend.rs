@@ -5,7 +5,8 @@
 //! [`Exit`] variants onto the backend-neutral [`CpuStop`]. It runs in **Long64**
 //! mode (adapter unit tests, [`X86JitCpu::new`]), **Real16** application mode
 //! ([`X86JitCpu::new_real16_bare`]), or the **I286 machine** interpreter
-//! ([`X86JitCpu::new_i286_bare`] and [`X86JitCpu::new_a20_bare`]). Only the
+//! ([`X86JitCpu::new_i286_bare`] and [`X86JitCpu::new_a20_bare`]), or the
+//! **I386 machine** interpreter ([`X86JitCpu::new_i386_bare`]). Only the
 //! machine profile consults A20; application profiles retain flat addressing.
 //! It uses the
 //! `x86jit` integration surface: `Exit::PortIo` (`in`/`out` and each `ins`/`outs`
@@ -720,13 +721,7 @@ impl X86JitCpu {
             Exit::UnsupportedSystemContext {
                 addr, operation, ..
             } => Err(CpuError::UnsupportedSystem {
-                operation: if self.vm.cpu_model() == Some(CpuModel::I80386)
-                    && self.cpu.cpu.legacy.reset_fetch != 0
-                {
-                    format!("80386 reset fetch at 0xfffffff0 is unsupported by the pinned x86jit core ({operation:?})")
-                } else {
-                    format!("{operation:?}")
-                },
+                operation: format!("{operation:?}"),
                 cs: self.cpu.cpu.cs,
                 ip: addr,
             }),
@@ -810,6 +805,13 @@ impl Cpu for X86JitCpu {
         self.cpu
             .reset_execution_state(ResetOptions::default().with_x87_init(true));
         let a20_enabled = self.cpu.a20_enabled();
+        if self.vm.cpu_model() == Some(CpuModel::I80386) {
+            let fpu = self.cpu.cpu.fpu_model;
+            self.cpu.cpu = CpuState::i386_reset(fpu);
+            // The reset image enables A20, but a CPU reset retains the board line.
+            self.cpu.set_a20_enabled(a20_enabled);
+            return Ok(());
+        }
         let state = &mut self.cpu.cpu;
         if self.vm.execution_profile() == ExecutionProfile::Machine {
             // Reset must discard protected caches as well as pending handoffs.
@@ -818,12 +820,7 @@ impl Cpu for X86JitCpu {
             state.legacy.a20_enabled = u8::from(a20_enabled);
             state.legacy.cr0 = 0xFFF0;
             if !self.low_reset_fetch {
-                state.legacy.segments[0].base = if self.vm.cpu_model() == Some(CpuModel::I80386) {
-                    state.legacy.cr0 = 0x10;
-                    0xFFFF0000
-                } else {
-                    0xFF0000
-                };
+                state.legacy.segments[0].base = 0xFF0000;
                 state.legacy.reset_fetch = 1;
             }
             state.fs = 0;
@@ -849,18 +846,6 @@ impl Cpu for X86JitCpu {
         max_steps: u64,
         options: StepRunOptions,
     ) -> Result<CpuStepRun, CpuError> {
-        // A capability probe retires nothing. The core currently validates the
-        // unsupported high reset entry even for zero steps; construction already
-        // selected the step-capable machine profile.
-        if max_steps == 0
-            && self.vm.cpu_model() == Some(CpuModel::I80386)
-            && self.cpu.cpu.legacy.reset_fetch != 0
-        {
-            return Ok(CpuStepRun {
-                steps: 0,
-                stop: CpuStepStop::Exit(CpuStop::BudgetExhausted),
-            });
-        }
         let machine = self.vm.execution_profile() == ExecutionProfile::Machine;
         let mut steps = 0;
         // Bounded returns in a row with no instruction retired between them.
@@ -2831,37 +2816,72 @@ mod i386_tests {
         assert_eq!(cpu.reg(CpuReg::Rax), 0x12345678);
     }
 
+    /// Intel 80386 Programmer's Reference Manual, §10.1 Initialization:
+    /// near jumps retain the reset base; the first CS reload returns to low ROM.
     #[test]
-    fn i386_reset_fetch_returns_typed_error_without_retiring_or_changing_ram() {
+    fn i386_reset_executes_high_near_jump_then_reloads_cs_and_keeps_ram() {
         let mut cpu = X86JitCpu::new_i386_bare(0, 0x1000, RealSegments::flat(0)).unwrap();
         cpu.map_ram(0, 0x10000).unwrap();
         cpu.write_mem(0x600, &[0xA5]).unwrap();
-        cpu.map_rom(0xFFFE0000, &vec![0xF4; 0x20000]).unwrap();
-        cpu.reset().unwrap();
-        assert_eq!(cpu.cpu.cpu.legacy.segments[0].base, 0xFFFF0000);
-        assert_eq!(
-            cpu.run_steps(0, StepRunOptions::default()).unwrap().steps,
-            0
-        );
-        for error in [
-            cpu.run_steps(1, StepRunOptions::default()).unwrap_err(),
-            cpu.run(Some(1)).unwrap_err(),
-        ] {
-            assert!(matches!(
-                error,
-                CpuError::UnsupportedSystem {
-                    cs: 0xF000,
-                    ip: 0xFFF0,
-                    ..
-                }
-            ));
-            assert!(error
-                .to_string()
-                .contains("80386 reset fetch at 0xfffffff0"));
+        cpu.write_mem(0x1000, &[0xB0, 0x5A, 0xF4]).unwrap();
+        let mut rom = vec![0x0F; 0x20000];
+        rom[0x1FFF0..0x1FFF9]
+            .copy_from_slice(&[0xEB, 0x02, 0x0F, 0x0B, 0xEA, 0x00, 0x10, 0x00, 0x00]);
+        cpu.map_rom(0xFFFE0000, &rom).unwrap();
+        for expected_retired in [4, 8] {
+            cpu.reset().unwrap();
+            assert_eq!(cpu.cpu.cpu.cs, 0xF000);
+            assert_eq!(cpu.cpu.cpu.rip, 0xFFF0);
+            assert_eq!(cpu.cpu.cpu.legacy.segments[0].base, 0xFFFF0000);
+            assert_eq!(cpu.cpu.cpu.legacy.cr0, 0, "the board has no 80387");
+            assert_eq!(cpu.reg(CpuReg::Rdx), 0x0303);
+            assert_eq!(cpu.cpu.cpu.fpu_model, FpuModel::None);
+            assert_eq!(
+                cpu.run_steps(0, StepRunOptions::default()).unwrap().steps,
+                0
+            );
+            assert_eq!(
+                cpu.run_steps(1, StepRunOptions::default()).unwrap().steps,
+                1
+            );
+            assert_eq!(cpu.cpu.cpu.rip, 0xFFF4);
+            assert_eq!(cpu.cpu.cpu.legacy.segments[0].base, 0xFFFF0000);
+            assert_eq!(
+                cpu.run_steps(1, StepRunOptions::default()).unwrap().steps,
+                1
+            );
+            assert_eq!(cpu.cpu.cpu.legacy.segments[0].base, 0);
+            assert_eq!(cpu.cpu.cpu.legacy.reset_fetch, 0);
+            assert_eq!(
+                cpu.run_steps(2, StepRunOptions::default()).unwrap().stop,
+                CpuStepStop::Exit(CpuStop::Halt)
+            );
+            assert_eq!(cpu.reg(CpuReg::Rax) & 0xFF, 0x5A);
+            assert_eq!(cpu.retired(), expected_retired);
+            let mut byte = [0];
+            cpu.read_mem(0x600, &mut byte).unwrap();
+            assert_eq!(byte, [0xA5]);
         }
+    }
+
+    #[test]
+    fn i386_reset_reapplies_disabled_a20_after_installing_the_image() {
+        let mut cpu = X86JitCpu::new_i386_bare(0, 0x1000, RealSegments::flat(0)).unwrap();
+        cpu.map_rom(0xFFFE0000, &vec![0xF4; 0x20000]).unwrap();
+        cpu.set_a20_enabled(false);
+        cpu.reset().unwrap();
+        assert!(!cpu.a20_enabled());
+        assert!(matches!(
+            cpu.run_steps(1, StepRunOptions::default()),
+            Err(CpuError::Unmapped { addr: 0xFFEFFFF0 })
+        ));
         assert_eq!(cpu.retired(), 0);
-        let mut byte = [0];
-        cpu.read_mem(0x600, &mut byte).unwrap();
-        assert_eq!(byte, [0xA5]);
+        cpu.set_a20_enabled(true);
+        cpu.reset().unwrap();
+        assert!(cpu.a20_enabled());
+        assert_eq!(
+            cpu.run_steps(1, StepRunOptions::default()).unwrap().stop,
+            CpuStepStop::Exit(CpuStop::Halt)
+        );
     }
 }

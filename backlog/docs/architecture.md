@@ -21,9 +21,12 @@ the pinned core's sparse region allocator is not implemented. IBM 5170
 assembly keeps its original 24-bit map and read-only adapter space.
 
 The shipped `machines/generic-386-seabios.toml` validates and assembles with
-register-level VGA and COM1. CPU reset entry execution remains unavailable
-at pin `6cb817b8` (`xj-srh.12 (x86jit)`), reported as a typed error naming
-FFFFFFF0h. This is board qualification, not a SeaBIOS POST/boot result.
+register-level VGA and COM1. CPU pin `99ed385e` supplies the 386 reset image;
+the adapter reapplies the retained board A20 line after installing it. Tests
+qualify the high reset fetch, CS reload and RAM retention. SeaBIOS emits its
+402h banner, then after 3,081 retired instructions the core refuses
+protected-mode `BT EDX,21` (`0F BA E2 15`) at `0008:000F5067` with
+`UnsupportedSystem(LegacyInstruction)`. POST and boot remain unqualified.
 See [machine files](design/machine-files.md#generic-386-isa-board) and
 [firmware requirements](design/firmware-and-machine-classes.md#36-phase-b-firmware-requirements-seabios-on-generic-386-isa).
 

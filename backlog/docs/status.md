@@ -10,12 +10,24 @@ at FFFE0000h that survives RAM-preserving CPU resets. IBM 5170 retains its
 original memory map and goldens. The backend currently needs a 4 GiB flat
 virtual backing span; guest RAM population remains capped at 64 MiB.
 
-`seabios-1.17.0-isa` is Listed. `machines/generic-386-seabios.toml` validates
-and assembles with register-level VGA and COM1/SERCON. SeaVGABIOS delivery
-remains pending. Execution returns a clear typed error for the unsupported
-386 reset fetch at FFFFFFF0h on pin `6cb817b8`; `xj-srh.12 (x86jit)` must land
-before the ignored boot probe can qualify SeaBIOS. The rest of the 386
-real-mode integer ISA, TSS I/O bitmap and paging remain CPU-core gaps.
+The CPU pin is `99ed385e` (`xj-srh.12`, x86jit). The adapter installs
+`CpuState::i386_reset`, then reapplies the retained board A20 line. Synthetic
+CPU and board tests execute the high reset copy, retain its hidden base across
+a near jump, reload CS into low memory and preserve RAM over repeated resets.
+The no-FPU reset has CR0.ET clear and EDX=0303h (DH=03h per Intel 80386 PRM
+§10.1; DL=03h is the CPU core's assumed stepping).
+
+`seabios-1.17.0-isa` remains **Listed**, not boot-qualified. **MEASURED** with
+`machines/generic-386-seabios.toml`: after 3,081 retired instructions, port
+402h contains the version banner and the no-PCI-bridge shadow-unlock diagnostic;
+COM1 has emitted no bytes. x86jit refuses protected-mode `BT EDX,21`
+(`0F BA E2 15`) at CS:EIP `0008:000F5067`, linear `000F5067h`, with
+`UnsupportedSystem { operation: "LegacyInstruction", cs: 8, ip: 1003623 }`.
+The ignored diskless POST probe checks that precise blocker when selected by
+the golden runner. No POST-end or INT 15h AH=88h/E801h/E820h qualification is
+claimed. This is a protected-mode CPU gap, distinct from the remaining
+real-mode MOV DR/TR and NT=1 IRET work (`xj-srh.16`, x86jit). Sparse backing
+(`xj-srh.28`, x86jit), TSS I/O bitmap, paging and SeaVGABIOS remain pending.
 
 
 2026-11-22 — The front end moved to [unemu](https://github.com/unemu-org/unemu) at `0f279540`; entries above this marker are the core's own.

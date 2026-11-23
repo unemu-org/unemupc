@@ -6,9 +6,10 @@ register-level VGA and COM1. The board supplies 128-byte CMOS, port 92h,
 fw_cfg with `etc/sercon-port`, and the 402h debug console. SeaVGABIOS is not
 included yet. Build the pinned firmware with `vendor/seabios/fetch.sh` in
 the firmware devShell, then use `unemupc machine check` on this file.
-Validation and assembly work; starting execution currently reports the
-unsupported 386 reset fetch at FFFFFFF0h (`xj-srh.12 (x86jit)`). This file
-is not yet a bootable profile. See
+At CPU pin `99ed385e`, reset executes and SeaBIOS emits its version banner
+on port 402h. POST then stops at protected-mode `BT EDX,21` (`0F BA E2 15`)
+at `0008:000F5067`, refused by x86jit as `LegacyInstruction`. COM1 is still
+empty, and this profile is not boot-qualified. See
 [the board description](../backlog/docs/design/machine-files.md#generic-386-isa-board)
 for RAM limits and the current 4 GiB backend backing requirement.
 

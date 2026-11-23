@@ -4,6 +4,7 @@
 //! See machine-files.md §Generic 386 ISA board.
 
 use assembly::{BoardModel, CmosRam, CpuChip, DeviceId, DeviceKind, FirmwareStatus};
+use cpu::Cpu;
 use std::path::PathBuf;
 
 fn shipped() -> Option<assembly::MachineConfig> {
@@ -90,10 +91,11 @@ fn generic386_shipped_file_has_listed_pinned_firmware_and_assembles() {
         .unwrap();
     assert_eq!(machine.machine.bus_mut().port_read(0x511, 1).unwrap(), 0xF8);
     assert_eq!(machine.machine.bus_mut().port_read(0x511, 1).unwrap(), 0x03);
-    let error = machine.machine.run_bounded(Some(1)).unwrap_err();
-    assert!(error
-        .to_string()
-        .contains("80386 reset fetch at 0xfffffff0"));
+    assert_eq!(
+        machine.machine.run_bounded(Some(1)).unwrap(),
+        machine::RunOutcome::RetiredCapReached
+    );
+    assert_eq!(machine.machine.cpu().reg(cpu::CpuReg::Rdx), 0x0303);
 }
 
 #[test]
@@ -136,41 +138,69 @@ fn generic386_toml_yaml_defaults_and_memory_limits_match() {
 }
 
 #[test]
-#[ignore = "requires xj-srh.12 (x86jit): 80386 reset fetch; SeaBIOS boot is not qualified"]
-fn generic386_seabios_boot_when_cpu_reset_is_available() {
+#[ignore = "x86jit refuses protected-mode BT EDX,21 (0F BA E2 15) at 0008:000F5067; POST is not qualified"]
+fn generic386_seabios_reaches_diskless_post_end() {
     let Some(config) = shipped() else {
         return;
     };
     let policy = assembly::ObservationPolicy {
-        routes: vec![assembly::ObservationRequest {
-            device: DeviceId::Uart,
-            output: assembly::OutputKind::Bytes(device::ByteStreamKind::SerialTx),
-            byte_limit: 65536,
-        }],
+        routes: vec![
+            assembly::ObservationRequest {
+                device: DeviceId::Uart,
+                output: assembly::OutputKind::Bytes(device::ByteStreamKind::SerialTx),
+                byte_limit: 65536,
+            },
+            assembly::ObservationRequest {
+                device: DeviceId::DebugConsole,
+                output: assembly::OutputKind::Bytes(device::ByteStreamKind::DebugConsole),
+                byte_limit: 65536,
+            },
+        ],
         ..Default::default()
     };
     let mut machine = machine_file::assemble_with_observation(&config, &policy).unwrap();
-    // The golden-tier runner also selects ignored tests. Keep the explicit CPU
-    // prerequisite visible until a new pin can execute the reset entry.
-    if let Err(error) = machine.machine.run_bounded(Some(1)) {
-        if error
-            .to_string()
-            .contains("80386 reset fetch at 0xfffffff0")
-        {
-            eprintln!("blocked: xj-srh.12 (x86jit); SeaBIOS boot was not executed");
-            return;
-        }
-        panic!("{error}");
-    }
-    machine.machine.run_bounded(Some(10_000_000)).unwrap();
-    let output = machine
+    let result = machine.machine.run_bounded(Some(10_000_000));
+    let serial = machine
         .observation
         .drain_bytes(DeviceId::Uart, device::ByteStreamKind::SerialTx)
         .unwrap();
-    assert!(
-        output
-            .windows(b"No bootable device".len())
-            .any(|window| window == b"No bootable device"),
-        "SeaBIOS did not finish POST and reach boot selection"
-    );
+    let debug = machine
+        .observation
+        .drain_bytes(DeviceId::DebugConsole, device::ByteStreamKind::DebugConsole)
+        .unwrap();
+    eprintln!("serial console:\n{}", String::from_utf8_lossy(&serial));
+    eprintln!("debug console:\n{}", String::from_utf8_lossy(&debug));
+    if let Err(machine::MachineError::Cpu(error)) = &result {
+        eprintln!("retired: {}", machine.machine.cpu().retired());
+        if let cpu::CpuError::UnsupportedSystem {
+            operation,
+            cs: 8,
+            ip: 0xF5067,
+        } = error
+        {
+            assert_eq!(operation, "LegacyInstruction");
+            let mut bytes = [0; 4];
+            machine.machine.cpu().read_mem(0xF5067, &mut bytes).unwrap();
+            assert_eq!(bytes, [0x0F, 0xBA, 0xE2, 0x15]);
+            assert!(debug.starts_with(b"SeaBIOS (version 1.17.0"));
+            eprintln!("blocked: {error}; linear 000F5067, bytes {bytes:02X?}; BT EDX,21");
+            return;
+        }
+        if let Some(report) = machine.machine.cpu().stop_report(error) {
+            eprintln!("{report}");
+        }
+    }
+    result.unwrap();
+    // SeaBIOS rel-1.17.0, bootsplash.c / output.c and boot.c boot_fail.
+    for expected in ["SeaBIOS (version 1.17.0", "No bootable device."] {
+        assert!(
+            serial
+                .windows(expected.len())
+                .any(|window| window == expected.as_bytes())
+                || debug
+                    .windows(expected.len())
+                    .any(|window| window == expected.as_bytes()),
+            "SeaBIOS did not emit {expected:?} within the retired-instruction budget"
+        );
+    }
 }

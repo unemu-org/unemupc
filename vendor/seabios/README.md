@@ -9,8 +9,14 @@ The clone (`src/`), temporary exports (`build/`) and ROM are gitignored.
 The firmware catalogue lists this image as `seabios-1.17.0-isa` for the
 `generic-386-isa` board (`machines/generic-386-seabios.toml`). Existing 286
 machines do not use it. CI builds it in the fixtures lane. There is no SeaBIOS
-boot qualification yet: the pinned CPU core still refuses the 386 reset fetch;
-see [firmware requirements §3.6](../../backlog/docs/design/firmware-and-machine-classes.md#36-phase-b-firmware-requirements-seabios-on-generic-386-isa).
+boot qualification yet. At CPU pin `99ed385e`, reset executes and port 402h
+emits the version banner, build tools and `Unable to unlock ram - bridge not
+found`. After 3,081 retired instructions, x86jit refuses protected-mode
+`BT EDX,21` (`0F BA E2 15`) at CS:EIP `0008:000F5067`, linear `000F5067h`,
+with `UnsupportedSystem { operation: "LegacyInstruction", cs: 8, ip: 1003623 }`.
+The UART stream is empty. The diskless POST test
+remains ignored with this precise CPU blocker, checked when selected by the
+golden runner. POST end and INT 15h memory services are unqualified; see [firmware requirements §3.6](../../backlog/docs/design/firmware-and-machine-classes.md#36-phase-b-firmware-requirements-seabios-on-generic-386-isa).
 
 ## Build and tools
 
@@ -58,7 +64,7 @@ pinned `src/Kconfig`. Unspecified settings take that revision's defaults.
   shadow RAM or pristine high BIOS copy.
 - `SERCON=y` enables the headless console, whose port still needs the
   board-local fw_cfg `etc/sercon-port` file. `DEBUG_IO=y` and `DEBUG_LEVEL=1`
-  retain POST diagnostics at port 402h; a device for this port is separate work.
+  retain POST diagnostics at the board-local debug console, port 402h.
 - `BOOTMENU=n` avoids the interactive wait. Upstream boot ordering, ATA,
   floppy, PS/2 and serial BIOS services remain at their defaults.
 - `MPTABLE=n` avoids the APIC read on a single-CPU ISA machine. `PIRTABLE`,

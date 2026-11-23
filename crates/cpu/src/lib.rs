@@ -5,7 +5,8 @@
 //! `backlog/docs/architecture.md`: it abstracts the CPU core so the `machine`
 //! composition root never names a concrete backend. The only backend is
 //! [`X86JitCpu`], wrapping the `x86jit-core` recompiler; it runs in
-//! **I286 machine** mode for IBM PC/AT machines. **Real16** and **Long64**
+//! **I286 machine** mode for IBM PC/AT machines and **I386 machine** mode for
+//! generic ISA 386 boards. **Real16** and **Long64**
 //! remain available for standalone adapter tests; assembly uses exact steps.
 //!
 //! The backend exploits the integration surface `x86jit` exposes: `Exit::PortIo`
@@ -42,6 +43,15 @@
 //! Application(Real16); attaching an 8042 or port 92h selects I80286 Machine
 //! with a low reset entry. Host memory APIs and ISA DMA bypass the CPU gate.
 //! CPU reset retains both an effective line and a pending boundary change.
+//!
+//! Intel 80386 Programmer's Reference Manual, §10.1 Initialization: the 386
+//! reset image uses EIP=FFF0h, hidden CS base FFFF0000h and DH=03h. The core
+//! assumes DL=03h and derives CR0.ET from the FPU model. Installing that image
+//! precedes reapplying the retained board A20 line; at this bare adapter,
+//! A20 disabled makes the reset fetch address FFEFFFF0h, which is unmapped.
+//! The assembled board overrides CPU A20 until the first CS reload as an
+//! explicit emulator policy, then restores the board gate.
+//! See `backlog/docs/design/machine-files.md` §Generic 386 ISA board.
 
 #![forbid(unsafe_code)]
 

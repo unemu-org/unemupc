@@ -13,7 +13,11 @@ deciders: Mikołaj Mikołajczyk
 Accepted — 2026-11-11. Amends rule 5 of [[decision-18]] (phase B firmware).
 Board wiring, shadow RAM, the separate pristine high copy and the Listed
 SeaBIOS catalogue entry are implemented for `generic-386-isa` (2026-11-23).
-Execution/boot qualification still waits for `xj-srh.12 (x86jit)` and a re-pin.
+Reset execution is qualified at CPU pin `99ed385e` (`xj-srh.12`, x86jit).
+SeaBIOS emits its debug banner, then after 3,081 retired instructions the core
+refuses protected-mode `BT EDX,21` (`0F BA E2 15`) at `0008:000F5067`
+with `UnsupportedSystem(LegacyInstruction)`. Boot and INT 15h memory-service
+qualification remain blocked on that CPU instruction; the fixture stays Listed.
 Part of phase B of [[decision-16]]. The requirement list is in
 [`backlog/docs/design/firmware-and-machine-classes.md`](../docs/design/firmware-and-machine-classes.md)
 (phase B firmware requirements); the CPU-core side is in

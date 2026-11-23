@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 schema = 1
 name = "generic-386-seabios"
-description = "80386DX ISA board with unmodified SeaBIOS; execution awaits CPU reset support"
+description = "80386DX ISA board with unmodified SeaBIOS and COM1"
 
 [board]
 model = "generic-386-isa"

@@ -330,7 +330,7 @@ contract (machine-config.md). A board model has these parts:
 | `ibm-5170` | at | 80286 (80287 later) | none | **Kiselev Xi 8088 1.0.2** (tested; SHA-256 `1ad458ac…81a8`, MEASURED by `fetch.sh`), plus XUB AT r638 option ROM | IBM 5170 BIOS (even/odd pair) | **available now** |
 | `ibm-5160` | xt | 8088, v20 (reserved) | none | GLaBIOS `ARCH_5160`, Kiselev `MACHINE_XT`, Super PC/Turbo XT | IBM 5160 BIOS | reserved until `xj-50w.2 (x86jit)` |
 | `ibm-5150` | xt | 8088 (reserved) | none | GLaBIOS `ARCH_5150` | IBM 5150 BIOS | optional, later |
-| `generic-386-isa` | at386 | 80386DX | port 92h; emulator-only fw_cfg at 510h/511h | Unmodified SeaBIOS `CONFIG_QEMU`, serial console first; SeaVGABIOS later; Bochs `rombios` legacy fallback (decision-19, §3.6) | — | board available; execution waits for `xj-srh.12 (x86jit)` |
+| `generic-386-isa` | at386 | 80386DX | port 92h; emulator-only fw_cfg at 510h/511h | Unmodified SeaBIOS `CONFIG_QEMU`, serial console first; SeaVGABIOS later; Bochs `rombios` legacy fallback (decision-19, §3.6) | — | board available; reset executes at `99ed385e`; POST stops at protected-mode `BT EDX,21` |
 | `i440fx-piix3` | pci | Pentium Pro / Pentium II (reserved) | 82441FX PAM/SMRAM, PIIX3 PIRQ/ELCR | SeaBIOS (QEMU `pc` config); Bochs `rombios` | — | candidate for phases C/D |
 | `i440bx-piix4` | pci + AGP | Pentium II/III | 82443BX, PIIX4 | none for a real board (see §3.4) | Award/AMI/Phoenix images of named boards | enthusiast |
 | `neat-286` | at | 286 / 386SX | C&T CS8221 index/data registers (ASSUMED 22h/23h) | none | AMI/Phoenix NEAT BIOSes | enthusiast |
@@ -501,6 +501,30 @@ built and ran nothing. Prebuilt-image measurements are recorded in Sources.
 Machine/core availability below is the spike's source assessment at x86jit
 pin `8979fc9`, not a SeaBIOS boot result.
 
+**Execution qualification (2026-11-23, MEASURED).** CPU pin `99ed385e`
+(`xj-srh.12`, x86jit) now supplies `CpuState::i386_reset`. The adapter applies
+the retained board A20 state after installing that image. Synthetic tests
+qualify the high reset fetch, near jumps before CS reload, the low target
+after reload, the no-FPU CR0.ET state, EDX=0303h and RAM retention across
+resets. DH=03h comes from Intel 80386 PRM §10.1; DL=03h remains the core's
+assumed stepping. At the bare adapter, A20 off addresses FFEFFFF0h,
+deliberately unmapped. The assembled board's explicit reset-fetch policy
+temporarily forces CPU A20 on until the first CS reload, then restores the
+board gate; see machine-files.md §Generic 386 ISA board.
+
+The shipped 15 MiB extended-RAM diskless machine reaches port 402h output:
+the SeaBIOS 1.17.0 version banner, its build-tools line and the
+no-PCI-bridge shadow-unlock diagnostic. It then stops after **3,081 retired
+instructions** at protected-mode `BT EDX,21` (`0F BA E2 15`), CS:EIP
+`0008:000F5067`, linear `000F5067h`. The exact core error is
+`UnsupportedSystem { operation: "LegacyInstruction", cs: 8, ip: 1003623 }`.
+This is in the EFLAGS.ID test of `x86.c:10–23`, before CPUID; it is distinct
+from the remaining real-mode MOV DR/TR and NT=1 IRET work in `xj-srh.16`
+(x86jit). COM1 has no output yet. The ignored diskless POST test checks the
+precise refusal when selected by the golden runner. No POST-end or INT 15h
+AH=88h/E801h/E820h result is qualified. Sparse backing (`xj-srh.28`, x86jit),
+TSS I/O bitmap and paging are also pending; the flat 4 GiB backing is retained.
+
 **Build target and decision (READ).** `CONFIG_QEMU` is the only target with
 ISA fallbacks: ATA at 1F0h/170h without PCI (`ata.c:1020–1030`), RAM size
 from CMOS (`paravirt.c:240–254`), boot order at 38h/3Dh
@@ -557,9 +581,10 @@ hostname suffix, before checking output SHA-256.
 
 | Fixture | Build state (2026-11-11) | Catalogue / board |
 |---|---|---|
-| `vendor/seabios/bios-1.17.0-isa.bin` | Built; two independent builds matched (MEASURED by the supervisor); output SHA-256 pinned in the fixture | `seabios-1.17.0-isa`, Listed, on `generic-386-isa`; execution waits for `xj-srh.12 (x86jit)` |
+| `vendor/seabios/bios-1.17.0-isa.bin` | Built; two independent builds matched (MEASURED by the supervisor); output SHA-256 pinned in the fixture | `seabios-1.17.0-isa`, Listed, on `generic-386-isa`; reset executes at `99ed385e`; POST stops at protected-mode `BT EDX,21` |
 
-The board and catalogue entry now assemble; this qualifies no boot. QEMU's prebuilt
+The board and catalogue entry assemble and execute the reset vector; the CPU
+refusal above prevents boot qualification. QEMU's prebuilt
 `bios.bin` is not used; its MPTABLE and other platform settings deliberately
 differ. Input and output hashes are recorded in the fixture README, together
 with the 2026-11-11 two-build measurement on macOS arm64 using i686-elf GCC
@@ -577,7 +602,7 @@ It requires an 80386, AT keyboard/PICs and 128-byte CMOS, belongs only to
 the board supplies fw_cfg/SERCON, port 92h and the 402h console.
 SeaVGABIOS delivery remains pending. See
 [machine-files.md §Generic 386 ISA board](machine-files.md#generic-386-isa-board)
-for RAM limits, the current 4 GiB flat backing and reset-fetch refusal.
+for RAM limits, the current 4 GiB flat backing and the POST instruction refusal.
 
 **Memory and reset (READ).** C0000h–FFFFFh must be writable RAM at POST,
 with the 128 KiB BIOS preloaded at E0000h–FFFFFh. SeaBIOS writes F-segment

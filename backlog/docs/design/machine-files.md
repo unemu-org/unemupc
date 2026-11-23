@@ -343,13 +343,47 @@ x86jit is therefore required before this host-allocation blocker can be fixed.
 
 [`machines/generic-386-seabios.toml`](../../../machines/generic-386-seabios.toml)
 uses 15 MiB of extended RAM and the `seabios-1.17.0-isa` catalogue entry.
-It validates and assembles without running firmware. Execution remains blocked
-at pin `6cb817b8`: `xj-srh.12 (x86jit)` must supply the 386 reset fetch at
-FFFFFFF0h. Starting execution returns a typed `UnsupportedSystem` error
-with that physical address. The ignored SeaBIOS boot probe names this
-prerequisite and reports it explicitly when selected by the golden runner.
-Full 386 real-mode integer coverage (`xj-srh.16`), the TSS I/O bitmap and
-paging are still separate CPU-core work; assembly is not boot qualification.
+At CPU pin `99ed385e` (`xj-srh.12`, x86jit), reset installs the core's
+`CpuState::i386_reset`: CS=F000h, hidden base FFFF0000h, EIP=FFF0h and
+EDX=0303h. Intel 80386 PRM §10.1 specifies DH=03h; DL=03h is the core's
+assumed stepping. CR0.ET reflects the FPU model (clear on this no-FPU board).
+The bare CPU adapter reapplies the retained A20 gate after installing the
+image: with A20 disabled its reset fetch addresses FFEFFFF0h, deliberately
+unmapped. The assembled board explicitly chooses a different **emulator
+policy** for CPU-only resets: temporarily force CPU A20 on while CS retains
+selector F000h and hidden base FFFF0000h. The reset fetch therefore reaches
+the pristine ROM at FFFFFFF0h even when both the 8042 and port 92h sources
+are off. This is a board policy, not a universal 386 chipset behaviour;
+period chipsets differ. No ROM alias is added at FFEFxxxxh.
+
+Near jumps preserve the hidden base and keep the window open. While it is
+open, execution stops after every instruction so the first CS reload closes
+it immediately, including a far jump that keeps selector F000h but replaces
+the hidden base with F0000h. CPU A20 then equals the current OR of the board
+sources before the next instruction; neither source nor its guest read-back
+changes during the window. Assembled-machine tests check disabled sources
+over repeated resets, the high near jump, same-selector far jump and a
+subsequent wrapped data read. Other synthetic tests check retained shadow
+RAM. The existing 286 reset path and its window policy remain unchanged.
+
+**MEASURED:** the shipped diskless machine retires 3,081 instructions and
+prints the SeaBIOS 1.17.0 version banner on port 402h. COM1 remains
+empty. POST stops at protected-mode `BT EDX,21` (`0F BA E2 15`), CS:EIP
+`0008:000F5067`, linear `000F5067h`; x86jit returns
+`UnsupportedSystem { operation: "LegacyInstruction", cs: 8, ip: 1003623 }`.
+The ignored `generic386_seabios_reaches_diskless_post_end` probe names and
+checks that refusal when explicitly selected. The firmware remains Listed;
+POST end and INT 15h AH=88h/E801h/E820h await this CPU-core fix. Remaining
+real-mode MOV DR/TR and NT=1 IRET coverage (`xj-srh.16`, x86jit), TSS I/O
+bitmap and paging are separate work. The 4 GiB flat backing remains in use
+until sparse backing (`xj-srh.28`, x86jit).
+
+Headless reproduction (the CLI prints COM1; the test also captures port 402h):
+
+```sh
+cargo run --offline -p unemupc -- run --machine machines/generic-386-seabios.toml --max-steps 10000000 --idle-limit 1000000 --print uart-16550
+```
+
 The board's default rate is one retired step per PIT clock, an uncalibrated
 deterministic policy rather than an instruction-cycle model.
 

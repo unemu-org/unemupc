@@ -560,10 +560,11 @@ pub fn assemble_preverified(
         machine = machine
             .with_reset_signal(reset_signal)
             .with_a20_line(move || (line.change_count(), line.enabled()))
-            // Reset fetches reach the ROM before the first CS load, even with
-            // the board gate off (Intel 80286 PRM, Appendix C, Address after
-            // Reset; Intel 80386 PRM, §10.1 Initialization). Bare low entries
-            // never open this window. Read the hidden base only for reset CS.
+            // Both boards deliberately bypass A20 while the hidden reset base
+            // survives, so a CPU-only reset can reach ROM with the gate off.
+            // This is emulator policy, not a claim about every period chipset
+            // (machine-files.md, Generic 386 ISA board). Testing the base also
+            // closes the window when a far jump keeps the F000h selector.
             .with_reset_fetch_probe(|cpu: &cpu::X86JitCpu| {
                 cpu.code_segment() == 0xF000
                     && matches!(cpu.diagnostic_state().cs().base, 0xFF_0000 | 0xFFFF_0000)

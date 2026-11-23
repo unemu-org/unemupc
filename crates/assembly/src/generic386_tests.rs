@@ -5,7 +5,7 @@
 
 use super::*;
 use crate::{BoardModel, CpuChip, PortWindow, RamRegion};
-use cpu::{Cpu, CpuError, CpuReg, DmaAccess};
+use cpu::{Cpu, CpuReg, DmaAccess};
 
 fn board() -> MachineConfig {
     let mut config = crate::bios(vec![0xA7; 0x20000], None);
@@ -169,15 +169,146 @@ fn generic386_guest_writes_and_reads_f_segment_through_machine_bus() {
 }
 
 #[test]
-fn generic386_start_reports_the_reset_fetch_blocker_as_a_typed_error() {
-    let mut cpu = build_cpu(&board()).unwrap();
-    let error = cpu
-        .run_steps(1, cpu::StepRunOptions::default())
-        .unwrap_err();
-    assert!(matches!(error, CpuError::UnsupportedSystem { .. }));
-    assert!(error
-        .to_string()
-        .contains("80386 reset fetch at 0xfffffff0"));
+fn generic386_reset_executes_pristine_high_copy_and_retains_shadow_ram() {
+    let mut config = board();
+    let ImageSource::Inline(bytes) = &mut config.images[0].source else {
+        panic!("expected inline BIOS");
+    };
+    bytes[0x1FFF0..0x1FFF9]
+        .copy_from_slice(&[0xEB, 0x02, 0x0F, 0x0B, 0xEA, 0x00, 0x10, 0x00, 0xF0]);
+    bytes[0x11000..0x11005].copy_from_slice(&[0xB0, 0x5A, 0xE6, 0x80, 0xF4]);
+    let mut assembled = assemble_with_cpu(
+        &config,
+        &ObservationPolicy::default(),
+        crate::AssemblyOptions {
+            allow_unlisted_firmware: true,
+        },
+        |config| {
+            let mut cpu = build_cpu(config)?;
+            cpu.write_mem(0xFFFF0, &[0x0F, 0x0B])?;
+            cpu.write_mem(0xC1234, &[0x99])?;
+            Ok(cpu)
+        },
+    )
+    .unwrap();
+    for cap in [10, 20] {
+        assert_eq!(
+            assembled.machine.run_bounded(Some(cap)).unwrap(),
+            machine::RunOutcome::Halted
+        );
+        assert_eq!(
+            assembled.machine.bus_mut().port_read(0x80, 1).unwrap(),
+            0x5A
+        );
+        assert_eq!(assembled.machine.cpu().reg(CpuReg::Rdx), 0x0303);
+        let mut byte = [0];
+        assembled
+            .machine
+            .cpu()
+            .read_mem(0xC1234, &mut byte)
+            .unwrap();
+        assert_eq!(byte, [0x99]);
+        assembled
+            .machine
+            .cpu()
+            .read_mem(0xFFFF0, &mut byte)
+            .unwrap();
+        assert_eq!(byte, [0x0F]);
+        assembled.machine.reset_cpu().unwrap();
+    }
+}
+
+#[test]
+fn generic386_reset_window_fetches_high_rom_with_both_a20_sources_off() {
+    let mut assembled = reset_window_board();
+    for cap in [1, 2] {
+        assembled.machine.reset_cpu().unwrap();
+        assert!(assembled.machine.reset_fetch_window_open());
+        assert!(assembled.machine.cpu().a20_enabled());
+        assert_a20_sources_off(&mut assembled);
+        assert_eq!(
+            assembled.machine.run_bounded(Some(cap)).unwrap(),
+            machine::RunOutcome::RetiredCapReached
+        );
+        assert_eq!(assembled.machine.cpu().reg(CpuReg::Rip), 0xFFF4);
+        assert_eq!(
+            assembled.machine.cpu().diagnostic_state().cs().base,
+            0xFFFF0000
+        );
+        assert!(assembled.machine.reset_fetch_window_open());
+        assert!(assembled.machine.cpu().a20_enabled());
+        assert_a20_sources_off(&mut assembled);
+    }
+}
+
+#[test]
+fn generic386_reset_window_restores_board_a20_after_same_selector_far_jump() {
+    let mut assembled = reset_window_board();
+    assembled.machine.reset_cpu().unwrap();
+    assert_eq!(
+        assembled.machine.run_bounded(Some(2)).unwrap(),
+        machine::RunOutcome::RetiredCapReached
+    );
+    let cs = assembled.machine.cpu().diagnostic_state().cs();
+    assert_eq!(cs.selector, 0xF000);
+    assert_eq!(cs.base, 0xF0000);
+    assert_eq!(assembled.machine.cpu().reg(CpuReg::Rip), 0x1000);
+    assert!(!assembled.machine.reset_fetch_window_open());
+    assert_a20_sources_off(&mut assembled);
+    assert!(!assembled.machine.cpu().a20_enabled());
+    assert_eq!(
+        assembled.machine.run_bounded(Some(20)).unwrap(),
+        machine::RunOutcome::Halted
+    );
+    assert_eq!(
+        assembled.machine.bus_mut().port_read(0x80, 1).unwrap(),
+        0x5A
+    );
+}
+
+fn reset_window_board() -> crate::AssembledMachine {
+    let mut config = board();
+    let ImageSource::Inline(bytes) = &mut config.images[0].source else {
+        panic!("expected inline BIOS");
+    };
+    bytes[0x1FFF0..0x1FFF9]
+        .copy_from_slice(&[0xEB, 0x02, 0x0F, 0x0B, 0xEA, 0x00, 0x10, 0x00, 0xF0]);
+    // Keeping the selector makes the hidden base, rather than CS alone,
+    // decisive. The following read distinguishes wrapped from flat addressing.
+    bytes[0x11000..0x1100B].copy_from_slice(&[
+        0xB8, 0xFF, 0xFF, 0x8E, 0xD8, 0xA0, 0x10, 0x05, 0xE6, 0x80, 0xF4,
+    ]);
+    let mut assembled = assemble_with_cpu(
+        &config,
+        &ObservationPolicy::default(),
+        crate::AssemblyOptions {
+            allow_unlisted_firmware: true,
+        },
+        |config| {
+            let mut cpu = build_cpu(config)?;
+            cpu.write_mem(0xFFFF0, &[0x0F, 0x0B])?;
+            cpu.write_mem(0x500, &[0x5A])?;
+            cpu.write_mem(0x100500, &[0xA5])?;
+            Ok(cpu)
+        },
+    )
+    .unwrap();
+    assembled
+        .machine
+        .bus_mut()
+        .port_write(0x64, 1, 0xD1)
+        .unwrap();
+    assembled.machine.bus_mut().port_write(0x60, 1, 1).unwrap();
+    assembled.machine.bus_mut().port_write(0x92, 1, 0).unwrap();
+    assert_a20_sources_off(&mut assembled);
+    assembled
+}
+
+fn assert_a20_sources_off(assembled: &mut crate::AssembledMachine) {
+    let bus = assembled.machine.bus_mut();
+    assert_eq!(bus.port_read(0x92, 1).unwrap() & 2, 0);
+    bus.port_write(0x64, 1, 0xD0).unwrap();
+    assert_eq!(bus.port_read(0x60, 1).unwrap() & 3, 1);
 }
 
 #[test]
