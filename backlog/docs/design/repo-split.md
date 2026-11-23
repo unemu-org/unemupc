@@ -2,6 +2,8 @@
 
 Frozen record of the repository split; the living description is in [architecture.md](../architecture.md), and the normative contract text is in [unemu-core-api](https://github.com/unemu-org/unemu-core-api).
 
+Closed on 2026-11-23: the split is done. The core repository was cut at [a28a4a5b](https://github.com/unemu-org/unemupc/commit/a28a4a5b084a376a9a02baef891318231b308797) and the front end first pinned it at [ccbce16a](https://github.com/unemu-org/unemu/commit/ccbce16ae0c3ac6f7dc9247098874fcaee43dc0a); both released `v0.0.4` (unemupc `8a319d70`, unemu `ff37615b`, pinned to unemupc `v0.0.4`). The software repository (formerly unemu-media) installs unemu with its own pinned fetcher, not `setup-unemu`.
+
 Status: **Accepted** by the maintainer on 2026-11-22 (bead `upc-dfs.53`), with
 every recommended answer of §14. Proposed 2026-11-21. Preparation steps E1
 and E2 are recorded below; no new repository exists yet. The steps of §12
