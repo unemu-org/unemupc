@@ -204,3 +204,84 @@ fn generic386_seabios_reaches_diskless_post_end() {
         );
     }
 }
+
+#[test]
+#[ignore = "x86jit refuses protected-mode BT EDX,21 at 0008:000F5067 before SeaBIOS can initialize its resume path"]
+fn generic386_seabios_keyboard_reset_reaches_resume() {
+    let Some(config) = shipped() else {
+        return;
+    };
+    let policy = assembly::ObservationPolicy {
+        routes: vec![assembly::ObservationRequest {
+            device: DeviceId::DebugConsole,
+            output: assembly::OutputKind::Bytes(device::ByteStreamKind::DebugConsole),
+            byte_limit: 65536,
+        }],
+        ..Default::default()
+    };
+    let mut assembled = machine_file::assemble_with_observation(&config, &policy).unwrap();
+    let result = assembled.machine.run_bounded(Some(10_000_000));
+    if let Err(machine::MachineError::Cpu(cpu::CpuError::UnsupportedSystem {
+        operation,
+        cs: 8,
+        ip: 0xF5067,
+    })) = &result
+    {
+        assert_eq!(operation, "LegacyInstruction");
+        let mut bytes = [0; 4];
+        assembled
+            .machine
+            .cpu()
+            .read_mem(0xF5067, &mut bytes)
+            .unwrap();
+        assert_eq!(bytes, [0x0F, 0xBA, 0xE2, 0x15]);
+        assert_eq!(assembled.machine.cpu().retired(), 3081);
+        eprintln!(
+            "blocked before reset/resume: protected-mode BT EDX,21 after 3081 retired instructions"
+        );
+        return;
+    }
+    result.unwrap();
+    assembled
+        .observation
+        .drain_bytes(DeviceId::DebugConsole, device::ByteStreamKind::DebugConsole)
+        .unwrap();
+    // SeaBIOS rel-1.17.0, resume.c handle_resume: CMOS 0Fh=0 selects reboot.
+    assembled
+        .machine
+        .bus_mut()
+        .port_write(0x70, 1, 0x0F)
+        .unwrap();
+    assembled.machine.bus_mut().port_write(0x71, 1, 0).unwrap();
+    assembled
+        .machine
+        .bus_mut()
+        .port_write(0x64, 1, 0xFE)
+        .unwrap();
+    assert_eq!(
+        assembled.machine.run_bounded(Some(10_000_000)).unwrap(),
+        machine::RunOutcome::ResetRequested
+    );
+    let mut log = Vec::new();
+    loop {
+        let outcome = assembled.machine.run_bounded(Some(20_000_000)).unwrap();
+        assert!(assembled.machine.cpu().retired() <= 20_000_000);
+        log.extend(
+            assembled
+                .observation
+                .drain_bytes(DeviceId::DebugConsole, device::ByteStreamKind::DebugConsole)
+                .unwrap(),
+        );
+        if log
+            .windows(b"In resume (status=0)".len())
+            .any(|window| window == b"In resume (status=0)")
+        {
+            break;
+        }
+        assert_eq!(
+            outcome,
+            machine::RunOutcome::ResetRequested,
+            "SeaBIOS did not reach resume within the retired-instruction budget"
+        );
+    }
+}

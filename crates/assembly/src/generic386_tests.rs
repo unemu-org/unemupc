@@ -311,6 +311,211 @@ fn assert_a20_sources_off(assembled: &mut crate::AssembledMachine) {
     assert_eq!(bus.port_read(0x60, 1).unwrap() & 3, 1);
 }
 
+#[derive(Clone, Copy, Debug)]
+enum ResetSource {
+    TripleFault,
+    Port92,
+    Keyboard,
+}
+
+impl ResetSource {
+    fn instructions(self) -> &'static [u8] {
+        match self {
+            // Intel 80386 PRM, §9.8.8 Double Fault: no gate fits this one-byte IDT.
+            Self::TripleFault => &[
+                0xBA, 0xF9, 0x0C, 0xB0, 0x02, 0xEE, 0xB0, 0x06, 0xEE, // CF9h fallback
+                0x66, 0xBA, 0xEF, 0xBE, 0xAD, 0xDE, 0x0F, 0x01, 0x1E, 0x00, 0x06, 0xCC,
+            ],
+            Self::Port92 => &[0xE4, 0x92, 0x24, 0xFE, 0xE6, 0x92, 0x0C, 0x01, 0xE6, 0x92],
+            Self::Keyboard => &[0xB0, 0xFE, 0xE6, 0x64],
+        }
+    }
+}
+
+fn guest_reset_board(source: ResetSource, storm: bool) -> crate::AssembledMachine {
+    let mut config = board();
+    let ImageSource::Inline(bytes) = &mut config.images[0].source else {
+        panic!("expected inline BIOS");
+    };
+    bytes[0x1FFF0..0x1FFF9]
+        .copy_from_slice(&[0xEB, 0x02, 0x0F, 0x0B, 0xEA, 0x00, 0x10, 0x00, 0xF0]);
+    let mut guest = vec![0xFA]; // CLI keeps the reset probe independent of timer IRQs.
+    if !storm {
+        guest.extend_from_slice(&[
+            0x80, 0x3E, 0x00, 0x05, 0x5A, // CMP byte [0500h],5Ah
+            0x74, 0, // JE done
+            0xC6, 0x06, 0x00, 0x05, 0x5A, // MOV byte [0500h],5Ah
+            0x66, 0xBA, 0xEF, 0xBE, 0xAD, 0xDE, // MOV EDX,DEADBEEFh
+        ]);
+    }
+    guest.extend_from_slice(source.instructions());
+    guest.extend_from_slice(&[0x0F, 0x0B]); // A reset must precede the next instruction.
+    if !storm {
+        guest[7] = (guest.len() - 8) as u8;
+        guest.extend_from_slice(&[0xA0, 0x00, 0x05, 0xE6, 0x80, 0xF4]);
+    }
+    bytes[0x11000..0x11000 + guest.len()].copy_from_slice(&guest);
+    assemble_with_cpu(
+        &config,
+        &ObservationPolicy::default(),
+        crate::AssemblyOptions {
+            allow_unlisted_firmware: true,
+        },
+        |config| {
+            let mut cpu = build_cpu(config)?;
+            // A low reset fetch would execute UD2; the pristine copy must survive.
+            cpu.write_mem(0xFFFF0, &[0x0F, 0x0B])?;
+            cpu.write_mem(0xC1234, &[0x99])?;
+            Ok(cpu)
+        },
+    )
+    .unwrap()
+}
+
+fn check_guest_reset(source: ResetSource) {
+    for (keyboard_a20, fast_a20) in [(false, false), (false, true), (true, false), (true, true)] {
+        let mut assembled = guest_reset_board(source, false);
+        let machine = &mut assembled.machine;
+        machine.bus_mut().port_write(0x64, 1, 0xD1).unwrap();
+        let output_port = if keyboard_a20 { 3 } else { 1 };
+        machine.bus_mut().port_write(0x60, 1, output_port).unwrap();
+        let fast_bit = if fast_a20 { 2 } else { 0 };
+        machine.bus_mut().port_write(0x92, 1, fast_bit).unwrap();
+        assert_eq!(machine.bus_mut().port_read(0xCF9, 1).unwrap(), 0xFF);
+        machine.bus_mut().port_write(0x70, 1, 0x0F).unwrap();
+        machine.bus_mut().port_write(0x71, 1, 0x0A).unwrap();
+        machine.reset_cpu().unwrap();
+        assert_eq!(
+            machine.run_bounded(Some(100)).unwrap(),
+            machine::RunOutcome::ResetRequested,
+            "{source:?}, keyboard A20={keyboard_a20}"
+        );
+        assert_eq!(machine.cpu().reg(CpuReg::Rdx), 0xDEADBEEF);
+        if matches!(source, ResetSource::TripleFault) {
+            assert_eq!(
+                machine.cpu().diagnostic_state().system.unwrap().idtr.limit,
+                0
+            );
+        }
+        let retired = machine.cpu().retired();
+        let time = machine.virtual_time();
+        let clock = machine.clock();
+        // Resumption performs the pending reset even when the cap allows no step.
+        assert_eq!(
+            machine.run_bounded(Some(time)).unwrap(),
+            machine::RunOutcome::RetiredCapReached
+        );
+        assert_eq!(machine.cpu().retired(), retired);
+        assert_eq!(machine.virtual_time(), time);
+        assert_eq!(machine.clock(), clock);
+        assert_eq!(machine.cpu().reg(CpuReg::Rdx), 0x0303);
+        assert_eq!(machine.cpu().reg(CpuReg::Rip), 0xFFF0);
+        let state = machine.cpu().diagnostic_state();
+        assert_eq!(state.cs().selector, 0xF000);
+        assert_eq!(state.cs().base, 0xFFFF0000);
+        let system = state.system.unwrap();
+        assert_eq!(system.msw & 0x1F, 0);
+        assert_eq!(system.idtr.limit, 0x3FF);
+        assert!(machine.reset_fetch_window_open());
+        assert!(machine.cpu().a20_enabled());
+        assert_eq!(machine.bus_mut().port_read(0x71, 1).unwrap(), 0x0A);
+        assert_eq!(
+            machine.bus_mut().port_read(0x92, 1).unwrap(),
+            fast_bit | u32::from(matches!(source, ResetSource::Port92))
+        );
+        machine.bus_mut().port_write(0x64, 1, 0xD0).unwrap();
+        assert_eq!(machine.bus_mut().port_read(0x60, 1).unwrap(), output_port);
+        for (addr, expected) in [
+            (0x500, 0x5A),
+            (0xC1234, 0x99),
+            (0xFFFF0, 0x0F),
+            (0xFFFFFFF0, 0xEB),
+        ] {
+            let mut byte = [0];
+            machine.cpu().read_mem(addr, &mut byte).unwrap();
+            assert_eq!(byte, [expected], "{addr:08X}");
+        }
+        assert_eq!(
+            machine.run_bounded(Some(time + 1)).unwrap(),
+            machine::RunOutcome::RetiredCapReached
+        );
+        assert_eq!(machine.cpu().diagnostic_state().cs().base, 0xFFFF0000);
+        assert_eq!(
+            machine.run_bounded(Some(time + 2)).unwrap(),
+            machine::RunOutcome::RetiredCapReached
+        );
+        assert_eq!(machine.cpu().diagnostic_state().cs().base, 0xF0000);
+        assert!(!machine.reset_fetch_window_open());
+        assert_eq!(machine.cpu().a20_enabled(), keyboard_a20 || fast_a20);
+        assert_eq!(
+            machine.run_bounded(Some(time + 100)).unwrap(),
+            machine::RunOutcome::Halted
+        );
+        assert_eq!(machine.bus_mut().port_read(0x80, 1).unwrap(), 0x5A);
+        if matches!(source, ResetSource::Port92) {
+            machine.bus_mut().port_write(0x92, 1, fast_bit | 1).unwrap();
+            assert_eq!(
+                machine.run_bounded(Some(time + 100)).unwrap(),
+                machine::RunOutcome::Halted
+            );
+            machine.bus_mut().port_write(0x92, 1, fast_bit).unwrap();
+            machine.bus_mut().port_write(0x92, 1, fast_bit | 1).unwrap();
+            assert_eq!(
+                machine.run_bounded(Some(time + 100)).unwrap(),
+                machine::RunOutcome::ResetRequested
+            );
+        }
+    }
+}
+
+#[test]
+fn generic386_guest_triple_fault_resets_and_keeps_ram() {
+    check_guest_reset(ResetSource::TripleFault);
+}
+
+#[test]
+fn generic386_guest_port92_edge_resets_and_keeps_ram() {
+    check_guest_reset(ResetSource::Port92);
+}
+
+#[test]
+fn generic386_guest_keyboard_pulse_resets_and_keeps_ram() {
+    check_guest_reset(ResetSource::Keyboard);
+}
+
+#[test]
+fn generic386_guest_reset_storm_reports_each_source() {
+    for source in [
+        ResetSource::TripleFault,
+        ResetSource::Port92,
+        ResetSource::Keyboard,
+    ] {
+        let mut assembled = guest_reset_board(source, true);
+        for _ in 1..cpu::RESET_STORM_RESETS {
+            assert_eq!(
+                assembled.machine.run_bounded(Some(10_000)).unwrap(),
+                machine::RunOutcome::ResetRequested
+            );
+        }
+        let error = assembled.machine.run_bounded(Some(10_000)).unwrap_err();
+        assert!(
+            matches!(&error, machine::MachineError::Cpu(cpu::CpuError::ResetStorm { resets, shutdown, cs: 0xF000, .. })
+            if *resets == cpu::RESET_STORM_RESETS && *shutdown == matches!(source, ResetSource::TripleFault)),
+            "{source:?}: {error}"
+        );
+        let machine::MachineError::Cpu(error) = error else {
+            unreachable!()
+        };
+        assert!(assembled
+            .machine
+            .cpu()
+            .stop_report(&error)
+            .unwrap()
+            .to_string()
+            .contains("the machine resets again and again"));
+    }
+}
+
 #[test]
 fn generic386_ibm5170_adapter_space_remains_read_only() {
     let mut config = board();

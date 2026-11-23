@@ -366,6 +366,36 @@ over repeated resets, the high near jump, same-selector far jump and a
 subsequent wrapped data read. Other synthetic tests check retained shadow
 RAM. The existing 286 reset path and its window policy remain unchanged.
 
+**CPU-only reset sources.** A typed CPU shutdown exit (triple fault), a
+0→1 transition of port 92h bit 0, and the 8042 pulse command FEh all use
+the machine's pending CPU-reset path. The request returns `ResetRequested`;
+the next run installs `CpuState::i386_reset` before checking its instruction
+cap, or the caller can complete it with `reset_cpu`. RAM, shadow RAM, the
+pristine high copy, CMOS, device latches and virtual time survive. The A20
+reset-fetch window above opens again; after CS reload the retained 8042/92h
+OR applies. Port 92h bit 0 stays set across CPU reset, so another pulse needs
+a clear followed by a set (IBM Personal System/2 Hardware Interface Technical
+Reference, System Control Port A; Intel386 EX User's Manual, PORT92, CPURST).
+The shared reset-storm guard covers all three sources and produces a stop
+report after 64 consecutive close requests; see observation.md §The machine
+resets again and again.
+
+**CF9h remains unmapped.** READ: SeaBIOS rel-1.17.0 `fw/shadow.c:196–208`
+tries writes 02h then 06h to the PCI reset port after restoring the pristine
+image, then immediately executes `int3`. Its one-byte protected-mode IDT
+(`misc.c:134–145`) cannot deliver even #DF. An ISA board needs no PCI reset
+register: dropped CF9h writes deliberately fall through to shutdown/reset.
+Synthetic guest probes exercise that fallback and both board pulses, retaining
+a RAM marker and checking the 386 reset signature, CS hidden base, A20 source
+combinations and reset-storm report. No IBM 5170 reset wiring is changed.
+
+The ignored `generic386_seabios_keyboard_reset_reaches_resume` fixture probe
+is bounded to 20 million retired instructions. It records the protected-mode
+BT refusal below before reset/resume can be qualified. Once POST can proceed,
+it pulses the 8042 with CMOS 0Fh=0 and requires the debug log to reach
+`In resume (status=0)` (`resume.c:24–29`). This is pending acceptance, not
+a measured SeaBIOS reboot result.
+
 **MEASURED:** the shipped diskless machine retires 3,081 instructions and
 prints the SeaBIOS 1.17.0 version banner on port 402h. COM1 remains
 empty. POST stops at protected-mode `BT EDX,21` (`0F BA E2 15`), CS:EIP

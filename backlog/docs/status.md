@@ -17,6 +17,14 @@ a near jump, reload CS into low memory and preserve RAM over repeated resets.
 The no-FPU reset has CR0.ET clear and EDX=0303h (DH=03h per Intel 80386 PRM
 §10.1; DL=03h is the CPU core's assumed stepping).
 
+The machine's shared CPU-only reset path also handles 386 triple faults,
+port 92h bit 0 rising edges and 8042 FEh pulses. Synthetic guest probes cover
+RAM/shadow retention, the pristine high reset copy, EDX=0303h and hidden
+CS base FFFF0000h, all 8042/92h A20 source combinations, retained CMOS and
+device latches, and reset-storm reports for each source. CF9h stays unmapped:
+SeaBIOS's PCI reset writes fall through to its one-byte-IDT triple fault
+on this ISA board. See machine-files.md §Generic 386 ISA board.
+
 `seabios-1.17.0-isa` remains **Listed**, not boot-qualified. **MEASURED** with
 `machines/generic-386-seabios.toml`: after 3,081 retired instructions, port
 402h contains the version banner and the no-PCI-bridge shadow-unlock diagnostic;
@@ -28,6 +36,8 @@ the golden runner. No POST-end or INT 15h AH=88h/E801h/E820h qualification is
 claimed. This is a protected-mode CPU gap, distinct from the remaining
 real-mode MOV DR/TR and NT=1 IRET work (`xj-srh.16`, x86jit). Sparse backing
 (`xj-srh.28`, x86jit), TSS I/O bitmap, paging and SeaVGABIOS remain pending.
+The ignored `generic386_seabios_keyboard_reset_reaches_resume` test records
+the same BT blocker; its bounded 8042-reset/resume acceptance remains pending.
 
 
 2026-11-22 — The front end moved to [unemu](https://github.com/unemu-org/unemu) at `0f279540`; entries above this marker are the core's own.
