@@ -458,12 +458,12 @@ impl FirmwareEntry {
     };
 }
 
-/// Unmodified SeaBIOS ISA build. SeaBIOS rel-1.17.0, POST shadow RAM and
-/// QEMU CMOS memory sizing; see firmware-and-machine-classes.md §3.6.
+/// SeaBIOS ISA build from the unemu 80386-compatible fork. SeaBIOS rel-1.17.0,
+/// POST shadow RAM and QEMU CMOS memory sizing; see firmware-and-machine-classes.md §3.6.
 pub const SEABIOS_1_17_0_ISA: FirmwareEntry = FirmwareEntry {
-    id: "seabios-1.17.0-isa",
+    id: "seabios-1.17.0-unemu1-isa",
     kind: FirmwareKind::SystemBios,
-    sha256: "07add88892bb47898ec712322870b8de7bdb6016dc7f4c3dd169d748be004a13",
+    sha256: "ad50fdb5e12a03dd5c17eac481a4183a7793b84252319eea02b8c878667c994f",
     size: 131072,
     base: FirmwareBase::TopOfFirstMib,
     scan_window: None,
@@ -477,7 +477,7 @@ pub const SEABIOS_1_17_0_ISA: FirmwareEntry = FirmwareEntry {
     distribution: FirmwareDistribution::Open {
         fetch: "vendor/seabios/fetch.sh",
         license: "LGPL-3.0-only",
-        provenance: "coreboot/seabios b52ca86e094d19b58e2304417787e96b940e39c6 (rel-1.17.0), ISA configuration",
+        provenance: "unemu-org/seabios 7da2116237ed8916970795b0d8cae5bf6e277d0a (rel-1.17.0 plus 80386 byte swap), ISA configuration",
         source_archive_sha256: None,
     },
     parts: &[],

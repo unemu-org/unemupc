@@ -42,27 +42,35 @@ retired instructions**, identically on repeated runs. Delivery records agree
 between Deadline and PerClock and across bounded run chunks. This qualifies
 unpaged execution only: paging, I/O bitmaps and a DOS extender remain pending.
 
-`seabios-1.17.0-isa` remains **Listed**, not boot-qualified. **MEASURED** at
-`deae5bac` with `machines/generic-386-seabios.toml`: after **3,582 retired
-instructions**, port 402h contains the version banner, build tools,
-no-PCI-bridge shadow-unlock diagnostic and `Found QEMU fw_cfg`; COM1 is empty.
-Protected-mode CPL 0 `BSWAP EAX` (`0F C8`) at `0008:000F510B`, linear
-`000F510Bh`, raises #UD on the 80386. SeaBIOS's empty IDT cannot deliver
-#UD or #DF, so x86jit shuts down and the board returns `ResetRequested`.
-An isolated outward-delivery probe reports
-`Exit::Exception { addr: 1003787, vector: 6, .. }` without an error code.
-**READ:** SeaBIOS rel-1.17.0 `byteorder.h:15–17` explicitly emits `bswapl`;
-`fw/paravirt.c:703–705` uses it for the fw_cfg directory count despite
-`-march=i386`. This requires a firmware/CPU-target policy decision, not a
-board device workaround. The previous protected-mode BT refusal is gone;
-real-mode MOV DR/TR and NT=1 IRET are also supplied by this CPU pin.
+`seabios-1.17.0-unemu1-isa` remains **Listed**, not boot-qualified. The
+fixture now builds from the source of truth, `unemu-org/seabios`, commit
+`7da2116237ed8916970795b0d8cae5bf6e277d0a`: upstream rel-1.17.0 plus its
+documented 80386 fix set (`README.unemu.md`). The first fix computes
+`__swab32` in C instead of using the 486-only `BSWAP`; fixes go upstream
+(`upc-o0j.23`). **MEASURED on 2026-11-24:** two independent builds are byte
+identical (`cmp`), 131,072 bytes, SHA-256
+`ad50fdb5e12a03dd5c17eac481a4183a7793b84252319eea02b8c878667c994f`.
+The config, version suffix, ROM filename and CPU pin remain unchanged.
 
-Both ignored SeaBIOS probes now check this exact shutdown boundary, including
-mode, CPL, IDT limit, bytes and count. No POST-end or INT 15h
-AH=88h/E801h/E820h qualification is claimed. The keyboard-reset/resume
-acceptance after completed POST remains pending; seeing a resume marker after
-the early shutdown does not qualify that path. TSS I/O bitmap, paging and
-SeaVGABIOS remain pending.
+**MEASURED at `deae5bac`:** the diskless shipped machine passes fw_cfg,
+reports 16 MiB from CMOS, relocates POST and selects the COM1 console.
+Port 402h ends with `Turning on vga text mode console`; COM1 contains only
+11 terminal-control bytes. The first `F3 90` (REP NOP / PAUSE) is reached at
+`F000:A72C`, linear `000FA72Ch`, big real mode, CPL 0, after **1,117,388
+retired instructions / 1,147,195 completed steps**. One more step records
+#UD (vector 6, no error code) at that address and leaves CS:IP unchanged.
+At the 10,000,000-step cap it returns `RetiredCapReached`, with **9,970,193
+retired instructions**, repeating the same #UD between IRQ0 deliveries.
+A 20,000,000-step diagnostic also stayed there. **READ:** fork
+`stacks.c:607–621` and `x86.h:47–49` emit this encoding; Intel SDM Volume 2B,
+PAUSE, specifies NOP behaviour on earlier IA-32 processors. This is a CPU
+decoding boundary; no board or firmware workaround is applied.
+
+Both ignored SeaBIOS probes check the new address, bytes, real mode, CPL,
+IDT limit, retired count and repeated #UD delivery. No POST-end or INT 15h
+AH=88h/E801h/E820h qualification is claimed. Keyboard reset/resume after
+complete POST remains pending. TSS I/O bitmap, paging and SeaVGABIOS remain
+separate work. See [fixture evidence](../../vendor/seabios/README.md#execution-boundary).
 
 
 2026-11-22 — The front end moved to [unemu](https://github.com/unemu-org/unemu) at `0f279540`; entries above this marker are the core's own.

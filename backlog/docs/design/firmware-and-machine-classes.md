@@ -330,7 +330,7 @@ contract (machine-config.md). A board model has these parts:
 | `ibm-5170` | at | 80286 (80287 later) | none | **Kiselev Xi 8088 1.0.2** (tested; SHA-256 `1ad458ac…81a8`, MEASURED by `fetch.sh`), plus XUB AT r638 option ROM | IBM 5170 BIOS (even/odd pair) | **available now** |
 | `ibm-5160` | xt | 8088, v20 (reserved) | none | GLaBIOS `ARCH_5160`, Kiselev `MACHINE_XT`, Super PC/Turbo XT | IBM 5160 BIOS | reserved until `xj-50w.2 (x86jit)` |
 | `ibm-5150` | xt | 8088 (reserved) | none | GLaBIOS `ARCH_5150` | IBM 5150 BIOS | optional, later |
-| `generic-386-isa` | at386 | 80386DX | port 92h; emulator-only fw_cfg at 510h/511h | Unmodified SeaBIOS `CONFIG_QEMU`, serial console first; SeaVGABIOS later; Bochs `rombios` legacy fallback (decision-19, §3.6) | — | board available; reset executes at `deae5bac`; POST shuts down on 486-only `BSWAP EAX` |
+| `generic-386-isa` | at386 | 80386DX | port 92h; emulator-only fw_cfg at 510h/511h | The unemu SeaBIOS fork, `CONFIG_QEMU`, serial console first; SeaVGABIOS later; Bochs `rombios` legacy fallback (decision-19, §3.6) | — | board available; reset executes at `deae5bac`; POST reaches REP NOP, then repeats #UD at `F000:A72C` |
 | `i440fx-piix3` | pci | Pentium Pro / Pentium II (reserved) | 82441FX PAM/SMRAM, PIIX3 PIRQ/ELCR | SeaBIOS (QEMU `pc` config); Bochs `rombios` | — | candidate for phases C/D |
 | `i440bx-piix4` | pci + AGP | Pentium II/III | 82443BX, PIIX4 | none for a real board (see §3.4) | Award/AMI/Phoenix images of named boards | enthusiast |
 | `neat-286` | at | 286 / 386SX | C&T CS8221 index/data registers (ASSUMED 22h/23h) | none | AMI/Phoenix NEAT BIOSes | enthusiast |
@@ -501,6 +501,17 @@ built and ran nothing. Prebuilt-image measurements are recorded in Sources.
 Machine/core availability below is the spike's source assessment at x86jit
 pin `8979fc9`, not a SeaBIOS boot result.
 
+**Firmware source (2026-11-24).** The shipped build now pins the source of
+truth, [unemu-org/seabios](https://github.com/unemu-org/seabios), at
+`7da2116237ed8916970795b0d8cae5bf6e277d0a`: upstream rel-1.17.0 plus the
+fix set in the fork's `README.unemu.md`. The initial code fix replaces
+`__swab32`'s inline `bswapl` with C compiled for the 80386 (`byteorder.h:15–20`).
+Upstream's inline instruction requires a 486 despite `-march=i386`; the
+fw_cfg directory, ATA and block commands reach it. The old fixture shut down
+on #UD at `0008:000F510B`, after 3,582 retired instructions. Fixes belong in
+the fork and go upstream (`upc-o0j.23`), rather than in CPU or board workarounds.
+Source citations below retain the spike's upstream revision unless marked fork.
+
 **Execution qualification (2026-11-23, MEASURED).** CPU pin `deae5bac`
 (x86jit) supplies `CpuState::i386_reset`. The adapter applies
 the retained board A20 state after installing that image. Synthetic tests
@@ -512,32 +523,37 @@ deliberately unmapped. The assembled board's explicit reset-fetch policy
 temporarily forces CPU A20 on until the first CS reload, then restores the
 board gate; see machine-files.md §Generic 386 ISA board.
 
-The shipped 15 MiB extended-RAM diskless machine reaches port 402h output:
-the version banner, build tools, no-PCI-bridge shadow-unlock diagnostic and
-`Found QEMU fw_cfg`. After **3,582 retired instructions**, protected-mode
-CPL 0 `BSWAP EAX` (`0F C8`) at CS:EIP `0008:000F510B`, linear
-`000F510Bh`, raises #UD on the 80386. SeaBIOS's empty protected-mode IDT
-(`misc.c:134–145`) cannot deliver the fault or #DF; x86jit shuts down and
-the board returns `ResetRequested`. A separate outward-delivery probe at
-the same address reports `Exit::Exception { addr: 1003787, vector: 6, .. }`,
-without an error code. The old protected-mode BT refusal is gone.
+**MEASURED with the fork on 2026-11-24:** the shipped 15 MiB extended-RAM
+diskless machine passes fw_cfg, reports 16 MiB from CMOS, relocates POST,
+detects no PCI system and selects COM1 as its primary display. Port 402h ends
+with `Turning on vga text mode console`; COM1 contains only 11 terminal
+initialization bytes (`\x1bc\x1b[?7l\x1b[2J`).
 
-**READ:** `fw/paravirt.c:703–705` converts the fw_cfg directory count from
-big endian; `byteorder.h:15–17` explicitly emits `bswapl`. Compiler
-`-march=i386` does not constrain that inline assembly. This disproves the
-spike's no-BSWAP assumption below: this unmodified fixture cannot complete
-POST on the current 80386 model. It needs a firmware/CPU-target policy
-decision; no firmware or CPU workaround is applied here.
+The next boundary is REP NOP / PAUSE (`F3 90`) in big real mode, CPL 0,
+at `F000:A72C`, linear `000FA72Ch`. It is first reached after **1,117,388
+retired instructions / 1,147,195 completed steps**. One more bounded step
+records `DeliveryKind::Fault`, vector 6, no error code, leaving CS:IP
+unchanged. At the 10,000,000-step bound the result is `RetiredCapReached`,
+with **9,970,193 retired instructions**, still at that address, with repeated
+#UD deliveries between IRQ0 timer interrupts. A 20,000,000-step diagnostic
+also stayed there. This is a delivered fault, not an `UnsupportedSystem`
+refusal or shutdown.
 
-COM1 is empty. Both ignored SeaBIOS probes check the exact shutdown address,
-bytes, protected mode, CPL, IDT limit and count when the golden runner selects
-them. No POST-end, INT 15h AH=88h/E801h/E820h or keyboard reset/resume after
-complete POST is qualified. `boot.c:965–980` would print
-`No bootable device.` (or `No bootable device.  Retrying in %d seconds.`)
-and wait for IRQs; neither message is reached. Sparse backing and numeric
-commitment are qualified separately by CPU/board tests; TSS I/O bitmap and
-paging remain pending. Real-mode MOV DR/TR and NT=1 IRET are supplied by
-the new pin, outside this measured SeaBIOS boundary.
+**READ:** fork `stacks.c:607–621` (`check_irqs`) emits
+`sti; nop; rep; nop; cli; cld`; `x86.h:47–49` (`cpu_relax`) also uses
+REP NOP. Intel SDM Volume 2B, **PAUSE — Spin Loop Hint**, specifies NOP
+behaviour on earlier IA-32 processors, backward compatible with all IA-32
+processors ([Intel instruction reference](https://cdrdv2-public.intel.com/835757/325383-sdm-vol-2abcd.pdf)).
+This is a CPU decoding boundary; it does not call for a SeaBIOS fix or a board
+workaround. The former BSWAP shutdown is gone.
+
+Both ignored SeaBIOS probes assert the exact new boundary when the golden
+runner selects them. POST end, INT 15h AH=88h/E801h/E820h and keyboard
+reset/resume after complete POST remain unqualified. `boot.c:965–980`
+would print `No bootable device.` (or its retry form) and wait for IRQs;
+neither message is reached. Sparse backing and numeric commitment are
+qualified separately by CPU/board tests; TSS I/O bitmap, paging and
+SeaVGABIOS remain separate work.
 
 **Build target and decision (READ).** `CONFIG_QEMU` is the only target with
 ISA fallbacks: ATA at 1F0h/170h without PCI (`ata.c:1020–1030`), RAM size
@@ -564,7 +580,7 @@ also loses `bootorder`, boot-menu control (a fixed 2.5 s "Press ESC" wait,
 to CMOS 5Fh. These are READ, not measured failures.
 
 [Decision-19](../../decisions/decision-19%20-%20Phase%20B%20firmware%20is%20unmodified%20SeaBIOS%20behind%20an%20emulator-only%20fw_cfg%20device.md)
-therefore selects unmodified SeaBIOS with an emulator-only, board-local
+as amended selects the unemu SeaBIOS fork with an emulator-only, board-local
 fw_cfg-compatible selector/data port at 510h/511h, without DMA
 (`upc-o0j.13`). Its signature, ID, file directory and legacy keys include
 zero defaults and key 0Eh = 0 (no boot menu); files are `vgaroms/*`,
@@ -593,24 +609,23 @@ exports the cached commit without changing its checkout, and fixes `.version` pl
 wrong image size, then a non-fixed build version, then an upstream dirty-build
 hostname suffix, before checking output SHA-256.
 
-| Fixture | Build state (2026-11-11) | Catalogue / board |
+| Fixture | Build state (2026-11-24) | Catalogue / board |
 |---|---|---|
-| `vendor/seabios/bios-1.17.0-isa.bin` | Built; two independent builds matched (MEASURED by the supervisor); output SHA-256 pinned in the fixture | `seabios-1.17.0-isa`, Listed, on `generic-386-isa`; reset executes at `deae5bac`; POST shuts down on 486-only `BSWAP EAX` |
+| `vendor/seabios/bios-1.17.0-isa.bin` | Built from the fork; two independent builds matched by `cmp` (MEASURED); output SHA-256 pinned in the fixture | `seabios-1.17.0-unemu1-isa`, Listed, on `generic-386-isa`; reset executes at `deae5bac`; POST reaches REP NOP, then repeats #UD at `F000:A72C` |
 
 The board and catalogue entry assemble and execute the reset vector; the CPU
-refusal above prevents boot qualification. QEMU's prebuilt
+decoding boundary above prevents boot qualification. QEMU's prebuilt
 `bios.bin` is not used; its MPTABLE and other platform settings deliberately
 differ. Input and output hashes are recorded in the fixture README, together
-with the 2026-11-11 two-build measurement on macOS arm64 using i686-elf GCC
+with the 2026-11-24 two-build measurement on macOS arm64 using i686-elf GCC
 15.2.0 and binutils 2.46 from the flake-pinned nixpkgs.
 
-**Implemented catalogue entry.** `seabios-1.17.0-isa` is **Listed**, not
+**Implemented catalogue entry.** `seabios-1.17.0-unemu1-isa` is **Listed**, not
 Tested: a 131,072-byte system BIOS at E0000h, SHA-256
-`07add88892bb47898ec712322870b8de7bdb6016dc7f4c3dd169d748be004a13`.
+`ad50fdb5e12a03dd5c17eac481a4183a7793b84252319eea02b8c878667c994f`.
 It is open firmware (LGPL-3.0-only), built by `vendor/seabios/fetch.sh`
-from unmodified rel-1.17.0 at `b52ca86e094d19b58e2304417787e96b940e39c6`.
-The catalogue declares an 80386 minimum (the BSWAP mismatch is recorded
-above), AT keyboard/PICs and 128-byte CMOS. It belongs only to
+from the fork commit `7da2116237ed8916970795b0d8cae5bf6e277d0a`.
+The catalogue declares an 80386 minimum, AT keyboard/PICs and 128-byte CMOS. It belongs only to
 `generic-386-isa`, provides floppy/fixed-disk services and enables
 `cmos-qemu-layout`. It has no pre-mapped ROM scan window. The shipped
 `machines/generic-386-seabios.toml` supplies register-level VGA and COM1;
@@ -618,7 +633,7 @@ the board supplies fw_cfg/SERCON, port 92h and the 402h console.
 SeaVGABIOS delivery remains pending. See
 [machine-files.md §Generic 386 ISA board](machine-files.md#generic-386-isa-board)
 for RAM limits, the 4 GiB sparse reservation, numeric commitment and the POST
-shutdown boundary.
+execution boundary.
 
 **Memory and reset (READ).** C0000h–FFFFFh must be writable RAM at POST,
 with the 128 KiB BIOS preloaded at E0000h–FFFFFh. SeaBIOS writes F-segment
@@ -666,7 +681,8 @@ Real-mode firmware is built with gcc `-m16 -march=i386`
 (`Makefile:64,83–84`): it needs 66h/67h, FS/GS, `pushl`/`pushfl` and
 32-bit `calll`/`retl` in 16-bit code. The spike assumed no BSWAP/CMPXCHG/CMOV
 from compiler flags. BSWAP is now MEASURED above, emitted by inline assembly
-in `byteorder.h:15–17`; the flags alone cannot establish CPU compatibility. The CPU
+in upstream `byteorder.h:15–17`; the fork replaces that helper. Compiler
+flags alone cannot establish CPU compatibility. The CPU
 requests sent and filed on 2026-11-11 are:
 
 - **R1 — `xj-srh.16 (x86jit)`:** full 386 real-mode integer ISA under the
@@ -1256,7 +1272,7 @@ The fallback, if the CPU seam is late, is the 8088 build `ide_xt`, which uses
 `in ax,dx` loops. It defaults to an 8-bit XT-IDE at 300h, so it would need a
 source build with AT defaults. Prefer waiting for the seam.
 
-**(b) Phase B.** Decision-19 selects **unmodified SeaBIOS `CONFIG_QEMU`**
+**(b) Phase B.** Decision-19 selects **the unemu SeaBIOS fork, `CONFIG_QEMU`**
 on `generic-386-isa`. The board uses the pinned 128 KiB build from
 `upc-o0j.9` and emulator-only fw_cfg for serial-console goldens first.
 Register-level VGA is wired; SeaVGABIOS delivery follows. Writable shadow RAM, the high

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 schema = 1
 name = "generic-386-seabios"
-description = "80386DX ISA board with unmodified SeaBIOS and COM1"
+description = "80386DX ISA board with the unemu SeaBIOS fork and COM1"
 
 [board]
 model = "generic-386-isa"
@@ -20,7 +20,7 @@ extended_kib = 15360
 
 [firmware.bios]
 image = "../vendor/seabios/bios-1.17.0-isa.bin"
-sha256 = "07add88892bb47898ec712322870b8de7bdb6016dc7f4c3dd169d748be004a13"
+sha256 = "ad50fdb5e12a03dd5c17eac481a4183a7793b84252319eea02b8c878667c994f"
 
 [[card]]
 kind = "vga"

@@ -28,11 +28,11 @@ fn generic386_shipped_file_has_listed_pinned_firmware_and_assembles() {
     assert_eq!(config.board, BoardModel::Generic386Isa);
     assert_eq!(config.cpu.chip, CpuChip::I80386);
     let entry = config.board.firmware_catalogue()[0];
-    assert_eq!(entry.id, "seabios-1.17.0-isa");
+    assert_eq!(entry.id, "seabios-1.17.0-unemu1-isa");
     assert_eq!(entry.status, FirmwareStatus::Listed);
     assert_eq!(
         entry.sha256,
-        "07add88892bb47898ec712322870b8de7bdb6016dc7f4c3dd169d748be004a13"
+        "ad50fdb5e12a03dd5c17eac481a4183a7793b84252319eea02b8c878667c994f"
     );
     let bios = &config.images[config.system_bios_image.unwrap()];
     assert_eq!(bios.base, 0xE0000);
@@ -137,29 +137,37 @@ fn generic386_toml_yaml_defaults_and_memory_limits_match() {
     }
 }
 
-/// SeaBIOS rel-1.17.0, byteorder.h:15–17 and paravirt.c:703–705 use BSWAP
-/// for the fw_cfg directory count. Its empty protected-mode IDT (misc.c:134–145)
-/// cannot deliver #UD or #DF. Intel 80386 PRM §9.8.6 (Invalid Opcode) and §9.8.8
-/// (Double Fault): shutdown requests a board CPU reset instead of retiring BSWAP.
-fn assert_seabios_bswap_shutdown(machine: &machine::Machine<cpu::X86JitCpu>) {
-    assert_eq!(machine.cpu().code_address(), (8, 0xF510B));
-    assert_eq!(machine.cpu().retired(), 3582);
+/// SeaBIOS rel-1.17.0, stacks.c check_irqs and x86.h cpu_relax use REP NOP.
+/// Intel SDM Volume 2B, PAUSE: F3 90 is a NOP on earlier IA-32 processors.
+/// The current CPU instead delivers #UD repeatedly without leaving CS:IP;
+/// the probe records that boundary without treating it as completed POST.
+fn assert_seabios_rep_nop_fault(machine: &machine::Machine<cpu::X86JitCpu>) {
+    assert_eq!(machine.cpu().code_address(), (0xF000, 0xA72C));
+    assert_eq!(machine.cpu().retired(), 9_970_193);
+    assert_eq!(machine.virtual_time(), 10_000_000);
     let system = machine.cpu().diagnostic_state().system.unwrap();
-    assert!(system.protected());
+    assert!(!system.protected());
     assert_eq!(system.cpl, 0);
-    assert_eq!(system.idtr.limit, 0);
+    assert_eq!(system.idtr.limit, 0x3FF);
     let mut bytes = [0; 2];
-    machine.cpu().read_mem(0xF510B, &mut bytes).unwrap();
-    assert_eq!(bytes, [0x0F, 0xC8]);
+    machine.cpu().read_mem(0xFA72C, &mut bytes).unwrap();
+    assert_eq!(bytes, [0xF3, 0x90]);
+    let deliveries = machine.recent_deliveries().unwrap();
+    assert!(deliveries.entries.iter().any(|entry| matches!(entry,
+        machine::DeliveryEntry::Deliveries { count, last, .. }
+            if *count > 1 && last.kind == cpu::DeliveryKind::Fault
+                && last.vector == 6 && last.error_code.is_none()
+                && (last.cs, last.ip, last.linear) == (0xF000, 0xA72C, 0xFA72C)
+    )));
     eprintln!(
-        "blocked: protected mode CPL 0, 0008:000F510B, linear 000F510B, \
-         bytes {bytes:02X?}, BSWAP EAX; #UD -> #DF -> shutdown -> ResetRequested; \
-         retired: 3582"
+        "blocked: real mode CPL 0, F000:A72C, linear 000FA72C, bytes {bytes:02X?}, \
+         REP NOP; repeated #UD without an error code; retired: 9970193; \
+         completed steps: 10000000; RetiredCapReached"
     );
 }
 
 #[test]
-#[ignore = "SeaBIOS BSWAP EAX (0F C8) at 0008:000F510B raises #UD on the 386 and shuts down; POST is not qualified"]
+#[ignore = "CPU delivers #UD on REP NOP (F3 90) at F000:A72C; POST is not qualified"]
 fn generic386_seabios_reaches_diskless_post_end() {
     let Some(config) = shipped() else {
         return;
@@ -180,6 +188,7 @@ fn generic386_seabios_reaches_diskless_post_end() {
         ..Default::default()
     };
     let mut machine = machine_file::assemble_with_observation(&config, &policy).unwrap();
+    machine.machine.enable_delivery_log().unwrap();
     let result = machine.machine.run_bounded(Some(10_000_000));
     let serial = machine
         .observation
@@ -197,11 +206,12 @@ fn generic386_seabios_reaches_diskless_post_end() {
             eprintln!("{report}");
         }
     }
-    if matches!(result, Ok(machine::RunOutcome::ResetRequested)) {
-        assert_seabios_bswap_shutdown(&machine.machine);
+    if machine.machine.cpu().code_address() == (0xF000, 0xA72C) {
+        assert_eq!(result.unwrap(), machine::RunOutcome::RetiredCapReached);
+        assert_seabios_rep_nop_fault(&machine.machine);
         assert!(debug.starts_with(b"SeaBIOS (version 1.17.0"));
-        assert!(debug.ends_with(b"Found QEMU fw_cfg\n"));
-        assert!(serial.is_empty());
+        assert!(debug.ends_with(b"Turning on vga text mode console\n"));
+        assert_eq!(serial, b"\x1bc\x1b[?7l\x1b[2J");
         return;
     }
     result.unwrap();
@@ -220,7 +230,7 @@ fn generic386_seabios_reaches_diskless_post_end() {
 }
 
 #[test]
-#[ignore = "SeaBIOS BSWAP EAX at 0008:000F510B shuts down before POST completes; reset/resume is not qualified"]
+#[ignore = "CPU delivers #UD on REP NOP at F000:A72C before POST completes; reset/resume is not qualified"]
 fn generic386_seabios_keyboard_reset_reaches_resume() {
     let Some(config) = shipped() else {
         return;
@@ -234,9 +244,11 @@ fn generic386_seabios_keyboard_reset_reaches_resume() {
         ..Default::default()
     };
     let mut assembled = machine_file::assemble_with_observation(&config, &policy).unwrap();
+    assembled.machine.enable_delivery_log().unwrap();
     let result = assembled.machine.run_bounded(Some(10_000_000));
-    if matches!(result, Ok(machine::RunOutcome::ResetRequested)) {
-        assert_seabios_bswap_shutdown(&assembled.machine);
+    if assembled.machine.cpu().code_address() == (0xF000, 0xA72C) {
+        assert_eq!(result.unwrap(), machine::RunOutcome::RetiredCapReached);
+        assert_seabios_rep_nop_fault(&assembled.machine);
         return;
     }
     result.unwrap();

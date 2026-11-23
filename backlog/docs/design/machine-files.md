@@ -347,7 +347,7 @@ exact retired-instruction counts. The 286 constructors keep their existing
 flat backing and memory maps.
 
 [`machines/generic-386-seabios.toml`](../../../machines/generic-386-seabios.toml)
-uses 15 MiB of extended RAM and the `seabios-1.17.0-isa` catalogue entry.
+uses 15 MiB of extended RAM and the `seabios-1.17.0-unemu1-isa` catalogue entry.
 At CPU pin `deae5bac` (x86jit), reset installs the core's
 `CpuState::i386_reset`: CS=F000h, hidden base FFFF0000h, EIP=FFF0h and
 EDX=0303h. Intel 80386 PRM §10.1 specifies DH=03h; DL=03h is the core's
@@ -394,33 +394,38 @@ Synthetic guest probes exercise that fallback and both board pulses, retaining
 a RAM marker and checking the 386 reset signature, CS hidden base, A20 source
 combinations and reset-storm report. No IBM 5170 reset wiring is changed.
 
-The ignored `generic386_seabios_keyboard_reset_reaches_resume` fixture probe
-is bounded to 20 million retired instructions. It checks the BSWAP shutdown
-below before attempting reset/resume. After POST can complete, it pulses the
-8042 with CMOS 0Fh=0 and requires `In resume (status=0)` (`resume.c:24–29`).
-The marker alone after an incomplete POST does not qualify a working reboot.
+The firmware is built from `unemu-org/seabios`, pinned at
+`7da2116237ed8916970795b0d8cae5bf6e277d0a`: upstream rel-1.17.0 plus the
+fork's documented 80386 compatibility fixes. The initial fix replaces inline
+`BSWAP` in `__swab32` with 386-compatible C. The fork is the source of truth;
+fixes go upstream (`upc-o0j.23`). The catalogue ID distinguishes this fix set
+from the former upstream fixture, while its ROM filename stays unchanged.
 
-**MEASURED at CPU pin `deae5bac`:** the shipped diskless machine retires
-**3,582 instructions** and prints the version banner, build tools,
-`Unable to unlock ram - bridge not found` and `Found QEMU fw_cfg` on port
-402h. COM1 is empty. At protected-mode CPL 0, CS:EIP `0008:000F510B`
-(linear `000F510Bh`), `BSWAP EAX` (`0F C8`) raises #UD on the 80386.
-SeaBIOS's empty protected-mode IDT (`misc.c:134–145`) cannot deliver the
-fault or #DF, so x86jit shuts down and the board returns `ResetRequested`.
-An isolated outward-delivery probe at the same address reports
-`Exit::Exception { addr: 1003787, vector: 6, .. }`, without an error code;
-this is an absent CPU-model instruction, not `LegacyInstruction` refusal.
+**MEASURED at CPU pin `deae5bac` (2026-11-24):** the shipped diskless machine
+passes fw_cfg, reports 16 MiB RAM from CMOS, relocates POST, detects no PCI
+system and configures COM1 as its primary display. Port 402h ends with
+`Turning on vga text mode console`; COM1 contains only the 11-byte terminal
+initialization `\x1bc\x1b[?7l\x1b[2J`.
 
-**READ:** the fw_cfg file-directory count is converted from big endian in
-SeaBIOS rel-1.17.0 `fw/paravirt.c:703–705`; `byteorder.h:15–17` uses inline
-`bswapl` even though the compiler flags select `-march=i386`. No port,
-CMOS or memory-map fault was encountered before this boundary. Both ignored
-SeaBIOS probes check the exact address, bytes, protected mode, CPL, empty IDT
-and retired count when the golden runner selects them. The fixture remains
-Listed; POST end, INT 15h AH=88h/E801h/E820h and reset/resume after complete
-POST remain unqualified. No firmware or CPU workaround is applied.
-The old BT refusal is gone. TSS I/O bitmap, paging and SeaVGABIOS are
-separate work.
+The next boundary is `F3 90` (REP NOP / PAUSE) at `F000:A72C`, linear
+`000FA72Ch`, big real mode, CPL 0. First reached after **1,117,388 retired
+instructions / 1,147,195 completed steps**, it records #UD (vector 6, no
+error code) on one further bounded step and leaves CS:IP unchanged. At the
+10,000,000-step bound it returns `RetiredCapReached`, **9,970,193 retired
+instructions**, repeating that fault between IRQ0 deliveries. A diagnostic
+bounded to 20,000,000 steps also stays there. **READ:** fork `stacks.c:607–621`
+(`check_irqs`) and `x86.h:47–49` (`cpu_relax`) use REP NOP. Intel SDM Volume
+2B, PAUSE, specifies NOP behaviour on earlier IA-32 processors. This CPU
+decoding boundary requires no board or firmware workaround.
+
+Both ignored SeaBIOS probes assert this exact boundary, including mode,
+CPL, IDT limit, bytes, retired count and repeated #UD delivery. The fixture
+remains Listed; POST end and INT 15h AH=88h/E801h/E820h remain unqualified.
+The ignored `generic386_seabios_keyboard_reset_reaches_resume` probe will
+pulse the 8042 with CMOS 0Fh=0 and require `In resume (status=0)`
+(`resume.c:24–29`) after POST can complete. A resume marker after incomplete
+POST does not qualify a working reboot. See [fixture evidence](../../../vendor/seabios/README.md#execution-boundary).
+TSS I/O bitmap, paging and SeaVGABIOS remain separate work.
 
 Headless reproduction (the CLI prints COM1; the test also captures port 402h):
 

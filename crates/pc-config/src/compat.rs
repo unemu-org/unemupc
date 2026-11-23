@@ -155,7 +155,7 @@ pub const MACHINE_KEYS: &[Row] = &[
 /// Firmware catalogue entries, by id (`assembly::BoardModel::firmware_catalogue`). A
 /// release that does not list an entry refuses its bytes.
 pub const CATALOGUE: &[Row] = &[
-    ("seabios-1.17.0-isa", NEXT_RELEASE),
+    ("seabios-1.17.0-unemu1-isa", NEXT_RELEASE),
     ("kiselev-xi8088-1.0.2", BASELINE),
     ("kiselev-xi8088-1.0.2-atreset", BASELINE),
     ("unemu-at-bios-1.0.2-unemu.3", BASELINE),

@@ -1,23 +1,24 @@
 ---
 id: decision-19
-title: Phase B firmware is unmodified SeaBIOS behind an emulator-only fw_cfg device
+title: Phase B firmware is the unemu SeaBIOS fork behind an emulator-only fw_cfg device
 date: 2026-11-11
 status: Accepted
 deciders: Mikołaj Mikołajczyk
 ---
 
-# decision-19 - Phase B firmware is unmodified SeaBIOS behind an emulator-only fw_cfg device
+# decision-19 - Phase B firmware is the unemu SeaBIOS fork behind an emulator-only fw_cfg device
 
 ## Status
 
 Accepted — 2026-11-11. Amends rule 5 of [[decision-18]] (phase B firmware).
 Board wiring, shadow RAM, the separate pristine high copy and the Listed
 SeaBIOS catalogue entry are implemented for `generic-386-isa` (2026-11-23).
-Reset execution is qualified at CPU pin `99ed385e` (`xj-srh.12`, x86jit).
-SeaBIOS emits its debug banner, then after 3,081 retired instructions the core
-refuses protected-mode `BT EDX,21` (`0F BA E2 15`) at `0008:000F5067`
-with `UnsupportedSystem(LegacyInstruction)`. Boot and INT 15h memory-service
-qualification remain blocked on that CPU instruction; the fixture stays Listed.
+The firmware source is the unemu SeaBIOS fork (amended 2026-11-24): upstream
+rel-1.17.0 plus its documented 80386 compatibility fixes. The original build
+reached `BSWAP EAX`, a 486 instruction, after 3,582 retired instructions at
+CPU pin `deae5bac`; #UD and the empty IDT caused shutdown. Firmware fixes
+belong in the fork, never in a board or CPU workaround. Execution qualification
+is recorded in firmware-and-machine-classes.md §3.6.
 Part of phase B of [[decision-16]]. The requirement list is in
 [`backlog/docs/design/firmware-and-machine-classes.md`](../docs/design/firmware-and-machine-classes.md)
 (phase B firmware requirements); the CPU-core side is in
@@ -48,10 +49,17 @@ SeaBIOS there finds no pristine copy to restore on reboot.
 
 ## Decision
 
-1. **Phase B firmware is an unmodified SeaBIOS `CONFIG_QEMU` build**, built
-   reproducibly from a pinned release with our own `.config` (serial console
+1. **Phase B firmware is the unemu SeaBIOS fork's `CONFIG_QEMU` build**,
+   built reproducibly from an exact fork commit with our own `.config` (serial console
    on; boot menu, MP table, PIR table, SMBIOS, ACPI, PCI BIOS, USB, SMM off) and
    listed in the catalogue by hash, like the other open firmware.
+   [unemu-org/seabios](https://github.com/unemu-org/seabios) is the source of
+   truth: upstream rel-1.17.0 plus the fix set documented in `README.unemu.md`.
+   The initial pin is `7da2116237ed8916970795b0d8cae5bf6e277d0a`; its code
+   change replaces inline `bswapl` with 80386 instructions in `__swab32`.
+   Upstream's `-march=i386` cannot constrain explicit inline assembly, and
+   fw_cfg, ATA and block commands reach that helper on a real 386. Submit
+   these fixes upstream (`upc-o0j.23`); keep the fork's set small and documented.
 2. **The `generic-386-isa` board gets an fw_cfg-compatible configuration port**
    at 510h/511h (no DMA interface), modelled on QEMU's documented protocol.
    It is documented as an emulator-only device, not period hardware. It serves
@@ -75,14 +83,15 @@ SeaBIOS there finds no pristine copy to restore on reboot.
   changes (16-bit, pre-placed option ROMs, no fw_cfg, no high copy), but no
   serial console, so the register-level VGA would be needed first; kept as the
   fallback.
-- **SeaBIOS with a local patch** (serial port from Kconfig, ISA ROM scan)
+- **SeaBIOS with a local platform patch** (serial port from Kconfig, ISA ROM scan)
   instead of fw_cfg. Keeps period hardware only, but adds a patch we must
   maintain against every SeaBIOS release; rejected.
 
 ## Consequences
 
-- (+) An unmodified, widely tested firmware; QEMU's prebuilt images can serve
-  as a cross-check.
+- (+) Widely tested upstream firmware with a small documented compatibility
+  fix set; upstream source remains a cross-check for unchanged behaviour.
+- (−) The fork must track and submit 80386 compatibility fixes upstream.
 - (+) Headless serial-console goldens before any VGA work.
 - (−) One device that no real board had; it must stay clearly labelled and
   confined to this board.

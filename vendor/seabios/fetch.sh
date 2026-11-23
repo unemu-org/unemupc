@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: AGPL-3.0-or-later
-# Build unmodified SeaBIOS with the ISA configuration; see README.md.
+# Build the pinned unemu SeaBIOS fork with the ISA configuration; see README.md.
 # Run from the repository root: nix develop .#firmware --command bash vendor/seabios/fetch.sh
 # Requires an i686-elf GCC/binutils cross toolchain, native C compiler, Python 3,
 # GNU make, git, tar, SHA-256 and standard shell tools. ACPI is off: no IASL.
@@ -26,12 +26,12 @@ check_sha256() {
 	fi
 }
 
-REPO="https://github.com/coreboot/seabios"
-COMMIT="b52ca86e094d19b58e2304417787e96b940e39c6"
-SOURCE_TREE="00ca2288a3318f220d235c2e2cb9ca4f6f430874"
-SOURCE_SHA256="886288c05ea3854fe3e9fcee9a2e23fdfebdb2502abc6a7dc259f9f29f9a9275"
+REPO="https://github.com/unemu-org/seabios"
+COMMIT="7da2116237ed8916970795b0d8cae5bf6e277d0a"
+SOURCE_TREE="81259d7b00535b6a9dd531d60cd907f4d9218c67"
+SOURCE_SHA256="f909c5f540c976ac6d323a51658350710f88b2a67afa8b832998dc126c517c94"
 CONFIG_SHA256="d1958e10e395c8eb00ea9e99ab1c6fe86cf1acb9a0480d0f7a1b551fa4fe8e2a"
-OUTPUT_SHA256="07add88892bb47898ec712322870b8de7bdb6016dc7f4c3dd169d748be004a13"
+OUTPUT_SHA256="ad50fdb5e12a03dd5c17eac481a4183a7793b84252319eea02b8c878667c994f"
 VERSION="1.17.0"
 EXTRAVERSION="-unemupc98-isa"
 
