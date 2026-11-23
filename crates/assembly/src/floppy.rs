@@ -67,7 +67,8 @@ impl AssembledMachine {
 
     /// Apply an input before advancing the CPU again. Eject seals the current
     /// journal using the session finish API; insertion reopens its immutable base
-    /// and overlay. An insertion failure leaves the drive empty and stops the host.
+    /// and overlay. Opening the next journal precedes ejection so an opening
+    /// failure leaves the current medium inserted.
     pub fn change_floppy(
         &mut self,
         controller: DeviceId,
@@ -92,18 +93,37 @@ impl AssembledMachine {
         if next.is_some_and(|i| i >= count) {
             return Err(devices::upd765::MediaChangeError::UnknownMedium.into());
         }
-        if let Some(index) = old {
+        if let Some(index) = next.filter(|_| next != old) {
             for handle in &mut self.persistence {
                 if handle.floppy == Some((controller, unit, index)) {
-                    handle.eject(&mut self.machine)?;
+                    handle.insert()?;
                 }
+            }
+        }
+        if let Some(index) = old {
+            let result = self
+                .persistence
+                .iter_mut()
+                .filter(|handle| handle.floppy == Some((controller, unit, index)))
+                .try_for_each(|handle| handle.eject(&mut self.machine));
+            if let Err(error) = result {
+                if let Some(index) = next.filter(|_| next != old) {
+                    for handle in &mut self.persistence {
+                        if handle.floppy == Some((controller, unit, index)) {
+                            handle.cancel_insert();
+                        }
+                    }
+                }
+                return Err(error.into());
             }
         }
         self.floppy(controller)?.eject(usize::from(unit))?;
         if let Some(index) = next {
-            for handle in &mut self.persistence {
-                if handle.floppy == Some((controller, unit, index)) {
-                    handle.insert()?;
+            if next == old {
+                for handle in &mut self.persistence {
+                    if handle.floppy == Some((controller, unit, index)) {
+                        handle.insert()?;
+                    }
                 }
             }
             self.floppy(controller)?.insert(usize::from(unit), index)?;

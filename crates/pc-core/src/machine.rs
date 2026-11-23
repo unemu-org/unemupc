@@ -211,7 +211,7 @@ impl PcMachine {
         }) {
             inputs.push(InputPortDescription::new(
                 POINTER_PORT,
-                InputKind::RelativePointer { buttons: 3 },
+                InputKind::relative_pointer(3),
                 "Mouse",
             ));
         }
@@ -512,6 +512,23 @@ impl PcMachine {
             .unwrap_or_else(|| error(kind, failure))
     }
 
+    fn live(&self) -> Result<(), Error> {
+        if matches!(self.status, Status::Failed | Status::Finished) {
+            Err(Error::new(ErrorKind::Usage, "the session has ended"))
+        } else {
+            Ok(())
+        }
+    }
+
+    fn interactive(&self) -> Result<(), Error> {
+        self.live()?;
+        if self.status == Status::Off {
+            Err(Error::new(ErrorKind::Usage, "the machine is powered off"))
+        } else {
+            Ok(())
+        }
+    }
+
     /// Deliver the queued keyboard bytes and mouse segments the devices take
     /// now, keyboard first.
     fn deliver_input(&mut self) {
@@ -559,8 +576,8 @@ impl Machine for PcMachine {
     /// deadline becomes a retired-instruction cap at the machine's configured
     /// rate; reaching the cap ends the run with [`Stop::Deadline`], even when
     /// halted time leaves the clock a fraction of a tick short of `until` (the
-    /// front end runs again). Exhausted virtual time stops the machine as if
-    /// it were switched off.
+    /// front end runs again). Exhausted counters fail the session before
+    /// further execution.
     ///
     /// A guest-requested reset happens inside the run, which continues to
     /// the same deadline. A reset retires nothing, so a guest that resets
@@ -570,24 +587,23 @@ impl Machine for PcMachine {
     /// every other reset follows at least 128 retired instructions, which
     /// count toward the deadline's cap.
     fn run(&mut self, limit: RunLimit) -> Result<Stop, Error> {
+        self.live()?;
+        match self.status {
+            Status::Halted => return Ok(Stop::Halted),
+            Status::Off => return Ok(Stop::PoweredOff),
+            _ => {}
+        }
         if limit.stop_on_frame {
             return Err(Error::new(
                 ErrorKind::Unsupported,
                 "a PC run cannot stop at the end of a frame",
             ));
         }
-        match self.status {
-            Status::Halted => return Ok(Stop::Halted),
-            Status::Off => return Ok(Stop::PoweredOff),
-            Status::Failed => {
-                return Err(Error::new(
-                    ErrorKind::Usage,
-                    "the machine failed and cannot run",
-                ))
-            }
-            _ => {}
+        if let Err(failure) = self.assembled.check_persistence() {
+            return Err(self.storage(failure));
         }
         loop {
+            self.deliver_input();
             let clock = self.assembled.machine.clock().0;
             let time = self.assembled.machine.virtual_time();
             let mut cap = u64::MAX;
@@ -604,14 +620,19 @@ impl Machine for PcMachine {
                 cap = cap.min(steps);
             }
             if cap == time {
-                self.status = Status::Off;
-                return Ok(Stop::PoweredOff);
+                self.status = Status::Failed;
+                return Err(Error::new(ErrorKind::Guest, "virtual counter exhausted"));
             }
             if let Err(failure) = self.assembled.check_persistence() {
                 return Err(self.storage(failure));
             }
-            self.deliver_input();
-            let outcome = self.assembled.machine.run_bounded(Some(cap));
+            let mut outcome = self.assembled.machine.run_bounded(Some(cap));
+            if matches!(outcome, Ok(RunOutcome::RetiredCapReached))
+                && self.assembled.machine.halted()
+                && !cpu::Cpu::interrupts_enabled(self.assembled.machine.cpu())
+            {
+                outcome = Ok(RunOutcome::Halted);
+            }
             self.sample_drive_busy();
             if outcome.is_err() {
                 if let Err(failure) = self.assembled.flush_persistence() {
@@ -627,20 +648,17 @@ impl Machine for PcMachine {
             match outcome {
                 Ok(RunOutcome::RetiredCapReached) => {
                     self.take_speaker_trace();
-                    if cap == u64::MAX {
-                        self.status = Status::Off;
-                        return Ok(Stop::PoweredOff);
+                    if limit.until.is_some_and(|until| self.now() >= until) {
+                        return Ok(Stop::Deadline);
                     }
-                    return Ok(
-                        if limit
-                            .steps
-                            .is_some_and(|steps| self.assembled.machine.virtual_time() >= steps)
-                        {
-                            Stop::Steps
-                        } else {
-                            Stop::Deadline
-                        },
-                    );
+                    if limit.steps.is_some_and(|steps| self.steps() >= steps) {
+                        return Ok(Stop::Steps);
+                    }
+                    if cap == u64::MAX {
+                        self.status = Status::Failed;
+                        return Err(Error::new(ErrorKind::Guest, "virtual counter exhausted"));
+                    }
+                    return Ok(Stop::Deadline);
                 }
                 Ok(RunOutcome::ResetRequested) => {
                     if let Err(failure) = self.assembled.before_cpu_reset() {
@@ -688,11 +706,14 @@ impl Machine for PcMachine {
     /// Captures the display at the completed boundary and rasterises it with
     /// the bundled fonts; after an error the last picture stays readable.
     fn frame(&mut self, display: DisplayId) -> Result<Frame<'_>, Error> {
+        if self.displays.is_empty() {
+            return Err(Error::new(ErrorKind::Unsupported, "no picture output"));
+        }
         let index = usize::from(display.0);
         let device = self
             .displays
             .get(index)
-            .ok_or_else(|| Error::new(ErrorKind::Unsupported, "no such display"))?
+            .ok_or_else(|| Error::new(ErrorKind::Usage, "no such display"))?
             .device;
         self.assembled
             .capture_text(device)
@@ -722,32 +743,72 @@ impl Machine for PcMachine {
         ))
     }
 
-    /// Checks the journals first, then renders the sound up to `now()`.
+    /// Render sound through `now()`, including after a failed session.
     fn drain_audio(&mut self, out: &mut Vec<[i16; 2]>) -> Result<(), Error> {
-        if let Err(failure) = self.assembled.check_persistence() {
-            return Err(self.storage(failure));
-        }
         let captured = self.assembled.capture_audio();
         out.append(&mut self.audio.frames.borrow_mut());
         captured.map_err(|e| error(ErrorKind::Unsupported, e))
     }
 
     fn set_outputs(&mut self, outputs: Outputs) {
+        if self.live().is_err() {
+            return;
+        }
+        if !outputs.audio {
+            self.audio.frames.borrow_mut().clear();
+        }
         self.audio.enabled.set(outputs.audio);
     }
 
-    fn input(&mut self, event: InputEvent) {
+    fn input(&mut self, event: InputEvent) -> Result<(), Error> {
+        self.interactive()?;
+        let valid = match &event {
+            InputEvent::ReleaseAll => true,
+            InputEvent::Key { port, .. }
+            | InputEvent::PointerMotion { port, .. }
+            | InputEvent::PointerButton { port, .. }
+            | InputEvent::PointerPosition { port, .. }
+            | InputEvent::Pad { port, .. } => self.description.inputs.iter().any(|input| {
+                input.id == *port
+                    && match (&event, &input.kind) {
+                        (InputEvent::Key { .. }, InputKind::Keyboard)
+                        | (InputEvent::PointerMotion { .. }, InputKind::RelativePointer { .. }) => {
+                            true
+                        }
+                        (
+                            InputEvent::PointerButton { button, .. },
+                            InputKind::RelativePointer { buttons, .. },
+                        ) => button < buttons,
+                        _ => false,
+                    }
+            }),
+            _ => {
+                return Err(Error::new(
+                    ErrorKind::Unsupported,
+                    "unknown input operation",
+                ))
+            }
+        };
+        if !valid {
+            return Err(Error::new(
+                ErrorKind::Usage,
+                "invalid input port or control",
+            ));
+        }
         match event {
-            InputEvent::Key { port, key, state } if port == KEYBOARD_PORT => {
+            InputEvent::Key {
+                port, key, state, ..
+            } if port == KEYBOARD_PORT => {
                 self.keyboard.key_event(key, state);
             }
-            InputEvent::PointerMotion { port, dx, dy } if port == POINTER_PORT => {
+            InputEvent::PointerMotion { port, dx, dy, .. } if port == POINTER_PORT => {
                 self.mouse.motion(dx, dy);
             }
             InputEvent::PointerButton {
                 port,
                 button,
                 pressed,
+                ..
             } if port == POINTER_PORT => self.mouse.button(button, pressed),
             InputEvent::ReleaseAll => {
                 self.mouse.release();
@@ -755,6 +816,7 @@ impl Machine for PcMachine {
             }
             _ => {}
         }
+        Ok(())
     }
 
     /// The drives with their floppy catalogues: each entry's name and what
@@ -818,6 +880,7 @@ impl Machine for PcMachine {
     /// Media join a running PC through the PC provider's own code in this
     /// stage; see [`PcMachine::assembled`].
     fn add_medium(&mut self, _slot: SlotId, _medium: NewMedium<'_>) -> Result<usize, Error> {
+        self.interactive()?;
         Err(Error::new(
             ErrorKind::Unsupported,
             "media join a running PC through its provider",
@@ -826,9 +889,15 @@ impl Machine for PcMachine {
 
     /// Changes a floppy drive now: between runs the machine is at a boundary.
     fn change_medium(&mut self, slot: SlotId, action: MediaAction) -> Result<(), Error> {
+        self.interactive()?;
         let unit = slot.0;
-        if unit > 1 {
-            return Err(Error::new(ErrorKind::Unsupported, "not a floppy drive"));
+        if !self
+            .description
+            .slots
+            .iter()
+            .any(|entry| entry.id == slot && entry.removable)
+        {
+            return Err(Error::new(ErrorKind::Usage, "not a removable drive"));
         }
         let action = match action {
             MediaAction::Eject => assembly::FloppyAction::Eject,
@@ -836,49 +905,103 @@ impl Machine for PcMachine {
             MediaAction::Next => assembly::FloppyAction::Next,
             _ => return Err(Error::new(ErrorKind::Unsupported, "unknown media action")),
         };
+        let old = self.inserted_floppy(usize::from(unit));
+        let same = match action {
+            assembly::FloppyAction::Insert(index) => old == Some(index),
+            assembly::FloppyAction::Next => {
+                old == Some(0)
+                    && self
+                        .fdc()
+                        .is_some_and(|fdc| fdc.catalogue(usize::from(unit)).count() == 1)
+            }
+            assembly::FloppyAction::Eject => false,
+        };
+        if same {
+            // Compatible selections reuse the held record under the contract.
+            return self
+                .fdc()
+                .ok_or_else(|| Error::new(ErrorKind::Usage, "floppy unavailable"))?
+                .check_media_boundary()
+                .map_err(|failure| error(ErrorKind::Usage, failure));
+        }
         self.assembled
             .change_floppy(DeviceId::Fdc, unit, action)
             .map_err(|failure| {
                 let kind = match failure {
                     assembly::FloppyError::Unavailable => ErrorKind::Usage,
                     assembly::FloppyError::Persistence(_) => ErrorKind::Storage,
-                    assembly::FloppyError::Config(_) => ErrorKind::Config,
-                    _ => ErrorKind::Guest,
+                    assembly::FloppyError::Device(_) => ErrorKind::Usage,
+                    _ => ErrorKind::Storage,
                 };
-                self.contract_error(kind, failure)
+                let error = self.contract_error(kind, failure);
+                if error.kind == ErrorKind::StorageUncertain {
+                    self.status = Status::Failed;
+                } else if error.kind == ErrorKind::Storage {
+                    for handle in &mut self.assembled.persistence {
+                        if handle.floppy.is_some_and(|(controller, drive, index)| {
+                            controller == DeviceId::Fdc && drive == unit && Some(index) == old
+                        }) {
+                            if let Err(failure) = handle.restore_failed_eject() {
+                                return self.contract_error(ErrorKind::Storage, failure);
+                            }
+                        }
+                    }
+                }
+                error
             })
     }
 
-    /// The reset button of a halted PC. This asserts only the CPU reset line,
+    /// The reset button of a PC. This asserts only the CPU reset line,
     /// the one the 8042 output-port pulse and the shutdown cycle assert (IBM
     /// Personal Computer AT Technical Reference, System Board, Keyboard
     /// Controller Output Port); unlike a hardware reset button it resets no
     /// board device. The CPU restarts at its reset vector, RAM, the devices
     /// and the inserted media keep their state, and POST initialises the
-    /// board again. The reset takes no virtual time. Keys held or queued
-    /// before the halt belong to the old boot; none of them reach the new
-    /// POST.
+    /// board again. The reset takes no virtual time. Host controls belong to
+    /// the old boot: queued input is discarded and the attached mouse returns
+    /// to its power-on protocol state so delivered buttons are released too.
+    /// IBM PS/2 Hardware Interface Technical Reference, Pointing Device, Reset;
+    /// Microsoft Mouse Programmer's Reference, serial protocol initialization.
     fn reset(&mut self, kind: ResetKind) -> Result<(), Error> {
+        self.live()?;
+        if self.status == Status::Off && kind != ResetKind::Hard {
+            return Err(Error::new(ErrorKind::Usage, "the machine is powered off"));
+        }
         if kind != ResetKind::Soft {
             return Err(Error::new(ErrorKind::Unsupported, "only the reset button"));
         }
-        if self.status != Status::Halted {
-            return Err(Error::new(
-                ErrorKind::Usage,
-                "the reset button restarts only a halted machine",
-            ));
-        }
-        // A failed reset leaves the machine halted, so its media can still
-        // be finished.
-        self.assembled
-            .before_cpu_reset()
-            .map_err(|failure| self.contract_error(ErrorKind::Storage, failure))?;
+        self.assembled.before_cpu_reset().map_err(|failure| {
+            let error = self.contract_error(ErrorKind::Storage, failure);
+            if error.kind == ErrorKind::StorageUncertain && self.status != Status::Halted {
+                self.status = Status::Failed;
+            }
+            error
+        })?;
         self.assembled
             .reset_cpu(assembly::ResetCause::Host)
             .map_err(|failure| error(ErrorKind::Guest, failure))?;
         self.record_cpu_reset();
         self.take_speaker_trace();
         self.keyboard = HostKeyboard::default();
+        if let Some(index) = self.assembled.mouse_device_index() {
+            if let Some(dev) = self
+                .assembled
+                .machine
+                .bus_mut()
+                .device_mut(index)
+                .and_then(|d| d.as_any_mut())
+            {
+                if let Some(uart) = dev.downcast_mut::<devices::Uart16550>() {
+                    uart.reset_serial_device();
+                } else if let Some(mouse) = dev
+                    .downcast_mut::<devices::I8042>()
+                    .and_then(devices::I8042::aux_device_mut)
+                {
+                    mouse.reset();
+                }
+            }
+        }
+        self.mouse = PcMouse::default();
         self.status = Status::Ready;
         Ok(())
     }
@@ -888,6 +1011,7 @@ impl Machine for PcMachine {
     }
 
     fn save_state(&mut self, _out: &mut dyn Write) -> Result<(), Error> {
+        self.live()?;
         Err(Error::new(
             ErrorKind::Unsupported,
             "a PC has no saved state yet",
@@ -895,6 +1019,7 @@ impl Machine for PcMachine {
     }
 
     fn load_state(&mut self, _state: &mut dyn Read) -> Result<(), Error> {
+        self.live()?;
         Err(Error::new(
             ErrorKind::Unsupported,
             "a PC has no saved state yet",
@@ -906,12 +1031,7 @@ impl Machine for PcMachine {
     /// Journal maintenance that could not run is reported once, as warnings
     /// of a clean end or as messages of a failed one.
     fn finish(&mut self) -> Result<Finished, Error> {
-        if self.status == Status::Failed {
-            return Err(Error::new(
-                ErrorKind::Usage,
-                "a failed machine cannot finish cleanly",
-            ));
-        }
+        self.live()?;
         let result = self.assembled.finish_persistence();
         let mut warnings = Vec::new();
         if !self.maintenance_reported {
@@ -923,8 +1043,12 @@ impl Machine for PcMachine {
             self.maintenance_reported = true;
         }
         match result {
-            Ok(()) => Ok(Finished::new().with_warnings(warnings)),
+            Ok(()) => {
+                self.status = Status::Finished;
+                Ok(Finished::new().with_warnings(warnings))
+            }
             Err(failure) => {
+                self.status = Status::Failed;
                 for warning in warnings {
                     self.messages.push(Message::new(
                         MessageLevel::Warning,
@@ -947,3 +1071,6 @@ impl Machine for PcMachine {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod contract_tests;

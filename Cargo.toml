@@ -53,10 +53,10 @@ x86jit-core = { version = "0.3", git = "https://github.com/unemu-org/x86jit", re
 # pin is an exact revision, moved together with every pinned core. A bare path
 # dependency breaks nix build and CI. To develop against a local checkout of the
 # contract, add a gitignored [patch] override instead of editing this line.
-unemu-core-api = { version = "0.3", git = "https://github.com/unemu-org/unemu-core-api", rev = "afba6e6b217946eb57b9556e79a30bbe53c90fb4" }
+unemu-core-api = { version = "0.5", git = "https://github.com/unemu-org/unemu-core-api", rev = "316dd2a1f429cc3ef37a2bed203e89b2160079ff" }
 # The contract's storage and content over host files, from the contract's
 # repository at the same revision: it depends on that copy of the contract.
-unemu-core-files = { version = "0.3", git = "https://github.com/unemu-org/unemu-core-api", rev = "afba6e6b217946eb57b9556e79a30bbe53c90fb4" }
+unemu-core-files = { version = "0.5", git = "https://github.com/unemu-org/unemu-core-api", rev = "316dd2a1f429cc3ef37a2bed203e89b2160079ff" }
 # Internal crates share the workspace version.
 assembly = { path = "crates/assembly", version = "0.0.4" }
 device = { path = "crates/device", version = "0.0.4" }

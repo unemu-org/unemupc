@@ -2626,7 +2626,7 @@ fn retention_failed_temporary_rollback_reports_uncertainty_and_allows_reopen_ret
             path: &Path,
             permissions: Option<&std::fs::Permissions>,
         ) -> io::Result<Box<dyn unemu_core_files::FileIo>> {
-            drop(unemu_core_files::HostFilesystem.create_new(path, permissions)?);
+            drop(unemu_core_files::HostFilesystem::new().create_new(path, permissions)?);
             // A read-only descriptor rejects both the write and its rollback.
             Ok(Box::new(File::open(path)?))
         }

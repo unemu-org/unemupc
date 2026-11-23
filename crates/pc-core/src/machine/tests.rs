@@ -6,7 +6,7 @@ use unemu_core_api::{
     ContractVersion, Core, FrameArea, Key, KeyState, OfferedContent, WriteTarget, CONTRACT,
 };
 
-fn observed(config: &MachineConfig, display: DeviceId) -> AssembledMachine {
+pub(super) fn observed(config: &MachineConfig, display: DeviceId) -> AssembledMachine {
     assembly::assemble_with_observation_and_options(
         config,
         &ObservationPolicy {
@@ -25,11 +25,7 @@ fn observed(config: &MachineConfig, display: DeviceId) -> AssembledMachine {
 }
 
 fn key(key: Key, state: KeyState) -> InputEvent {
-    InputEvent::Key {
-        port: KEYBOARD_PORT,
-        key,
-        state,
-    }
+    InputEvent::key(KEYBOARD_PORT, key, state)
 }
 
 fn keyboard_state(assembled: &AssembledMachine) -> Vec<u8> {
@@ -231,7 +227,7 @@ fn a_session_through_the_contract_matches_the_assembled_machine() {
     let pristine = keyboard_state(&direct);
     for (round, (pressed, state)) in script.into_iter().enumerate() {
         let contract: &mut dyn Machine = &mut machine;
-        contract.input(key(pressed, state));
+        contract.input(key(pressed, state)).unwrap();
         keyboard.key_event(pressed, state);
         let until = (round as u64 + 1) * 5_000;
         assert_eq!(
@@ -274,15 +270,7 @@ fn the_picture_is_the_rasterised_text_of_the_completed_boundary() {
     assert_eq!((frame.width, frame.height), (1280, 800));
     assert_eq!(frame.aspect, (4, 3));
     // The PC states no overscan: the whole picture is the visible part.
-    assert_eq!(
-        frame.visible,
-        FrameArea {
-            x: 0,
-            y: 0,
-            width: 1280,
-            height: 800
-        }
-    );
+    assert_eq!(frame.visible, FrameArea::new(0, 0, 1280, 800));
     let first = frame.serial;
     for y in 0..800 {
         for x in 0..1280 {
@@ -300,29 +288,24 @@ fn the_picture_is_the_rasterised_text_of_the_completed_boundary() {
     assert_eq!(
         machine
             .run(RunLimit::until(Ticks(3_000)).with_stop_on_frame(true))
-            .unwrap_err()
-            .kind,
-        ErrorKind::Unsupported
+            .unwrap(),
+        Stop::Halted
     );
     assert!(!machine.description().features.frame_stops);
     assert_eq!(
         machine.frame(DisplayId(1)).unwrap_err().kind,
-        ErrorKind::Unsupported
+        ErrorKind::Usage
     );
 }
 
 #[test]
-fn the_reset_button_restarts_only_a_halted_pc() {
+fn the_reset_button_restarts_a_halted_pc() {
     let mut rom = vec![0; 0x8000];
     rom[..5].copy_from_slice(&[0xB0, 0xFE, 0xE6, 0x64, 0xF4]);
     rom[0x7FF0..0x7FF4].copy_from_slice(&[0xB0, 0x55, 0xFA, 0xF4]);
     let mut config = assembly::bios(rom, None);
     config.cpu.reset = assembly::ResetSpec::Entry { cs: 0xF800, ip: 0 };
     let mut machine = PcMachine::from_assembled(&config, observed(&config, DeviceId::Mda)).unwrap();
-    assert_eq!(
-        machine.reset(ResetKind::Soft).unwrap_err().kind,
-        ErrorKind::Usage
-    );
     assert_eq!(
         machine.reset(ResetKind::Hard).unwrap_err().kind,
         ErrorKind::Unsupported
@@ -408,7 +391,7 @@ fn a_drive_without_a_controller_refuses_changes_as_a_usage_error() {
             .change_medium(SlotId(2), MediaAction::Eject)
             .unwrap_err()
             .kind,
-        ErrorKind::Unsupported
+        ErrorKind::Usage
     );
     assert!(machine.slot_states().is_empty());
 }
@@ -417,7 +400,7 @@ fn a_drive_without_a_controller_refuses_changes_as_a_usage_error() {
 fn the_pc_core_describes_its_launch_type_and_refuses_other_types() {
     let core: &dyn Core = &crate::PcCore;
     let description = core.description();
-    assert_eq!(description.implements, ContractVersion::new(0, 3));
+    assert_eq!(description.implements, ContractVersion::new(0, 5));
     assert!(CONTRACT.drives(description.implements));
     assert_eq!(description.id, "unemupc");
     assert_eq!(description.platforms.len(), 1);
@@ -478,9 +461,7 @@ fn the_pc_refuses_media_through_the_contract() {
     for writes in [
         WriteTarget::ReadOnly,
         WriteTarget::Discarded,
-        WriteTarget::Kept {
-            record: "kept-floppy-0",
-        },
+        WriteTarget::kept("kept-floppy-0"),
     ] {
         let medium = NewMedium::new(
             "blank.img",
@@ -1034,9 +1015,9 @@ keep_generations = 3
         assert_eq!(machine.now(), Ticks(0));
         let resets = d.features.resets.to_vec();
         machine.set_outputs(Outputs::NONE.with_audio(true));
-        machine.input(InputEvent::ReleaseAll);
+        machine.input(InputEvent::ReleaseAll).unwrap();
         for reset in resets {
-            assert_eq!(machine.reset(reset).unwrap_err().kind, ErrorKind::Usage);
+            machine.reset(reset).unwrap();
         }
         assert_eq!(machine.run(RunLimit::steps(2000)).unwrap(), Stop::Steps);
         for id in [DisplayId(0), DisplayId(1)] {
@@ -1148,7 +1129,7 @@ keep_generations = 3
             machine.set_outputs(Outputs::NONE.with_audio(true));
             let mut log = Vec::new();
             for steps in [100, 200, 4000] {
-                machine.input(InputEvent::ReleaseAll);
+                machine.input(InputEvent::ReleaseAll).unwrap();
                 let stop = machine.run(RunLimit::steps(steps)).unwrap();
                 let frame = machine.frame(DisplayId(0)).unwrap();
                 let picture = (frame.pixels.to_vec(), frame.serial);
@@ -1389,6 +1370,121 @@ keep_generations = 3
         }
         assert_eq!(machine.run(RunLimit::steps(100)).unwrap_err(), error);
         assert_eq!(machine.status(), Status::Failed);
+    }
+
+    #[test]
+    fn launch_failed_closing_append_restores_the_outgoing_session() {
+        use unemu_core_api::test_support::Operation;
+        let (bytes, source) = fixture();
+        let storage = Rc::new(MemoryStorage::new());
+        let mut machine = crate::PcCore
+            .create(&request(&bytes, &source, storage.clone()))
+            .unwrap();
+        let before = machine.slot_states()[0].clone();
+        let error = Error::new(ErrorKind::Storage, "injected closing append failure");
+        storage.fail_next("a.upfj", Operation::Append, error.clone());
+        assert_eq!(
+            machine.change_medium(SlotId(0), MediaAction::Eject),
+            Err(error)
+        );
+        assert_eq!(machine.status(), Status::Ready);
+        assert_eq!(machine.slot_states()[0], before);
+        assert!(storage.is_open("a.upfj"), "outgoing session was reopened");
+        machine.run(RunLimit::steps(100)).unwrap();
+        machine
+            .change_medium(SlotId(0), MediaAction::Eject)
+            .unwrap();
+        machine
+            .change_medium(SlotId(0), MediaAction::Insert(0))
+            .unwrap();
+        machine.finish().unwrap();
+    }
+
+    #[test]
+    fn assembly_reselect_signals_disk_change_and_closes_the_journal() {
+        use device::Device;
+        for action in [
+            assembly::FloppyAction::Insert(0),
+            assembly::FloppyAction::Next,
+        ] {
+            let (bytes, source) = fixture();
+            let storage = Rc::new(MemoryStorage::new());
+            let mut machine = crate::PcCore
+                .create_machine(&request(&bytes, &source, storage.clone()))
+                .unwrap();
+            assert_eq!(
+                machine.fdc().unwrap().port_read(0x3f7, 1).unwrap() & 0x80,
+                0
+            );
+            machine
+                .assembled
+                .change_floppy(DeviceId::Fdc, 0, action)
+                .unwrap();
+            assert_eq!(
+                machine.fdc().unwrap().port_read(0x3f7, 1).unwrap() & 0x80,
+                0x80
+            );
+            let report = machine
+                .assembled
+                .persistence
+                .iter()
+                .find(|h| h.floppy == Some((DeviceId::Fdc, 0, 0)))
+                .unwrap()
+                .mount_report();
+            assert_eq!(report.generations.len(), 1);
+            assert!(storage.is_open("a.upfj"));
+            machine.run(RunLimit::steps(100)).unwrap();
+            machine.finish().unwrap();
+        }
+    }
+
+    #[test]
+    fn launch_failed_selection_preserves_the_inserted_medium() {
+        use unemu_core_api::test_support::Operation;
+        let (bytes, source) = fixture();
+        let mut launch = launch::decode(&bytes).unwrap();
+        let mut second = launch.config.media[0].clone();
+        second.id = "b".into();
+        second.source = "assets/b.img".into();
+        launch.config.media.push(second);
+        launch.config.slots[0].catalogue.push("b".into());
+        let mut record = launch.records[0].clone();
+        record.medium = "b".into();
+        record.name = "b.upfj".into();
+        launch.records.push(record);
+        let bytes = launch::encode(&launch).unwrap();
+        for kind in [ErrorKind::Storage, ErrorKind::StorageUncertain] {
+            let storage = Rc::new(MemoryStorage::new());
+            let mut machine = crate::PcCore
+                .create(&request(&bytes, &source, storage.clone()))
+                .unwrap();
+            let before = machine.slot_states()[0].clone();
+            let error = Error::new(kind, "injected opening failure");
+            storage.fail_next("b.upfj", Operation::Open, error.clone());
+            assert_eq!(
+                machine.change_medium(SlotId(0), MediaAction::Insert(1)),
+                Err(error)
+            );
+            let after = machine.slot_states()[0].clone();
+            assert_eq!(after.inserted, before.inserted);
+            assert_eq!(after.catalogue, before.catalogue);
+            assert!(storage.is_open("a.upfj"));
+            assert_eq!(
+                machine.status(),
+                if kind == ErrorKind::StorageUncertain {
+                    Status::Failed
+                } else {
+                    Status::Ready
+                }
+            );
+            if kind == ErrorKind::Storage {
+                machine.run(RunLimit::steps(100)).unwrap();
+                machine
+                    .change_medium(SlotId(0), MediaAction::Insert(1))
+                    .unwrap();
+                machine.finish().unwrap();
+            }
+        }
     }
 
     #[test]

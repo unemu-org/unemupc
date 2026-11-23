@@ -366,3 +366,47 @@ impl Replacement for TrackedReplacement {
         remember(self.replacement.commit(), &self.failure)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use unemu_core_api::test_support::{MemoryStorage, Operation};
+
+    #[test]
+    fn tracked_reads_preserve_partial_buffers_and_the_original_error() {
+        let storage = MemoryStorage::new();
+        storage.insert("disk", b"abcdefgh");
+        let failure = Failure::default();
+        let mut record = tracked(storage.open("disk").unwrap(), &failure);
+        let error = Error::new(ErrorKind::Storage, "partial read");
+        storage.fail_next("disk", Operation::Read, error.clone());
+        let mut bytes = [0; 8];
+        assert_eq!(record.read_at(0, &mut bytes), Err(error.clone()));
+        assert_eq!(&bytes[..4], b"abcd");
+        assert_eq!(&bytes[4..], &[0; 4]);
+        assert_eq!(failure.borrow_mut().take(), Some(error));
+    }
+
+    #[test]
+    fn tracked_replacement_uncertainty_preserves_parent_bytes_and_poisons_writes() {
+        let storage = MemoryStorage::new();
+        storage.insert("disk", b"old bytes");
+        let failure = Failure::default();
+        let mut record = tracked(storage.open("disk").unwrap(), &failure);
+        let mut replacement = record.replace().unwrap();
+        let error = Error::new(ErrorKind::StorageUncertain, "partial replacement");
+        storage.fail_next("disk", Operation::ReplacementAppend, error.clone());
+        assert_eq!(replacement.append(b"new bytes"), Err(error.clone()));
+        assert_eq!(failure.borrow_mut().take(), Some(error));
+        assert_eq!(replacement.size().unwrap(), 4);
+        assert_eq!(replacement.append(&[]).unwrap_err().kind, ErrorKind::Usage);
+        drop(replacement);
+        assert_eq!(record.append(b"tail").unwrap_err().kind, ErrorKind::Usage);
+        assert_eq!(storage.contents("disk").unwrap(), b"old bytes");
+        drop(record);
+        let mut reopened = tracked(storage.open("disk").unwrap(), &failure);
+        reopened.append(b"tail").unwrap();
+        reopened.sync().unwrap();
+        assert_eq!(storage.contents("disk").unwrap(), b"old bytestail");
+    }
+}

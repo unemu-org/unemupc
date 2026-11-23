@@ -182,6 +182,25 @@ impl PersistenceHandle {
         Ok(())
     }
 
+    /// Reopen a removable session consumed by a failed closing attempt.
+    /// The caller must first classify the host error as recoverable; uncertain
+    /// storage errors require terminating the running machine instead.
+    pub fn restore_failed_eject(&mut self) -> Result<(), crate::AssemblyError> {
+        if self.remount.is_some()
+            && !self.ejected
+            && matches!(*self.session.borrow(), Session::Finished(..))
+        {
+            self.status = SinkStatus::default();
+            self.insert()?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn cancel_insert(&mut self) {
+        *self.session.borrow_mut() = Session::Empty;
+        self.ejected = true;
+    }
+
     pub(crate) fn mount_nvram(
         device_index: usize,
         mount: &dyn Mount,

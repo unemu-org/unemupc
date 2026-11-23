@@ -214,6 +214,17 @@ impl Uart16550 {
         }
     }
 
+    /// Reset the endpoint without changing the UART's programmed registers.
+    /// PC16550D datasheet §8.8, Modem Control Register: the existing DTR/RTS
+    /// outputs still power the attached mouse after its protocol reset.
+    pub fn reset_serial_device(&mut self) {
+        let outputs = Self::modem_outputs(self.mcr);
+        if let Some(serial) = &mut self.serial {
+            serial.reset();
+            serial.modem_control(outputs & 1 != 0, outputs & 2 != 0, self.now);
+        }
+    }
+
     /// Whether the serial endpoint and receive shift register have no pending output.
     pub fn serial_input_ready(&self) -> bool {
         self.receiving.is_none() && self.serial.as_ref().is_some_and(|s| s.ready_at().is_none())
@@ -664,6 +675,37 @@ mod tests {
             .unwrap()
             .bind_sink(Box::new(capture.clone()));
         capture
+    }
+
+    #[test]
+    fn endpoint_reset_releases_buttons_and_preserves_powered_uart_state() {
+        let mut bus = MockBus::new(Box::new(
+            Uart16550::new(COM1).with_serial_device(Box::new(crate::SerialMouse::new())),
+        ));
+        bus.port_write(COM1 + 4, 1, 3).unwrap();
+        bus.port_write(COM1 + 7, 1, 0x5a).unwrap();
+        let uart = bus
+            .device_mut()
+            .as_any_mut()
+            .unwrap()
+            .downcast_mut::<Uart16550>()
+            .unwrap();
+        let mouse = uart.serial_device_mut().unwrap();
+        mouse
+            .as_any_mut()
+            .downcast_mut::<crate::SerialMouse>()
+            .unwrap()
+            .inject_motion(0, 0, 1);
+        assert_eq!(mouse.save()[3], 1);
+        uart.reset_serial_device();
+        let mouse = uart.serial_device_mut().unwrap();
+        assert_eq!(mouse.save()[3], 0);
+        assert_eq!(mouse.save()[1..3], [1, 1]);
+        assert_eq!(mouse.read_byte(), Some(b'M'));
+        let snapshot = bus.device().save();
+        bus.device_mut().restore(&snapshot).unwrap();
+        assert_eq!(bus.port_read(COM1 + 4, 1).unwrap(), 3);
+        assert_eq!(bus.port_read(COM1 + 7, 1).unwrap(), 0x5a);
     }
 
     #[test]

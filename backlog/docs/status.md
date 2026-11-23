@@ -7,6 +7,20 @@ beads (`bd ready --exclude-type epic`, `bd list --type epic`).
 
 Update this when a feature lands, breaks, or gets pulled. Stale status is worse than no status.
 
+- **2026-11-23 — PC contract 0.4 migration, pinned at 0.5:** `unemu-core-api` and
+  `unemu-core-files` use release v0.5.0 at `316dd2a1` (0.5 only adds optional
+  offline media description and export, not implemented by the PC core yet).
+  The PC core and About output state contract 0.5. Successful finish enters `Finished`; terminal
+  mutations and invalid input return `Usage`. Soft reset works in Ready and
+  Halted, clears queued input and held controls, and preserves counters and
+  media. Unbounded runs and reached-limit input delivery follow the matrix;
+  counter exhaustion fails before an overflowing instruction executes.
+  Media selection stages opens before ejecting the current disk; additions
+  stay unsupported. File adapters use typed stages and constructor factories.
+  Storage regressions cover partial tails/reads, destructive cuts and escaped
+  named records; journal tools retain the separate path-lock domain. Guest
+  programs, device timing and golden expectations remain unchanged.
+
 - **2026-11-23 — VGA palette writes with PAS set:** attribute palette writes
   now take effect with either PAS value, matching the sequence reported from
   Windows 3.x vga.drv. This is an explicit compatibility policy, not verified

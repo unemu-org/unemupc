@@ -286,7 +286,21 @@ pub(crate) fn lock_journal(path: &Path, shared: bool) -> io::Result<File> {
     Ok(file)
 }
 
-pub(crate) fn journal_stage(stage: &'static str) -> &'static str {
+pub(crate) fn journal_stage(stage: unemu_core_files::FileStage) -> &'static str {
+    use unemu_core_files::FileStage;
+    match stage {
+        FileStage::ResolvePath => "resolve journal path",
+        FileStage::Lock => "lock",
+        FileStage::Open => "open",
+        FileStage::Metadata => "metadata",
+        FileStage::VerifyPath => "verify journal path",
+        FileStage::Cleanup => "remove creation temporaries",
+        FileStage::DirectorySync => "directory sync",
+        _ => "open journal",
+    }
+}
+
+fn creation_stage_name(stage: &'static str) -> &'static str {
     match stage {
         "resolve path" => "resolve journal path",
         "create temporary" => "create temporary header",
@@ -318,7 +332,7 @@ pub(crate) fn creation_stage(error: &contract::Error, fallback: &'static str) ->
             .strip_prefix(stage)
             .is_some_and(|message| message.starts_with(": "))
         {
-            return journal_stage(stage);
+            return creation_stage_name(stage);
         }
     }
     fallback
@@ -531,7 +545,7 @@ pub fn check_journal_path(path: &Path) -> Result<(), contract::Error> {
 pub(crate) struct JournalFilesystem;
 impl HostOps for JournalFilesystem {
     fn lock(&self, path: &Path, shared: bool) -> io::Result<Box<dyn std::any::Any>> {
-        unemu_core_files::HostFilesystem
+        unemu_core_files::HostFilesystem::new()
             .lock(path, shared)
             .map_err(|error| {
                 if error.kind() == io::ErrorKind::WouldBlock {
@@ -546,7 +560,7 @@ impl HostOps for JournalFilesystem {
     }
 
     fn open(&self, path: &Path, write: bool) -> io::Result<Box<dyn FileIo>> {
-        unemu_core_files::HostFilesystem
+        unemu_core_files::HostFilesystem::new()
             .open(path, write)
             .map(journal_io)
     }
@@ -562,7 +576,7 @@ impl HostOps for JournalFilesystem {
     ) -> io::Result<Box<dyn FileIo>> {
         let file: Box<dyn FileIo> = match permissions {
             Some(permissions) => {
-                unemu_core_files::HostFilesystem.create_new(path, Some(permissions))?
+                unemu_core_files::HostFilesystem::new().create_new(path, Some(permissions))?
             }
             None => Box::new(
                 OpenOptions::new()

@@ -851,6 +851,21 @@ impl<C: Cpu> Machine<C> {
                             clocks =
                                 clocks.min(u64::try_from(room.div_ceil(a)).unwrap_or(u64::MAX));
                         }
+                        let maximum_halted = (u128::from(u64::MAX - self.completed_steps) + 1)
+                            .checked_mul(self.cpu_tick_denominator)
+                            .ok_or_else(|| scheduler_error("clock interval exhausted"))?
+                            - 1;
+                        let halted_room = (maximum_halted
+                            / u128::from(self.cpu_rate_numerator.get()))
+                        .checked_sub(u128::from(self.halted_clocks))
+                        .ok_or_else(|| scheduler_error("step counter exhausted"))?;
+                        clocks = clocks
+                            .min(u64::MAX - self.clock.0)
+                            .min(u64::MAX - self.halted_clocks)
+                            .min(u64::try_from(halted_room).unwrap_or(u64::MAX));
+                        if clocks == 0 {
+                            return Err(scheduler_error("virtual counter exhausted"));
+                        }
                         let target = self
                             .clock
                             .0
@@ -886,6 +901,19 @@ impl<C: Cpu> Machine<C> {
                     - u128::from(self.clock_remainder);
                 let steps = phase.div_ceil(self.cpu_tick_denominator);
                 budget = budget.min(u64::try_from(steps).unwrap_or(u64::MAX));
+            }
+            // Bound execution before touching the CPU: detecting overflow when
+            // charging completed steps would leave an unaccounted guest effect.
+            let clock_room = (u128::from(u64::MAX - self.clock.0) + 1)
+                * u128::from(self.cpu_rate_numerator.get())
+                - 1
+                - u128::from(self.clock_remainder);
+            let clock_steps = clock_room / self.cpu_tick_denominator;
+            budget = budget
+                .min(u64::MAX - self.virtual_time())
+                .min(u64::try_from(clock_steps).unwrap_or(u64::MAX));
+            if budget == 0 {
+                return Err(scheduler_error("virtual counter exhausted"));
             }
             let before = self.cpu.completed_steps();
             let run = self.cpu.run_steps(budget, options);
@@ -1692,6 +1720,55 @@ mod tests {
             machine.cpu.has_pending_irq(),
             "a completed reset must not repeat on resumption"
         );
+    }
+
+    #[test]
+    fn halted_counter_exhaustion_does_not_saturate_or_advance_devices() {
+        let mut machine =
+            machine_with(Vec::new()).with_cpu_rate(NonZeroU64::new(2).unwrap(), NonZeroU64::MIN);
+        machine.bus = Bus::new(
+            Vec::new(),
+            DecodeMap {
+                ports: Vec::new(),
+                mmio: Vec::new(),
+            },
+        );
+        machine.cpu = instruction_cpu(Vec::new(), true);
+        machine.halted = true;
+        machine.halted_clocks = u64::MAX / 2;
+        machine.set_idle_limit(Some(u64::MAX));
+        assert_eq!(machine.virtual_time(), u64::MAX - 1);
+        assert!(machine.run_bounded(Some(u64::MAX)).is_err());
+        assert_eq!(machine.virtual_time(), u64::MAX - 1);
+        assert_eq!(machine.clock(), VClock(0));
+    }
+
+    #[test]
+    fn counter_exhaustion_refuses_the_next_instruction() {
+        for ticks in [false, true] {
+            let mut machine = machine_with(vec![CpuStop::Halt]);
+            machine.bus = Bus::new(
+                Vec::new(),
+                DecodeMap {
+                    ports: Vec::new(),
+                    mmio: Vec::new(),
+                },
+            );
+            if ticks {
+                machine = machine.with_cpu_rate(NonZeroU64::MIN, NonZeroU64::new(2).unwrap());
+                machine.clock = VClock(u64::MAX - 1);
+            } else {
+                machine.completed_steps = u64::MAX;
+            }
+            let before = (machine.clock(), machine.virtual_time());
+            assert!(machine.run_bounded(None).is_err());
+            assert_eq!(
+                machine.cpu.completed_steps(),
+                0,
+                "an overflowing instruction must not execute"
+            );
+            assert_eq!((machine.clock(), machine.virtual_time()), before);
+        }
     }
 
     #[test]

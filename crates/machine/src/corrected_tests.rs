@@ -1645,7 +1645,7 @@ fn access_error_survives_follow_on_settle_failure() {
 }
 
 #[test]
-fn access_error_survives_follow_on_clock_exhaustion() {
+fn counter_exhaustion_precedes_an_unexecuted_access() {
     for engine in [SchedulerEngine::PerClock, SchedulerEngine::Deadline] {
         for stop in [
             CpuStop::PortIn {
@@ -1675,10 +1675,11 @@ fn access_error_survives_follow_on_clock_exhaustion() {
             assert!(
                 matches!(
                     result,
-                    Err(MachineError::Bus(BusError::UnmappedPort { port: 0x123 }))
+                    Err(MachineError::Cpu(CpuError::UnexpectedExit { .. }))
                 ),
                 "{engine:?}: {result:?}"
             );
+            assert_eq!(machine.cpu.completed_steps(), 0);
         }
     }
 }

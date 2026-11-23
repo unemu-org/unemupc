@@ -453,3 +453,154 @@ fn a_journal_file_publishes_only_the_header_of_the_base_it_was_opened_for() {
     assert!(failure.message.contains("header"), "{failure}");
     assert!(!journal.exists());
 }
+
+#[test]
+fn ordinary_reopen_recovers_an_uncertain_append_tail_without_rollback() {
+    let storage = MemoryStorage::new();
+    let keep = Keep::Memory(storage.clone());
+    let mut disk = keep.mount();
+    disk.write_batch(&[(1, sector(7))]);
+    let confirmed = storage.contents(NAME).unwrap();
+    storage.fail_next(
+        NAME,
+        Operation::Append,
+        Error::new(ErrorKind::StorageUncertain, "partial append"),
+    );
+    disk.write_batch(&[(1, sector(9))]);
+    assert!(disk.status().failure().is_some());
+    let torn = storage.contents(NAME).unwrap();
+    assert_eq!(torn.len(), confirmed.len() + FRAME_LEN / 2);
+    disk.write_batch(&[(2, sector(10))]);
+    assert_eq!(
+        storage.contents(NAME).unwrap(),
+        torn,
+        "poisoned output is never retried"
+    );
+    drop(disk);
+    assert_eq!(
+        storage.contents(NAME).unwrap(),
+        torn,
+        "close is not rollback"
+    );
+    let mut recovered = keep.mount();
+    assert_eq!(recovered.mount_report().discarded_bytes, FRAME_LEN / 2);
+    assert_eq!(recovered.read_sector(1), sector(7));
+    assert_eq!(storage.contents(NAME), storage.durable(NAME));
+    recovered.write_batch(&[(2, sector(11))]);
+    recovered.finish().unwrap();
+    assert_eq!(keep.mount().read_sector(2), sector(11));
+}
+
+#[test]
+fn a_power_cut_after_an_uncertain_append_recovers_the_confirmed_command() {
+    let storage = MemoryStorage::new();
+    let keep = Keep::Memory(storage.clone());
+    let mut disk = keep.mount();
+    disk.write_batch(&[(1, sector(7))]);
+    storage.fail_next(
+        NAME,
+        Operation::Append,
+        Error::new(ErrorKind::StorageUncertain, "partial append"),
+    );
+    disk.write_batch(&[(1, sector(9))]);
+    drop(disk);
+    storage.power_cut();
+    let recovered = keep.mount();
+    assert_eq!(recovered.read_sector(1), sector(7));
+    assert_eq!(recovered.mount_report().discarded_bytes, 0);
+}
+
+#[test]
+fn uncertain_truncation_does_not_resurrect_synchronized_journal_bytes() {
+    for power_cut in [false, true] {
+        let storage = MemoryStorage::new();
+        let keep = Keep::Memory(storage.clone());
+        let mut disk = keep.mount();
+        disk.write_batch(&[(1, sector(7))]);
+        disk.finish().unwrap();
+        let mut record = storage.open(NAME).unwrap();
+        storage.fail_next(
+            NAME,
+            Operation::Truncate,
+            Error::new(ErrorKind::StorageUncertain, "destructive cut"),
+        );
+        assert_eq!(
+            record.truncate(HEADER_LEN as u64).unwrap_err().kind,
+            ErrorKind::StorageUncertain
+        );
+        assert_eq!(record.size().unwrap(), HEADER_LEN as u64);
+        assert_eq!(record.sync().unwrap_err().kind, ErrorKind::Usage);
+        drop(record);
+        if power_cut {
+            storage.power_cut();
+        }
+        assert_eq!(storage.contents(NAME).unwrap().len(), HEADER_LEN);
+        let recovered = keep.mount();
+        assert_eq!(recovered.read_sector(1), base().read_sector(1).unwrap());
+        assert_eq!(recovered.mount_report().last_durable_sequence, 0);
+    }
+}
+
+#[test]
+fn a_partial_failed_record_read_never_becomes_a_valid_journal_scan() {
+    let storage = MemoryStorage::new();
+    let keep = Keep::Memory(storage.clone());
+    keep.mount().finish().unwrap();
+    let before = storage.contents(NAME).unwrap();
+    storage.fail_next(
+        NAME,
+        Operation::Read,
+        Error::new(ErrorKind::Storage, "partial read"),
+    );
+    let status = SinkStatus::default();
+    let base = base();
+    assert!(matches!(
+        JournalMedia::open_record(
+            storage.open(NAME).unwrap(),
+            &base,
+            base.byte_len(),
+            status.clone()
+        ),
+        Err(OpenError::Host(_))
+    ));
+    assert_eq!(status.failure().unwrap().operation, "scan");
+    assert_eq!(storage.contents(NAME).unwrap(), before);
+    keep.mount().finish().unwrap();
+}
+
+#[test]
+fn named_journals_accept_sidecar_shaped_record_names_through_the_shared_mapping() {
+    let dir = TempDir::new();
+    let storage = unemu_core_files::FileStorage::open(&dir.0).unwrap();
+    for name in [
+        "record.lock",
+        "record.create-0.tmp",
+        "record.retain-9.tmp",
+        "con.lock",
+    ] {
+        let base = base();
+        let mut disk = JournalMedia::open_record(
+            storage.open(name).unwrap(),
+            &base,
+            base.byte_len(),
+            SinkStatus::default(),
+        )
+        .unwrap();
+        disk.write_batch(&[(0, sector(5))]);
+        disk.finish().unwrap();
+        let mapped = unemu_core_files::file_name(name).unwrap();
+        assert_eq!(
+            unemu_core_files::record_name(&mapped).as_deref(),
+            Some(name)
+        );
+        assert!(dir.0.join(mapped).is_file());
+        let disk = JournalMedia::open_record(
+            storage.open(name).unwrap(),
+            &base,
+            base.byte_len(),
+            SinkStatus::default(),
+        )
+        .unwrap();
+        assert_eq!(disk.read_sector(0), sector(5));
+    }
+}

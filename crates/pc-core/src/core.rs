@@ -38,7 +38,7 @@ static NOTICES: [Notice; 2] = [
 ];
 
 static DESCRIPTION: CoreDescription = CoreDescription::new(
-    ContractVersion::new(0, 3),
+    ContractVersion::new(0, 5),
     "unemupc",
     "unemupc",
     env!("CARGO_PKG_VERSION"),
