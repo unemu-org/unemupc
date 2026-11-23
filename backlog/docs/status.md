@@ -7,6 +7,15 @@ beads (`bd ready --exclude-type epic`, `bd list --type epic`).
 
 Update this when a feature lands, breaks, or gets pulled. Stale status is worse than no status.
 
+- **2026-11-23 — VGA diagnostic registers and colour path:** the machine
+  diagnostic report now appends an optional register-level VGA section with
+  sequencer, CRTC, graphics and attribute registers, PAS/flip-flop phase,
+  PEL mask, DAC mode/address/component, raw DAC 0–15 and the sixteen attribute
+  colours mapped to their final DAC indices and RGB. Observation uses fields
+  directly and shares scanout’s colour-path calculation. Reports for other
+  display models retain their text. This adds diagnostic evidence without
+  changing palette programming or rendering. See
+  [observation §Diagnostic report of a running machine](design/observation.md#diagnostic-report-of-a-running-machine).
 - **2026-11-23 — Four release targets:** the release workflow builds
   `unemupc` for `x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu`
   on Ubuntu 22.04 runners (glibc 2.35 or newer), for `aarch64-apple-darwin`

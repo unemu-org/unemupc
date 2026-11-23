@@ -82,7 +82,7 @@ pub use device::{
     PostPortCfg, RtcStart, Sb16Cfg, SysControlCfg, UartCfg, VgaCfg, VgaTextCfg,
 };
 pub use devices::ata::AtaControllerModel;
-pub use devices::FwCfgFile;
+pub use devices::{FwCfgFile, VgaDiagnostic};
 pub use diagnostic::{A20Diagnostic, MachineDiagnostic};
 pub use drive::{
     DriveConfig, DriveKind, FloppyGeometry, FloppyMediaList, FloppyMedium, HardDiskGeometry,

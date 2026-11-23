@@ -101,6 +101,42 @@ const AC_MASKS: [u8; 21] = [
 const HEADER_LEN: usize = 12 + 4 + 5 + 25 + 9 + 21 + 256 * 3 + 16;
 const SNAPSHOT_LEN: usize = HEADER_LEN + 4 * PLANE_LEN;
 
+/// Read-only IBM VGA register and colour-path state.
+///
+/// IBM VGA/XGA Technical Reference Manual, General Registers, Figs. 2-81–2-89
+/// (attribute controller) and Fig. 2-94 (DAC). See
+/// `backlog/docs/design/observation.md` §Diagnostic report of a running machine.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VgaDiagnostic {
+    /// Miscellaneous Output register.
+    pub misc_output: u8,
+    /// Sequencer registers 00h–04h.
+    pub sequencer: [u8; 5],
+    /// CRT controller registers 00h–18h.
+    pub crtc: [u8; 25],
+    /// Graphics controller registers 00h–08h.
+    pub graphics: [u8; 9],
+    /// Attribute controller registers 00h–14h.
+    pub attribute: [u8; 21],
+    /// Attribute address byte, including Palette Address Source (bit 5).
+    pub attribute_address: u8,
+    /// Whether the next attribute write supplies data rather than an address.
+    pub attribute_expects_data: bool,
+    /// PEL mask applied to the final DAC index.
+    pub pel_mask: u8,
+    /// True in DAC read mode, false in write mode.
+    pub dac_read_mode: bool,
+    /// Shared DAC read/write address.
+    pub dac_address: u8,
+    /// Next DAC component (0 = red, 1 = green, 2 = blue).
+    pub dac_component: u8,
+    /// Raw DAC entries 0–15, with six-bit RGB components.
+    pub dac: [[u8; 3]; 16],
+    /// Attribute colours 0–15: final masked DAC index and its six-bit RGB.
+    /// These describe the attribute path before packed eight-bit pixel pairing.
+    pub shown: [(u8, [u8; 3]); 16],
+}
+
 struct RasterTiming {
     characters: u128,
     horizontal: (u128, u128),
@@ -188,6 +224,44 @@ impl Vga {
             now: VClock::ZERO,
             trace: device::TraceBuffer::default(),
         }
+    }
+
+    /// Observe fields without guest accesses, latch changes or DAC advancement.
+    /// IBM VGA/XGA Technical Reference Manual, Figs. 2-81–2-89 and 2-94.
+    #[must_use]
+    pub fn diagnostic_state(&self) -> VgaDiagnostic {
+        VgaDiagnostic {
+            misc_output: self.misc,
+            sequencer: self.sequencer,
+            crtc: self.crtc,
+            graphics: self.graphics,
+            attribute: self.attribute,
+            attribute_address: self.ac_address,
+            attribute_expects_data: self.ac_data,
+            pel_mask: self.pel_mask,
+            dac_read_mode: self.dac_state == 3,
+            dac_address: self.dac_address,
+            dac_component: self.dac_component,
+            dac: std::array::from_fn(|index| self.palette[index]),
+            shown: std::array::from_fn(|index| {
+                let address = self.attribute_dac_index(index) & self.pel_mask;
+                (address, self.palette_entry(address))
+            }),
+        }
+    }
+
+    /// Attribute colour path shared by text and planar graphics scanout.
+    /// IBM VGA/XGA Technical Reference Manual, Figs. 2-84, 2-86 and 2-89:
+    /// Color Plane Enable, P54S and Color Select precede the DAC PEL mask.
+    fn attribute_dac_index(&self, index: usize) -> u8 {
+        let a = &self.attribute;
+        let entry = a[index & usize::from(a[0x12])];
+        let low = if a[0x10] & 0x80 != 0 {
+            (entry & 15) | ((a[0x14] & 3) << 4)
+        } else {
+            entry
+        };
+        low | ((a[0x14] & 12) << 4)
     }
 
     /// Plane storage in plane order, without changing CPU latches.
@@ -731,15 +805,7 @@ impl Device for Vga {
             (if self.sequencer[1] & 8 != 0 { 2 } else { 1 }) * if wide_pel { 2 } else { 1 },
             scan_repeat,
         );
-        let colours = std::array::from_fn(|index| {
-            let entry = a[index & usize::from(a[0x12])];
-            let low = if a[0x10] & 0x80 != 0 {
-                (entry & 15) | ((a[0x14] & 3) << 4)
-            } else {
-                entry
-            };
-            low | ((a[0x14] & 12) << 4)
-        });
+        let colours = std::array::from_fn(|index| self.attribute_dac_index(index));
         Some(device::GraphicsScanout {
             scroll,
             text,
@@ -791,13 +857,7 @@ impl Device for Vga {
         let lines = u16::from(c[0x12]) | (u16::from(c[7] & 2) << 7) | (u16::from(c[7] & 0x40) << 3);
         let rows = (lines + 1) / u16::from(height) / if c[9] & 0x80 != 0 { 2 } else { 1 };
         let palette = std::array::from_fn(|index| {
-            let entry = a[index & usize::from(a[0x12])];
-            let low = if a[0x10] & 0x80 != 0 {
-                (entry & 15) | ((a[0x14] & 3) << 4)
-            } else {
-                entry
-            };
-            self.palette_entry(low | ((a[0x14] & 12) << 4))
+            self.palette_entry(self.attribute_dac_index(index))
                 .map(|value| (value << 2) | (value >> 4))
         });
         Some(device::PlanarTextState {

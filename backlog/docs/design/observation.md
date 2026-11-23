@@ -923,6 +923,7 @@ Its lines come in a fixed order:
 | `pit` | each 8254 counter: programmed mode, access mode, BCD, count register, counting element, OUT and GATE, and a count not yet loaded or a latch waiting to be read |
 | `a20` | the gate the CPU applies, the 8042 output port's A20 bit and port 92h bit 1 when the board has System Control Port A |
 | `cmos` | the shutdown status byte at offset 0Fh, the NMI mask of port 70h bit 7 and the selected index |
+| `vga` | when register-level VGA is fitted: Miscellaneous Output, sequencer 00h–04h, CRTC 00h–18h, graphics controller 00h–08h, attribute controller 00h–14h, attribute address with PAS and next address/data phase, PEL mask, DAC read/write mode with address and RGB component phase, raw DAC entries 0–15, and each attribute colour’s final DAC index and RGB |
 
 Taking a report performs no guest port or memory-mapped access. Guest memory
 is read from RAM and ROM through the CPU's own map, with the 80286's 24-bit
@@ -934,7 +935,7 @@ expand-down data segment, any offset of an unusable cache) shows as `--` and
 is not read, so the report never presents memory the guest cannot reach
 through CS or SS (Intel 80286 Programmer's Reference Manual, §6.3 and §7.3).
 The PICs are read from their snapshot images, restored into a scratch
-chip. The 8042, the PIT and the RTC are borrowed through the bus, which first
+chip. The 8042, PIT, RTC and register-level VGA are borrowed through the bus, which first
 brings each to the bus clock, as the settle at the start of the next run
 does anyway; their `diagnostic_state` accessors only read fields. A report
 therefore changes nothing the guest can see. MEASURED
@@ -943,6 +944,30 @@ timer, with two keyboard bytes in the 8042 (one in the output buffer, one
 queued) and PIT counter 2's GATE low, takes a report every 997 steps, most at
 a halt; after the same run its twin that took none has the same CPU state,
 time and snapshot of every device.
+
+The VGA section follows `cmos` and is omitted entirely for other display
+models, preserving their report text. All register bytes and DAC indices are
+hexadecimal. Each DAC RGB triple uses the stored six-bit components (for
+example `00002a`), without expanding them to display bytes. `dac 0-7` and
+`dac 8-15` are raw entries, unaffected by PEL mask. The sixteen `shown` lines
+map attribute colours 00h–0Fh through the same read-only colour-path helper as
+text and planar graphics scanout: Color Plane Enable, internal palette,
+P54S, Color Select, then PEL mask. They include RGB from the selected entry,
+even when its DAC index is outside 0–15. This describes the attribute path;
+packed 256-colour output pairs attribute samples into an eight-bit pixel.
+It does not claim that display output is enabled or describe a previously
+captured frame. Register coverage follows the IBM VGA/XGA Technical Reference
+Manual, General Registers, Figs. 2-81–2-89 and 2-94.
+
+`Vga::diagnostic_state` reads fields directly: no status-port read resets the
+attribute flip-flop, no DAC read advances its address or component, and no
+VRAM access changes the CPU latches. Isolation tests on `testkit::MockBus`
+cover both attribute phases and every DAC read/write component phase, compare
+snapshots, and assert that observation emits no guest-access trace. Assembly
+tests program registers through the bus, check the complete VGA report
+section, take two identical reports, then compare guest reads and writes with
+a twin that took no report. The VGA model and palette programming behaviour
+are unchanged; this section provides evidence for palette diagnosis.
 
 ### Guest RAM image
 

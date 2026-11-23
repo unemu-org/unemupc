@@ -11,20 +11,21 @@
 //! virtual time and status; the processor ([`cpu::CpuDiagnostic`]); the
 //! machine's code trail (`machine::CodeTrail`); the last exceptions and
 //! interrupts the guest took (`machine::delivery_tap`); the master and slave 8259;
-//! the 8042; the three 8254 counters; the A20 line and its sources; and the
-//! CMOS shutdown byte and NMI mask. [`std::fmt::Display`] renders it as
-//! plain text in a fixed order. The format is described in
+//! the 8042; the three 8254 counters; the A20 line and its sources; the
+//! CMOS shutdown byte and NMI mask; and the VGA registers and colour path.
+//! [`std::fmt::Display`] renders it as plain text in a fixed order. The format
+//! is described in
 //! `backlog/docs/design/observation.md` §Diagnostic report of a running
 //! machine.
 //!
 //! Taking a report performs no guest port or memory-mapped access. Guest
 //! memory is read from RAM and ROM only. The PIC is read from its snapshot
-//! image. The 8042, the PIT and the RTC are borrowed through the bus, which
+//! image. The 8042, PIT, RTC and VGA are borrowed through the bus, which
 //! first brings each to the bus clock, exactly as the settle at the start of
 //! the next run would; their accessors read fields and change nothing.
 
 use crate::{AssembledMachine, DeviceId};
-use devices::{CmosDiagnostic, I8042Diagnostic, PicDiagnostic, PitDiagnostic};
+use devices::{CmosDiagnostic, I8042Diagnostic, PicDiagnostic, PitDiagnostic, VgaDiagnostic};
 use machine::{RecentDeliveries, TrailEntry};
 use std::fmt;
 
@@ -74,6 +75,8 @@ pub struct MachineDiagnostic {
     pub a20: Option<A20Diagnostic>,
     /// The RTC's CMOS state.
     pub cmos: Option<CmosDiagnostic>,
+    /// Register-level VGA state; absent for other display devices.
+    pub vga: Option<VgaDiagnostic>,
 }
 
 impl AssembledMachine {
@@ -155,6 +158,7 @@ impl AssembledMachine {
             pit: None,
             a20,
             cmos: None,
+            vga: None,
         };
         report.keyboard =
             self.device::<devices::I8042, _>(DeviceId::Keyboard, |kbc| kbc.diagnostic_state());
@@ -163,6 +167,7 @@ impl AssembledMachine {
         });
         report.cmos =
             self.device::<devices::CmosRtc, _>(DeviceId::Rtc, |rtc| rtc.diagnostic_state());
+        report.vga = self.device::<devices::Vga, _>(DeviceId::Vga, |vga| vga.diagnostic_state());
         report
     }
 
@@ -403,6 +408,64 @@ impl fmt::Display for MachineDiagnostic {
                 cmos.index
             )?,
         }
+        if let Some(vga) = &self.vga {
+            write!(f, "vga      misc {:02x}, seq", vga.misc_output)?;
+            for byte in vga.sequencer {
+                write!(f, " {byte:02x}")?;
+            }
+            writeln!(
+                f,
+                ", ac addr {:02x} (pas {}, next {})",
+                vga.attribute_address,
+                u8::from(vga.attribute_address & 0x20 != 0),
+                if vga.attribute_expects_data {
+                    "data"
+                } else {
+                    "address"
+                },
+            )?;
+            for (label, bytes) in [
+                ("crtc", vga.crtc.as_slice()),
+                ("gc", vga.graphics.as_slice()),
+            ] {
+                write!(f, "vga      {label}")?;
+                for byte in bytes {
+                    write!(f, " {byte:02x}")?;
+                }
+                writeln!(f)?;
+            }
+            write!(f, "vga      ac")?;
+            for byte in &vga.attribute[..16] {
+                write!(f, " {byte:02x}")?;
+            }
+            let a = &vga.attribute;
+            writeln!(
+                f,
+                ", mode {:02x} overscan {:02x} plane-enable {:02x} pan {:02x} colour-select {:02x}",
+                a[16], a[17], a[18], a[19], a[20]
+            )?;
+            writeln!(
+                f,
+                "vga      pel-mask {:02x}, dac {} mode, address {:02x}, component {}",
+                vga.pel_mask,
+                if vga.dac_read_mode { "read" } else { "write" },
+                vga.dac_address,
+                vga.dac_component
+            )?;
+            for (group, entries) in vga.dac.chunks(8).enumerate() {
+                write!(f, "vga      dac {}-{}", group * 8, group * 8 + 7)?;
+                for [r, g, b] in entries {
+                    write!(f, " {r:02x}{g:02x}{b:02x}")?;
+                }
+                writeln!(f)?;
+            }
+            for (colour, (index, [r, g, b])) in vga.shown.iter().enumerate() {
+                writeln!(
+                    f,
+                    "vga      shown {colour:02x} -> dac {index:02x} {r:02x}{g:02x}{b:02x}"
+                )?;
+            }
+        }
         Ok(())
     }
 }
@@ -450,6 +513,190 @@ mod tests {
         // As the PC core runs it: a halted guest waits for its next interrupt.
         assembled.machine.set_idle_limit(Some(u64::MAX));
         assembled
+    }
+
+    fn vga_machine() -> crate::AssembledMachine {
+        let mut config = crate::at_vga_text(vec![0xF4]);
+        let card = config
+            .devices
+            .iter_mut()
+            .find(|d| d.id == DeviceId::Vga)
+            .unwrap();
+        card.kind = crate::DeviceKind::VgaRegisters(crate::VgaCfg {});
+        card.ports = crate::VgaCfg::port_windows();
+        config.memory.ram = vec![crate::RamRegion::new(0, 0xA0000)];
+        config.memory.mmio = vec![crate::MmioWindow::new(0xA0000, 0x20000, DeviceId::Vga)];
+        crate::assemble_with_observation_and_options(
+            &config,
+            &crate::ObservationPolicy::default(),
+            crate::AssemblyOptions {
+                allow_unlisted_firmware: true,
+            },
+        )
+        .unwrap()
+    }
+
+    fn vga_out(machine: &mut crate::AssembledMachine, port: u16, value: u8) {
+        machine
+            .machine
+            .bus_mut()
+            .port_write(port, 1, u32::from(value))
+            .unwrap();
+    }
+
+    #[test]
+    fn vga_report_renders_programmed_registers_raw_dac_and_shown_colours() {
+        let mut machine = vga_machine();
+        vga_out(&mut machine, 0x3C2, 0x63);
+        for (port, values) in [
+            (0x3C4, [3, 1, 15, 0, 14].as_slice()),
+            (
+                0x3D4,
+                [
+                    0x5F, 0x4F, 0x50, 0x82, 0x54, 0x80, 0xBF, 0x1F, 0, 0x41, 0, 0, 0, 0, 0, 0, 0,
+                    0, 0, 0, 0, 0, 0, 0, 0,
+                ]
+                .as_slice(),
+            ),
+            (0x3CE, [0, 0, 0, 0, 0, 0x10, 0x0E, 0x0F, 0xFF].as_slice()),
+            (
+                0x3C0,
+                [
+                    0, 1, 2, 3, 4, 5, 0x14, 7, 0x38, 0x39, 0x3A, 0x3B, 0x3C, 0x3D, 0x3E, 0x3F, 1,
+                    0x12, 0x0F, 3, 0,
+                ]
+                .as_slice(),
+            ),
+        ] {
+            for (index, value) in values.iter().enumerate() {
+                vga_out(&mut machine, port, index as u8);
+                vga_out(
+                    &mut machine,
+                    if port == 0x3C0 { port } else { port + 1 },
+                    *value,
+                );
+            }
+        }
+        vga_out(&mut machine, 0x3C6, 0xFF);
+        vga_out(&mut machine, 0x3C8, 0);
+        for index in 0..16 {
+            for value in [index, index + 1, index + 2] {
+                vga_out(&mut machine, 0x3C9, value);
+            }
+        }
+        vga_out(&mut machine, 0x3C8, 0x14);
+        for value in [0x2A, 0x15, 0x3F] {
+            vga_out(&mut machine, 0x3C9, value);
+        }
+        vga_out(&mut machine, 0x3C8, 0x10);
+        vga_out(&mut machine, 0x3C0, 0x20);
+        machine.machine.bus_mut().port_read(0x3DA, 1).unwrap();
+        let report = machine.diagnostic_report("paused");
+        assert_eq!(report, machine.diagnostic_report("paused"));
+        let text = report.to_string();
+        let section = text
+            .lines()
+            .filter(|line| line.starts_with("vga "))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut expected = concat!(
+            "vga      misc 63, seq 03 01 0f 00 0e, ac addr 20 (pas 1, next address)\n",
+            "vga      crtc 5f 4f 50 82 54 80 bf 1f 00 41 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00\n",
+            "vga      gc 00 00 00 00 00 10 0e 0f ff\n",
+            "vga      ac 00 01 02 03 04 05 14 07 38 39 3a 3b 3c 3d 3e 3f, mode 01 overscan 12 plane-enable 0f pan 03 colour-select 00\n",
+            "vga      pel-mask ff, dac write mode, address 10, component 0\n",
+            "vga      dac 0-7 000102 010203 020304 030405 040506 050607 060708 070809\n",
+            "vga      dac 8-15 08090a 090a0b 0a0b0c 0b0c0d 0c0d0e 0d0e0f 0e0f10 0f1011"
+        ).to_string();
+        for (colour, (index, rgb)) in [
+            (0, "000102"),
+            (1, "010203"),
+            (2, "020304"),
+            (3, "030405"),
+            (4, "040506"),
+            (5, "050607"),
+            (0x14, "2a153f"),
+            (7, "070809"),
+            (0x38, "000000"),
+            (0x39, "000000"),
+            (0x3A, "000000"),
+            (0x3B, "000000"),
+            (0x3C, "000000"),
+            (0x3D, "000000"),
+            (0x3E, "000000"),
+            (0x3F, "000000"),
+        ]
+        .iter()
+        .enumerate()
+        {
+            expected.push_str(&format!(
+                "\nvga      shown {colour:02x} -> dac {index:02x} {rgb}"
+            ));
+        }
+        assert_eq!(section, expected);
+        assert!(text.ends_with(&format!("{expected}\n")));
+        let mut legacy = self::machine();
+        assert!(legacy.diagnostic_report("paused").vga.is_none());
+        assert!(!legacy
+            .diagnostic_report("paused")
+            .to_string()
+            .contains("vga "));
+    }
+
+    #[test]
+    fn vga_reports_preserve_guest_ac_writes_and_partial_dac_reads_and_writes() {
+        for read_mode in [false, true] {
+            for expects_data in [false, true] {
+                let mut diagnosed = vga_machine();
+                let mut plain = vga_machine();
+                for machine in [&mut diagnosed, &mut plain] {
+                    vga_out(machine, 0x3C8, 7);
+                    for value in [11, 22, 33] {
+                        vga_out(machine, 0x3C9, value);
+                    }
+                    vga_out(machine, if read_mode { 0x3C7 } else { 0x3C8 }, 7);
+                    machine.machine.bus_mut().port_read(0x3C9, 1).unwrap();
+                    vga_out(machine, 0x3C0, 0x33);
+                    if !expects_data {
+                        vga_out(machine, 0x3C0, 5);
+                    }
+                }
+                let before = diagnosed
+                    .device::<devices::Vga, _>(DeviceId::Vga, device::Device::save)
+                    .unwrap();
+                let report = diagnosed.diagnostic_report("paused");
+                assert_eq!(report, diagnosed.diagnostic_report("paused"));
+                assert_eq!(
+                    before,
+                    diagnosed
+                        .device::<devices::Vga, _>(DeviceId::Vga, device::Device::save)
+                        .unwrap()
+                );
+                let vga = report.vga.unwrap();
+                assert_eq!(
+                    (vga.dac_address, vga.dac_component, vga.dac_read_mode),
+                    (7, 1, read_mode)
+                );
+                assert_eq!(
+                    (vga.attribute_address, vga.attribute_expects_data),
+                    (0x33, expects_data)
+                );
+                for port in [0x3C0, 0x3C9, 0x3C9, 0x3C8] {
+                    assert_eq!(
+                        diagnosed.machine.bus_mut().port_read(port, 1).unwrap(),
+                        plain.machine.bus_mut().port_read(port, 1).unwrap()
+                    );
+                }
+                for machine in [&mut diagnosed, &mut plain] {
+                    vga_out(machine, 0x3C0, 9);
+                    vga_out(machine, 0x3C9, 44);
+                }
+                assert_eq!(
+                    diagnosed.diagnostic_report("paused"),
+                    plain.diagnostic_report("paused")
+                );
+            }
+        }
     }
 
     /// The report's deliveries on the open delivery ROM, run to its final

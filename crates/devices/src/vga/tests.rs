@@ -968,3 +968,81 @@ fn enable_register_observation_is_passive_and_keeps_write_only_latches() {
     assert_eq!(card(&mut b).setup_enable(), 1);
     assert_eq!(b.device().save(), saved);
 }
+
+#[test]
+fn diagnostic_state_preserves_every_ac_and_dac_phase_without_guest_accesses() {
+    for read_mode in [false, true] {
+        for component in 0..3 {
+            for expects_data in [false, true] {
+                let mut b = bus();
+                planar(&mut b);
+                seed(&mut b, 0, [0x12, 0x34, 0x56, 0x78]);
+                b.mmio_read(MEMORY_BASE, 1).unwrap();
+                out(&mut b, 0x3C8, 7);
+                for byte in [11, 22, 33] {
+                    out(&mut b, 0x3C9, byte);
+                }
+                out(&mut b, if read_mode { 0x3C7 } else { 0x3C8 }, 7);
+                for _ in 0..component {
+                    input(&mut b, 0x3C9);
+                }
+                out(&mut b, 0x3C0, 0x33);
+                if !expects_data {
+                    out(&mut b, 0x3C0, 5);
+                }
+                b.device_mut()
+                    .set_trace_policy(device::TracePolicy::Ring { capacity: 32 });
+                let before = b.device().save();
+                let first = card(&mut b).diagnostic_state();
+                assert_eq!(first, card(&mut b).diagnostic_state());
+                assert_eq!(before, b.device().save());
+                assert!(b.device_mut().take_trace().is_empty());
+                assert_eq!(first.attribute_address, 0x33);
+                assert_eq!(first.attribute_expects_data, expects_data);
+                assert_eq!(first.dac_read_mode, read_mode);
+                assert_eq!((first.dac_address, first.dac_component), (7, component));
+                assert_eq!(first.dac[7], [11, 22, 33]);
+                assert_eq!(input(&mut b, 0x3C0), 0x33);
+                assert_eq!(input(&mut b, 0x3C9), [11, 22, 33][usize::from(component)]);
+                out(&mut b, 0x3C0, 9);
+                assert_eq!(
+                    card(&mut b).attribute()[0x13],
+                    if expects_data { 9 } else { 5 }
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn diagnostic_shown_colours_follow_scanout_plane_enable_p54s_select_and_pel_mask() {
+    let mut b = bus();
+    out(&mut b, 0x3C0, 5);
+    out(&mut b, 0x3C0, 0x2E);
+    out(&mut b, 0x3C0, 0x12);
+    out(&mut b, 0x3C0, 7);
+    out(&mut b, 0x3C0, 0x14);
+    out(&mut b, 0x3C0, 0x0D);
+    out(&mut b, 0x3C6, 0xDF);
+    for (mode, expected) in [(0x01, 0xCE), (0x81, 0xDE), (0x80, 0xDE)] {
+        out(&mut b, 0x3C0, 0x10);
+        out(&mut b, 0x3C0, mode);
+        out(&mut b, 0x3C8, expected);
+        for value in [13, 27, 42] {
+            out(&mut b, 0x3C9, value);
+        }
+        let state = card(&mut b).diagnostic_state();
+        assert_eq!(state.shown[13], (expected, [13, 27, 42]));
+        let expanded = [52, 109, 170];
+        if mode & 1 == 0 {
+            assert_eq!(
+                b.device().planar_text_scanout().unwrap().palette[13],
+                expanded
+            );
+        } else {
+            let scanout = b.device().graphics_scanout().unwrap();
+            assert_eq!(scanout.colours[13] & state.pel_mask, expected);
+            assert_eq!(scanout.palette[usize::from(scanout.colours[13])], expanded);
+        }
+    }
+}

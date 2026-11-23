@@ -73,7 +73,7 @@ pub use sys_control::SysControl;
 pub use sys_ctrl_port_a::SysCtrlPortA;
 pub use uart16550::Uart16550;
 pub use upd765::{Drive, DriveType, FloppyGeometry, Upd765};
-pub use vga::Vga;
+pub use vga::{Vga, VgaDiagnostic};
 pub use vga_text::VgaText;
 pub use xt_dma::XtDma;
 pub use xt_nmi::XtNmiMask;
