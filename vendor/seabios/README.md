@@ -6,10 +6,10 @@ at commit `b52ca86e094d19b58e2304417787e96b940e39c6` (2025-06-10).
 Only this README, the build script and our [`config`](config) are committed.
 The clone (`src/`), temporary exports (`build/`) and ROM are gitignored.
 
-This is the fixture-build half of the work. **No board or firmware catalogue
-entry is added.** The `seabios-1.17.0-isa` catalogue entry waits for
-`generic-386-isa`, which needs the 386 CPU model in x86jit. Existing 286
-machines do not use this image. There is no SeaBIOS boot qualification yet;
+The firmware catalogue lists this image as `seabios-1.17.0-isa` for the
+`generic-386-isa` board (`machines/generic-386-seabios.toml`). Existing 286
+machines do not use it. CI builds it in the fixtures lane. There is no SeaBIOS
+boot qualification yet: the pinned CPU core still refuses the 386 reset fetch;
 see [firmware requirements §3.6](../../backlog/docs/design/firmware-and-machine-classes.md#36-phase-b-firmware-requirements-seabios-on-generic-386-isa).
 
 ## Build and tools

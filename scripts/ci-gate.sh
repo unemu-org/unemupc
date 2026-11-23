@@ -56,7 +56,8 @@ case "$step" in
         # unemu-at-bios are built by Nix from their public GitHub repositories
         # over anonymous HTTPS (UNEMU_VGABIOS_FLAKE / UNEMU_VGABIOS_CHECKOUT and
         # UNEMU_AT_BIOS_FLAKE / UNEMU_AT_BIOS_CHECKOUT override the source).
-        # The Kiselev, XTIDE, vgabios and unemu-at-bios
+        # SeaBIOS is built in the separate firmware devShell (cross GCC from
+        # the Nix binary cache). The Kiselev, XTIDE, vgabios and unemu-at-bios
         # scripts also write the pinned source archives of their open
         # images. XTIDE runs after them: it exports its
         # source over the network with Subversion, which Nix supplies, so an
@@ -83,6 +84,8 @@ case "$step" in
             bash vendor/vga-modex-test/build.sh
             echo "== fixtures: vendor/at-privilege-test/build.sh"
             bash vendor/at-privilege-test/build.sh
+            echo "== fixtures: vendor/seabios/fetch.sh"
+            nix develop .#firmware --command bash vendor/seabios/fetch.sh
             echo "== fixtures: vendor/xtide-universal-bios/fetch.sh"
             bash vendor/xtide-universal-bios/fetch.sh
         ')
