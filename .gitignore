@@ -122,3 +122,7 @@ target/
 
 # Local residue from front-end installation media.
 /vendor/shareware/
+
+# Open VGA Mode X test floppy, built from source.
+/vendor/vga-modex-test/build/
+/vendor/vga-modex-test/vga-modex-test-1200.img

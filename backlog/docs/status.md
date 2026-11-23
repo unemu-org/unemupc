@@ -7,6 +7,12 @@ beads (`bd ready --exclude-type epic`, `bd list --type epic`).
 
 Update this when a feature lands, breaks, or gets pulled. Stale status is worse than no status.
 
+- **2026-11-23 — Open 360x240 VGA regression fixture:** the bootable
+  `vga-modex-test` programs unchained byte addressing, single-plane drawing,
+  one-pixel glyphs, write-mode-1 copies, 28 MHz retrace polling and two-page
+  flips. Its independent pixel golden passes all 60 displayed frames on the
+  unchanged VGA model. The reported application fault is not reproduced;
+  no model correction is claimed. See [the evidence](design/vga-modex-test.md).
 - **2026-11-23 — Release 0.0.4:** the first release of the core repository
   after the split. The workspace version is 0.0.4 and
   `pc_config::compat::NEXT_RELEASE` is 0.0.5, so a core row for a feature

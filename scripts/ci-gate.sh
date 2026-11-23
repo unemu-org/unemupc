@@ -79,6 +79,8 @@ case "$step" in
             bash vendor/at-pm-test/build.sh
             echo "== fixtures: vendor/at-loadall-test/build.sh"
             bash vendor/at-loadall-test/build.sh
+            echo "== fixtures: vendor/vga-modex-test/build.sh"
+            bash vendor/vga-modex-test/build.sh
             echo "== fixtures: vendor/at-privilege-test/build.sh"
             bash vendor/at-privilege-test/build.sh
             echo "== fixtures: vendor/xtide-universal-bios/fetch.sh"
