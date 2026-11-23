@@ -19,6 +19,11 @@ on:
         description: Tag of the published release to build, for example v0.1.0
         required: true
         type: string
+      upload:
+        description: Attach the archives to the release (false builds and checks only)
+        required: false
+        default: true
+        type: boolean
 
 # Only the upload job writes, and only to the release.
 permissions:
@@ -50,11 +55,18 @@ jobs:
           # The oldest hosted Ubuntu sets the glibc the binary needs (2.35).
           - target: x86_64-unknown-linux-gnu
             runner: ubuntu-22.04
+          # The hosted arm64 runner keeps the same glibc 2.35 floor as x86-64.
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-22.04-arm
           # Rust targets macOS 11 by default, so the runner's macOS version does
           # not limit users. macos-latest follows GitHub's supported arm64 image:
           # macos-14 is no longer offered and macos-15 queued for capacity.
           - target: aarch64-apple-darwin
             runner: macos-latest
+          # GitHub's last Intel macOS image (offered until about August 2027);
+          # it runs the binary natively, so every check applies.
+          - target: x86_64-apple-darwin
+            runner: macos-15-intel
     env:
       TARGET: ${{ matrix.target }}
       # `--about` names the exact source of the build: <repository>/tree/<tag>.
@@ -88,6 +100,10 @@ jobs:
         run: |
           set -euo pipefail
           rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --no-self-update
+          host=$(rustc -vV | sed -n 's/^host: //p')
+          if [[ $TARGET != "$host" ]]; then
+            rustup target add "$TARGET"
+          fi
           rustc --version
           cargo --version
 
@@ -122,10 +138,15 @@ jobs:
           set -euo pipefail
           cargo_home=${CARGO_HOME:-$HOME/.cargo}
           sysroot=$(rustc --print sysroot)
+          host=$(rustc -vV | sed -n 's/^host: //p')
           failed=0
           for bin in unemupc; do
             file=target/$TARGET/release/$bin
-            "$file" --version
+            # Every target builds on its own architecture today; a cross build
+            # would keep the static checks and skip only this execution.
+            if [[ $TARGET == "$host" ]]; then
+              "$file" --version
+            fi
             list=$RUNNER_TEMP/$bin.strings
             # `-` scans every byte with both GNU and Apple strings; Apple's -a
             # reads only the sections, not the symbol table.
@@ -212,6 +233,8 @@ jobs:
   upload:
     name: upload
     needs: [build]
+    # A manual run with upload=false only builds and checks the archives.
+    if: github.event_name == 'release' || inputs.upload
     runs-on: ubuntu-24.04
     permissions:
       contents: write # gh release upload and gh release edit
@@ -259,7 +282,9 @@ jobs:
           ## Downloads
 
           - Linux x86-64 (glibc 2.35 or newer): `unemupc-<version>-x86_64-unknown-linux-gnu.tar.gz`
+          - Linux arm64 (glibc 2.35 or newer): `unemupc-<version>-aarch64-unknown-linux-gnu.tar.gz`
           - macOS on Apple silicon: `unemupc-<version>-aarch64-apple-darwin.tar.gz`
+          - macOS on Intel: `unemupc-<version>-x86_64-apple-darwin.tar.gz`
 
           Each archive holds `unemupc` (the standalone PC core command line), `LICENSE`,
           `README.md`, `THIRD-PARTY-LICENSES.md` and the notices it quotes. Check a download against `SHA256SUMS`:

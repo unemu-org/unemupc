@@ -556,10 +556,19 @@ gh run list --repo unemu-org/unemupc --workflow release.yml
 gh workflow run release.yml --repo unemu-org/unemupc -f tag=v0.1.0   # build again, replace the assets
 ```
 
-The release gets `unemupc-<version>-x86_64-unknown-linux-gnu.tar.gz` (built
-on Ubuntu 22.04, so it needs glibc 2.35 or newer),
-`unemupc-<version>-aarch64-apple-darwin.tar.gz` (macOS on Apple silicon,
-unsigned) and `SHA256SUMS`. Each archive unpacks to
+The release gets four archives and `SHA256SUMS`:
+
+- `unemupc-<version>-x86_64-unknown-linux-gnu.tar.gz`: Linux x86-64, built
+  on Ubuntu 22.04; needs glibc 2.35 or newer.
+- `unemupc-<version>-aarch64-unknown-linux-gnu.tar.gz`: Linux arm64, built
+  on the hosted Ubuntu 22.04 arm64 runner; the same glibc 2.35 floor.
+- `unemupc-<version>-aarch64-apple-darwin.tar.gz`: macOS on Apple silicon,
+  unsigned, built on `macos-latest`.
+- `unemupc-<version>-x86_64-apple-darwin.tar.gz`: macOS on Intel, unsigned,
+  built on `macos-15-intel`, GitHub's last Intel macOS image (offered until
+  about August 2027).
+
+Each archive unpacks to
 `unemupc-<version>-<target>/` with `unemupc`, `LICENSE`, `README.md`,
 `THIRD-PARTY-LICENSES.md` from `scripts/third-party-licenses.sh` for that
 target, and `notices/`: the repository's own notices that file quotes and
@@ -577,6 +586,10 @@ followed by `commit: <commit>`. A check step fails the job when `strings` finds
 the runner's home, the workspace, cargo's home or the toolchain in a binary,
 or, on macOS, when `otool -L` lists a library outside `/usr/lib` and
 `/System/Library`.
+Every target builds on its own architecture and runs `unemupc --version`;
+should a target ever be cross-compiled, it skips only that execution. A
+manual run (`workflow_dispatch`) with `upload` false builds and checks the
+archives of an existing tag without attaching them to the release.
 
 Verify a download in the folder that holds it and `SHA256SUMS`:
 

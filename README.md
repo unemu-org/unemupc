@@ -69,7 +69,7 @@ there with the front end.
 
 ## Downloads
 
-Binaries for Linux x86-64 and macOS on Apple silicon are attached to each
+Binaries for Linux x86-64 and arm64 (glibc 2.35+), and macOS on Apple silicon and Intel, are attached to each
 [release](https://github.com/unemu-org/unemupc/releases), with `SHA256SUMS`;
 each archive holds `unemupc` (standalone PC core). The release notes say how to check them and how to open the unsigned macOS
 binary. On other platforms, build from source as below.

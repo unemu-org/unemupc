@@ -7,6 +7,14 @@ beads (`bd ready --exclude-type epic`, `bd list --type epic`).
 
 Update this when a feature lands, breaks, or gets pulled. Stale status is worse than no status.
 
+- **2026-11-23 — Four release targets:** the release workflow builds
+  `unemupc` for `x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu`
+  on Ubuntu 22.04 runners (glibc 2.35 or newer), for `aarch64-apple-darwin`
+  on `macos-latest` and for `x86_64-apple-darwin` on `macos-15-intel`; every
+  target runs `--version` and keeps the static checks, notices and packaging.
+  A manual run with `upload` false builds and checks an existing tag without
+  touching its assets. The first such run must still verify the new targets'
+  hosted builds. See [Releases](commands.md#releases).
 - **2026-11-23 — Guest RAM diagnostic image:** `PcMachine::memory_image`
   copies every configured system RAM region in physical address order,
   including extended and upper-memory RAM, independently of A20. Device
