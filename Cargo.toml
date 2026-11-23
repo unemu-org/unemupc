@@ -34,8 +34,8 @@ publish = false
 
 [workspace.dependencies]
 unemupc = { path = "crates/unemupc", version = "0.0.4" }
-machine-view = { version = "0.0.4", git = "https://github.com/unemu-org/unemu-host", rev = "cfa7c3a08c9307a5c542ef27ce44a7fef462578e" }
-unemu-test-core = { version = "0.0.4", git = "https://github.com/unemu-org/unemu-host", rev = "cfa7c3a08c9307a5c542ef27ce44a7fef462578e" }
+machine-view = { version = "0.0.4", git = "https://github.com/unemu-org/unemu-host", rev = "1692a1fcfd6c9900d3074786a54f51c9de3b30f0" }
+unemu-test-core = { version = "0.0.4", git = "https://github.com/unemu-org/unemu-host", rev = "1692a1fcfd6c9900d3074786a54f51c9de3b30f0" }
 winit = "0.30"
 softbuffer = { version = "0.4.8", default-features = false, features = ["x11", "x11-dlopen", "wayland", "wayland-dlopen"] }
 libc = "0.2"

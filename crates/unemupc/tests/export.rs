@@ -12,6 +12,9 @@ use unemu_core_api::{
 };
 use unemu_pc_core::PcCore;
 
+#[path = "../../pc-harness/tests/support/fixtures.rs"]
+mod fixtures;
+
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
@@ -115,6 +118,15 @@ fn launch_from_file(
 
 #[test]
 fn shipped_floppy_and_fixed_disk_configs_have_exact_offline_descriptions() {
+    let (Some(_), Some(_), Some(_), Some(_), Some(_)) = (
+        fixtures::fixture("kiselev-bios/bios-xi8088.bin"),
+        fixtures::fixture("freedos/freedos.img"),
+        fixtures::fixture("unemu-at-bios/bios-unemu-at.bin"),
+        fixtures::fixture("xtide-universal-bios/ide_xtp-r638-ata1f0-8k.bin"),
+        fixtures::fixture("hdd/fat16.img"),
+    ) else {
+        return;
+    };
     for name in ["at-freedos.toml", "at-ide.toml"] {
         let (launch, readers, machine) = launch_from_file(name);
         let text = launch::encode(&launch).unwrap();
@@ -137,6 +149,14 @@ fn shipped_floppy_and_fixed_disk_configs_have_exact_offline_descriptions() {
 
 #[test]
 fn exported_machine_loads_with_relative_images_and_hash_only_firmware() {
+    let (Some(_), Some(_), Some(_), Some(_)) = (
+        fixtures::fixture("freedos/freedos.img"),
+        fixtures::fixture("unemu-at-bios/bios-unemu-at.bin"),
+        fixtures::fixture("xtide-universal-bios/ide_xtp-r638-ata1f0-8k.bin"),
+        fixtures::fixture("hdd/fat16.img"),
+    ) else {
+        return;
+    };
     let (launch, bytes, original) = launch_from_file("at-ide.toml");
     let text = launch::encode(&launch).unwrap();
     let doc = ConfigDocument::new(launch::MEDIA_TYPE, &text);

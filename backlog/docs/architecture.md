@@ -42,7 +42,7 @@ The desktop and command front end live in [unemu](https://github.com/unemu-org/u
 | `application` | `unemupc-view` | `contract`, `emulation`, `pc`, `application` |
 
 Only the application links window and host-audio crates. `machine-view`
-comes from `unemu-host` at `cfa7c3a08c9307a5c542ef27ce44a7fef462578e`,
+comes from `unemu-host` at `1692a1fcfd6c9900d3074786a54f51c9de3b30f0`,
 sharing this workspace's contract 0.5 pin. Host elapsed time paces the session;
 it never enters the emulation layer. The window reuses `unemupc::run`'s
 loader, including resolved names and firmware warnings, then calls

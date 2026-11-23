@@ -909,7 +909,7 @@ dependencies = [
 [[package]]
 name = "machine-view"
 version = "0.0.4"
-source = "git+https://github.com/unemu-org/unemu-host?rev=cfa7c3a08c9307a5c542ef27ce44a7fef462578e#cfa7c3a08c9307a5c542ef27ce44a7fef462578e"
+source = "git+https://github.com/unemu-org/unemu-host?rev=1692a1fcfd6c9900d3074786a54f51c9de3b30f0#1692a1fcfd6c9900d3074786a54f51c9de3b30f0"
 dependencies = [
  "cpal",
  "objc2 0.6.5",
@@ -2021,7 +2021,7 @@ dependencies = [
 [[package]]
 name = "unemu-test-core"
 version = "0.0.4"
-source = "git+https://github.com/unemu-org/unemu-host?rev=cfa7c3a08c9307a5c542ef27ce44a7fef462578e#cfa7c3a08c9307a5c542ef27ce44a7fef462578e"
+source = "git+https://github.com/unemu-org/unemu-host?rev=1692a1fcfd6c9900d3074786a54f51c9de3b30f0#1692a1fcfd6c9900d3074786a54f51c9de3b30f0"
 dependencies = [
  "unemu-core-api",
 ]
