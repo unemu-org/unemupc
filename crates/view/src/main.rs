@@ -65,6 +65,12 @@ impl App {
         self.controller.pointer(position);
     }
 
+    fn update_title(&self) {
+        if let Some(window) = &self.window {
+            window.set_title(&self.controller.window_title(&self.title));
+        }
+    }
+
     fn paint(&mut self) -> anyhow::Result<()> {
         let Some(window) = &self.window else {
             return Ok(());
@@ -108,7 +114,7 @@ impl ApplicationHandler for App {
             let window = Arc::new(
                 event_loop.create_window(
                     Window::default_attributes()
-                        .with_title(&self.title)
+                        .with_title(self.controller.window_title(&self.title))
                         .with_inner_size(LogicalSize::new(960, 720)),
                 )?,
             );
@@ -141,7 +147,8 @@ impl ApplicationHandler for App {
     }
 
     fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
-        self.controller.focus(false);
+        self.controller.focus(false, self.elapsed());
+        self.update_title();
         self.controller.occlude(true, self.elapsed());
     }
 
@@ -162,7 +169,16 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::Occluded(occluded) => self.controller.occlude(occluded, self.elapsed()),
-            WindowEvent::Focused(focused) => self.controller.focus(focused),
+            WindowEvent::Focused(focused) => {
+                self.controller.focus(focused, self.elapsed());
+                self.update_title();
+            }
+            #[cfg(target_os = "macos")]
+            WindowEvent::ModifiersChanged(modifiers) => {
+                self.controller
+                    .modifiers_changed(modifiers.state(), self.elapsed());
+                self.update_title();
+            }
             WindowEvent::KeyboardInput { event, .. } => {
                 if let PhysicalKey::Code(key) = event.physical_key {
                     match self.controller.key(
@@ -175,6 +191,7 @@ impl ApplicationHandler for App {
                         Ok(false) => {}
                         Err(error) => self.fail(error, event_loop),
                     }
+                    self.update_title();
                 }
             }
             WindowEvent::CursorMoved { position, .. } => {

@@ -23,6 +23,10 @@ impl ContentSource for Source {
 }
 
 fn controller(extra: &str) -> (Controller, MemoryStorage) {
+    controller_at_speed(extra, Speed::Normal)
+}
+
+fn controller_at_speed(extra: &str, speed: Speed) -> (Controller, MemoryStorage) {
     let text = format!(
         "unemu-test-core 1\nkeyboard 0\npointer 1 3\necho-input\nresets soft,hard\n{extra}\n"
     );
@@ -46,7 +50,7 @@ fn controller(extra: &str) -> (Controller, MemoryStorage) {
             Rc::new(storage.clone()),
         ))
         .unwrap();
-    let mut controller = Controller::new(machine, Speed::Normal, &mut Vec::new()).unwrap();
+    let mut controller = Controller::new(machine, speed, &mut Vec::new()).unwrap();
     controller
         .session
         .audio
@@ -214,8 +218,8 @@ fn held_letter_is_not_reinterpreted_as_a_new_chord_and_focus_loss_clears_modifie
     key(&mut c, AltLeft, Pressed);
     key(&mut c, KeyP, Pressed);
     assert!(!c.paused);
-    c.focus(false);
-    c.focus(true);
+    c.focus(false, Duration::from_millis(20));
+    c.focus(true, Duration::from_millis(20));
     key(&mut c, KeyP, Pressed);
     assert!(!c.paused);
     assert!(tick(&mut c, 20).contains("ReleaseAll"));
@@ -262,4 +266,195 @@ fn failed_finish_is_reported_and_never_retried_by_later_exit_callbacks() {
     assert!(storage.durable(BATTERY_RECORD).unwrap().is_empty());
     c.close(&mut Vec::new()).unwrap();
     assert!(storage.durable(BATTERY_RECORD).unwrap().is_empty());
+}
+
+#[test]
+fn fast_hold_restores_each_startup_speed_and_its_audio_policy() {
+    for speed in Speed::ALL {
+        let (mut c, _) = controller_at_speed("", speed);
+        key(&mut c, ControlLeft, Pressed);
+        key(&mut c, AltLeft, Pressed);
+        key(&mut c, KeyT, Pressed);
+        assert_eq!(c.session.pacing.effective(), Speed::Unlimited);
+        assert!(c.session.audio.muted());
+        key(&mut c, KeyT, Pressed);
+        assert_eq!(c.session.pacing.effective(), Speed::Unlimited);
+        key(&mut c, KeyT, Released);
+        assert_eq!(c.session.pacing.effective(), speed);
+        assert_eq!(c.session.audio.muted(), !speed.audio_enabled());
+    }
+}
+
+#[test]
+fn fast_focus_loss_ends_hold_and_clears_chord_modifiers() {
+    let (mut c, _) = controller_at_speed("", Speed::Double);
+    key(&mut c, ControlLeft, Pressed);
+    key(&mut c, AltLeft, Pressed);
+    key(&mut c, KeyT, Pressed);
+    assert_eq!(c.session.pacing.effective(), Speed::Unlimited);
+    c.focus(false, Duration::from_millis(20));
+    assert_eq!(c.session.pacing.effective(), Speed::Double);
+    c.focus(true, Duration::from_millis(20));
+    key(&mut c, KeyT, Released);
+    let messages = tick(&mut c, 20);
+    assert!(!messages.contains("key: Key(23)"), "{messages}");
+    key(&mut c, KeyT, Pressed);
+    assert_eq!(c.session.pacing.effective(), Speed::Double);
+}
+
+#[test]
+fn fast_toggle_restores_each_startup_speed_and_ignores_repeats() {
+    for speed in Speed::ALL {
+        let (mut c, _) = controller_at_speed("", speed);
+        key(&mut c, ControlLeft, Pressed);
+        key(&mut c, AltLeft, Pressed);
+        key(&mut c, KeyU, Pressed);
+        assert_eq!(c.session.pacing.effective(), Speed::Unlimited);
+        key(&mut c, KeyU, Pressed);
+        assert_eq!(c.session.pacing.effective(), Speed::Unlimited);
+        key(&mut c, KeyU, Released);
+        assert_eq!(c.session.pacing.effective(), Speed::Unlimited);
+        c.focus(false, Duration::from_millis(20));
+        c.focus(true, Duration::from_millis(20));
+        assert_eq!(c.session.pacing.effective(), Speed::Unlimited);
+        chord(&mut c, KeyU);
+        assert_eq!(c.session.pacing.effective(), speed);
+        assert_eq!(c.session.audio.muted(), !speed.audio_enabled());
+    }
+}
+
+#[test]
+fn fast_hold_and_toggle_keep_their_states_independent() {
+    let (mut c, _) = controller_at_speed("", Speed::Quadruple);
+    key(&mut c, ControlLeft, Pressed);
+    key(&mut c, AltLeft, Pressed);
+    key(&mut c, KeyT, Pressed);
+    key(&mut c, KeyU, Pressed);
+    key(&mut c, KeyU, Released);
+    key(&mut c, KeyT, Released);
+    assert_eq!(c.session.pacing.effective(), Speed::Unlimited);
+    key(&mut c, KeyT, Pressed);
+    key(&mut c, KeyU, Pressed);
+    key(&mut c, KeyU, Released);
+    assert_eq!(c.session.pacing.effective(), Speed::Unlimited);
+    key(&mut c, KeyT, Released);
+    assert_eq!(c.session.pacing.effective(), Speed::Quadruple);
+}
+
+#[test]
+fn fast_chord_letters_never_reach_guest_but_plain_letters_do() {
+    let (mut c, _) = controller("");
+    chord(&mut c, KeyT);
+    chord(&mut c, KeyU);
+    chord(&mut c, KeyU);
+    let messages = tick(&mut c, 20);
+    for letter in [Key::T, Key::U] {
+        for state in [KeyState::Pressed, KeyState::Released] {
+            let event = format!("{:?}", InputEvent::key(PortId(0), letter, state));
+            assert!(!messages.contains(&event), "{messages}");
+        }
+    }
+    for letter in [KeyT, KeyU] {
+        key(&mut c, letter, Pressed);
+        key(&mut c, letter, Released);
+    }
+    let messages = tick(&mut c, 40);
+    for letter in [Key::T, Key::U] {
+        for state in [KeyState::Pressed, KeyState::Released] {
+            let event = format!("{:?}", InputEvent::key(PortId(0), letter, state));
+            assert!(messages.contains(&event), "{messages}");
+        }
+    }
+}
+
+#[test]
+fn fast_held_guest_letter_is_not_reinterpreted_as_a_chord() {
+    for letter in [KeyT, KeyU] {
+        let (mut c, _) = controller("");
+        key(&mut c, letter, Pressed);
+        key(&mut c, ControlLeft, Pressed);
+        key(&mut c, AltLeft, Pressed);
+        key(&mut c, letter, Pressed);
+        assert_eq!(c.session.pacing.effective(), Speed::Normal);
+        key(&mut c, letter, Released);
+        assert_eq!(c.session.pacing.effective(), Speed::Normal);
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn fast_command_chords_hold_toggle_and_consume_letters_on_macos() {
+    let (mut c, _) = controller("");
+    key(&mut c, SuperLeft, Pressed);
+    key(&mut c, KeyT, Pressed);
+    assert_eq!(c.session.pacing.effective(), Speed::Unlimited);
+    key(&mut c, SuperLeft, Released);
+    assert_eq!(c.session.pacing.effective(), Speed::Normal);
+    key(&mut c, KeyT, Released);
+    key(&mut c, SuperRight, Pressed);
+    key(&mut c, KeyU, Pressed);
+    key(&mut c, KeyU, Released);
+    assert_eq!(c.session.pacing.effective(), Speed::Unlimited);
+    key(&mut c, KeyU, Pressed);
+    key(&mut c, KeyU, Released);
+    assert_eq!(c.session.pacing.effective(), Speed::Normal);
+    key(&mut c, SuperRight, Released);
+    let messages = tick(&mut c, 20);
+    assert!(!messages.contains("key: Key(23)"), "{messages}");
+    assert!(!messages.contains("key: Key(24)"), "{messages}");
+}
+
+#[test]
+fn fast_window_title_tracks_effective_speed_and_returns_to_machine_name() {
+    for (speed, expected) in [
+        (Speed::Normal, "at-games-open"),
+        (Speed::Double, "at-games-open — 200%"),
+        (Speed::Quadruple, "at-games-open — 400%"),
+        (Speed::Unlimited, "at-games-open — unlimited"),
+    ] {
+        let (mut c, _) = controller_at_speed("", speed);
+        assert_eq!(c.window_title("at-games-open"), expected);
+        key(&mut c, ControlLeft, Pressed);
+        key(&mut c, AltLeft, Pressed);
+        key(&mut c, KeyT, Pressed);
+        assert_eq!(c.window_title("at-games-open"), "at-games-open — unlimited");
+        key(&mut c, KeyT, Released);
+        assert_eq!(c.window_title("at-games-open"), expected);
+        chord(&mut c, KeyU);
+        assert_eq!(c.window_title("at-games-open"), "at-games-open — unlimited");
+        chord(&mut c, KeyU);
+        assert_eq!(c.window_title("at-games-open"), expected);
+    }
+}
+
+#[test]
+fn fast_releasing_a_modifier_ends_hold_without_forwarding_t() {
+    for modifier in [ControlLeft, AltLeft] {
+        let (mut c, _) = controller("");
+        key(&mut c, ControlLeft, Pressed);
+        key(&mut c, AltLeft, Pressed);
+        key(&mut c, KeyT, Pressed);
+        assert_eq!(c.session.pacing.effective(), Speed::Unlimited);
+        key(&mut c, modifier, Released);
+        assert_eq!(c.session.pacing.effective(), Speed::Normal);
+        key(&mut c, KeyT, Pressed);
+        key(&mut c, KeyT, Released);
+        let messages = tick(&mut c, 20);
+        assert!(!messages.contains("key: Key(23)"), "{messages}");
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn fast_command_modifier_notification_alone_ends_hold() {
+    use winit::keyboard::ModifiersState;
+    let (mut c, _) = controller("");
+    key(&mut c, SuperLeft, Pressed);
+    key(&mut c, KeyT, Pressed);
+    assert_eq!(c.session.pacing.effective(), Speed::Unlimited);
+    c.modifiers_changed(ModifiersState::empty(), Duration::from_millis(20));
+    assert_eq!(c.session.pacing.effective(), Speed::Normal);
+    key(&mut c, KeyT, Released);
+    let messages = tick(&mut c, 20);
+    assert!(!messages.contains("key: Key(23)"), "{messages}");
 }

@@ -7,6 +7,14 @@ beads (`bd ready --exclude-type epic`, `bd list --type epic`).
 
 Update this when a feature lands, breaks, or gets pulled. Stale status is worse than no status.
 
+- **2026-11-23 — Viewer speed chords:** `unemupc-view` holds Unlimited with
+  Ctrl+Alt+T (⌘T on macOS) and toggles sticky Unlimited with Ctrl+Alt+U
+  (⌘U on macOS). Releasing the hold or losing focus restores the selected
+  speed unless sticky Unlimited remains active; toggling it off returns to
+  `--speed` (100% by default). The title shows accelerated speed, and shared
+  session policy mutes accelerated audio. Window-free controller tests cover
+  releases, focus loss, sticky/hold interplay and guest-key suppression.
+  See [Viewing a machine](commands.md#viewing-a-machine).
 - **2026-11-23 — Minimal PC picture window:** `unemupc-view --machine FILE`
   reuses the standalone machine loader, with shared `unemu-host` sessions for
   keyboard, pointer capture, pacing and host audio. A winit/softbuffer

@@ -18,6 +18,8 @@ pub type Result<T> = std::result::Result<T, Box<dyn Error>>;
 pub struct Controller {
     pub session: Session,
     pub paused: bool,
+    startup_speed: Speed,
+    unlimited: bool,
     focused: bool,
     occluded: bool,
     keys: BTreeSet<KeyCode>,
@@ -40,6 +42,8 @@ impl Controller {
         Ok(Self {
             session,
             paused: false,
+            startup_speed: speed,
+            unlimited: false,
             focused: true,
             occluded: false,
             keys: BTreeSet::new(),
@@ -81,13 +85,17 @@ impl Controller {
         use KeyCode::*;
         let fresh = if state == ElementState::Pressed {
             self.keys.insert(key)
-        } else {
-            self.keys.remove(&key);
+        } else if self.keys.remove(&key) {
             false
+        } else {
+            return Ok(false);
         };
         if self.swallowed.contains(&key) {
             if state == ElementState::Released {
                 self.swallowed.remove(&key);
+                if key == KeyT {
+                    self.session.hold_fast_forward(false, elapsed);
+                }
             }
             return Ok(false);
         }
@@ -98,16 +106,40 @@ impl Controller {
             .iter()
             .any(|k| self.keys.contains(k));
         let alt = [AltLeft, AltRight].iter().any(|k| self.keys.contains(k));
-        let command_release = cfg!(target_os = "macos")
-            && key == KeyG
+        let command = cfg!(target_os = "macos")
             && [SuperLeft, SuperRight]
                 .iter()
-                .any(|k| self.keys.contains(k))
-            && self.session.mouse.captured();
-        if fresh && (command_release || (control && alt && matches!(key, KeyR | KeyP | KeyQ))) {
+                .any(|k| self.keys.contains(k));
+        if state == ElementState::Released
+            && matches!(
+                key,
+                ControlLeft | ControlRight | AltLeft | AltRight | SuperLeft | SuperRight
+            )
+            && !(control && alt || command)
+        {
+            self.session.hold_fast_forward(false, elapsed);
+        }
+        let command_chord = command
+            && (matches!(key, KeyT | KeyU) || (key == KeyG && self.session.mouse.captured()));
+        if fresh
+            && (command_chord
+                || (control && alt && matches!(key, KeyR | KeyP | KeyQ | KeyT | KeyU)))
+        {
             self.swallowed.insert(key);
             match key {
                 KeyG => self.session.release_pointer(),
+                KeyT => self.session.hold_fast_forward(true, elapsed),
+                KeyU => {
+                    self.unlimited = !self.unlimited;
+                    self.session.select_speed(
+                        if self.unlimited {
+                            Speed::Unlimited
+                        } else {
+                            self.startup_speed
+                        },
+                        elapsed,
+                    );
+                }
                 KeyR => {
                     self.session.release_pointer();
                     self.session.reset(ResetKind::Soft, elapsed, warnings)?;
@@ -142,9 +174,38 @@ impl Controller {
         Ok(false)
     }
 
-    pub fn focus(&mut self, focused: bool) {
+    pub fn window_title(&self, name: &str) -> String {
+        let speed = self.session.pacing.effective();
+        if speed == Speed::Normal {
+            name.to_owned()
+        } else {
+            format!("{name} — {}", speed.label().to_lowercase())
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn modifiers_changed(
+        &mut self,
+        modifiers: winit::keyboard::ModifiersState,
+        elapsed: Duration,
+    ) {
+        // macOS can report Command release without a keyboard event.
+        if !modifiers.super_key() {
+            for key in [KeyCode::SuperLeft, KeyCode::SuperRight] {
+                if self.keys.remove(&key) {
+                    self.session.key_event(key, ElementState::Released);
+                }
+            }
+            if !(modifiers.control_key() && modifiers.alt_key()) {
+                self.session.hold_fast_forward(false, elapsed);
+            }
+        }
+    }
+
+    pub fn focus(&mut self, focused: bool, elapsed: Duration) {
         self.focused = focused;
         if !focused {
+            self.session.hold_fast_forward(false, elapsed);
             self.keys.clear();
             self.swallowed.clear();
         }

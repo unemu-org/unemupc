@@ -77,6 +77,8 @@ Linux also needs `pkg-config` and `libasound2-dev`; the Nix devShell supplies
 both through `pkg-config` and `alsa-lib`.
 
 The window title is the resolved machine name (the file stem when unnamed).
+While the effective speed differs from 100%, it appends the speed, for example
+`at-games-open — 200%` or `at-games-open — unlimited`.
 It shows the first configured display, cropped to the visible picture,
 scaled with nearest sampling to the machine's stated aspect and letterboxed
 in black. This is a bare picture window, with no menus, overlays or GUI
@@ -88,9 +90,18 @@ Messages, warnings and errors go to stderr.
 | --- | --- |
 | Soft reset | Ctrl+Alt+R |
 | Pause / resume | Ctrl+Alt+P |
+| Hold for Unlimited | Ctrl+Alt+T; ⌘T on macOS |
+| Toggle sticky Unlimited | Ctrl+Alt+U; ⌘U on macOS |
 | Finish and quit | Ctrl+Alt+Q, or close the window |
 | Capture the relative pointer | Click inside the picture; this first click is swallowed |
 | Release the pointer | Ctrl+Alt+G; Command+G on macOS also works, as in the front end |
+
+Holding the Unlimited chord overrides the selected `--speed` (100% by default)
+until the letter or a chord modifier is released, or the window loses focus
+or is suspended. The sticky toggle survives focus loss; toggling it off
+returns to `--speed`. A hold keeps Unlimited active even when the sticky toggle
+is turned off, until the hold ends. The chord letters never reach the guest.
+Audio follows the effective speed, so either Unlimited control mutes it.
 
 Focus loss, pause and suspension release capture. Pausing keeps the last
 picture and stops advancement; resuming re-anchors pacing without catching
