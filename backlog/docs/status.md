@@ -26,6 +26,9 @@ prints `DOS32-VER-DONE`, then reaches `A:\>`. Each test then types
 second screen too (13,681,937/14,857,941 retired on 386;
 16,581,984/17,657,988 on either 486, raw/VCPI).
 
+**MEASURED revalidation at `6a38ae49`:** all six raw/VCPI goldens keep
+these exact retired counts and screen hashes, including the following command.
+
 CPU diagnostics preserve full CR0. Samples in both client loops observe
 PE=1, VM=0 and PG=1 with VCPI (PG=0 raw); printed CR0 independently agrees:
 00000001/80000001 on 386, 00000011/80000011 on 486. The six renamed
@@ -66,13 +69,18 @@ through 25 MHz and none of the listed 486 clocks fits that loop. These are
 workload-specific ceilings, not a game-performance promise.
 See [clock mapping, sources, presets and measurement method](design/machine-files.md#nominal-cpu-clocks).
 
-**MEASURED after paging repin `d8bf798e`:** the same release example now
-also measures paged protected32. Three 10-million-instruction samples give
-**1.832–1.888 MIPS** on the 386 and **1.837–1.854 MIPS** on the early 486DX.
-Unpaged protected32 ranges are 8.066–8.172 and 7.795–7.853 MIPS respectively.
-The walker is uncached and paged blocks contain one instruction. These are
-shared-host throughput measurements, not a change to guest retired counts;
-see [all rates and wall times](design/machine-files.md#measured-speed-ceilings).
+**MEASURED 2026-11-24 after TLB repin
+`6a38ae4964555495c2b5c82ef72fea34e686c0b4`**, release, ARM64 macOS host class:
+three 10-million-retired-instruction samples give paged protected32
+**3.003–3.125 MIPS** on the 386 and **1.900–2.466 MIPS** on the early 486DX,
+versus the previous 1.832–1.888 / 1.837–1.854 MIPS. The core now has a
+per-vCPU TLB and reusable paged source proofs. Real16 is 79.794–86.301 MIPS
+across the boards, protected16 8.310–9.001, protected32 7.502–7.700 (386)
+and 6.134–6.744 (486). All 24 samples retire exactly 10 million instructions.
+Unpaged rates are below the previous baseline; shared-host load was not
+controlled, so this does not isolate a CPU regression. The benchmark keeps its guest clock ratios and
+10-million-instruction sample size. See
+[all rates, wall times and baseline comparison](design/machine-files.md#measured-speed-ceilings).
 
 ## FreeDOS on generic ISA boards (2026-11-24)
 
@@ -132,17 +140,23 @@ The serial-only counts in the older board entries below are historical.
 
 ## test386 full-machine validation (2026-11-24)
 
-**MEASURED**, x86jit `fc07c81f580689c31f182f4421fb9cc5f07374d1`: all three
-CPUs produce POST **`00 01 02 03 04 05 06 08 09 20 21 22 0b 0c 0d 0e 0f
-10 11`**, zero ASCII bytes, and **1,413,097** retired instructions. All ten
-not-present paging rows now pass. The next stop is the first CPL-3 write
-protection #PF(7), at 00AB:9F88. The handler expects PDE.A=0; the CPU sets
-both PDE/PTE A bits, as required for 486 operand protection faults and
-retained as deterministic 386 policy. The golden asserts the handler's
-A-bit check and error HLT at 00D0:FE89; FFh completion remains unreached.
-No board defect or vendor patch is involved. See
-[coverage and CPU findings](design/protected-mode-gaps.md#test386-full-machine-validation-2026-11-24)
-and the [absent-FPU audit](design/protected-mode-gaps.md#repin-and-absent-coprocessor-audit-2026-11-24).
+**MEASURED**, x86jit `6a38ae4964555495c2b5c82ef72fea34e686c0b4`:
+the 80386DX completes all 74 paging rows, the PTE.D read/write check and
+POST 12–16. It stops at POST 17, **1,429,164** retired instructions, on
+`ARPL word [20000h],BX` at 00D0:B51C: test386 expects no write/fault when
+RPLs are equal in a read-only DS; the CPU's deliberate writable-destination
+check delivers #GP(0). Upstream's BOCHS knob skips that later check, but
+our pinned image is unchanged. This is a CPU-policy/diagnostic mismatch,
+not a board defect or an independently measured physical-chip result.
+
+Both 486 entries retain POST 11, **1,413,097** retired instructions and
+the row-11 user write #PF(7). Their PDE/PTE A bits are set, D clear:
+**486-correct under Intel486 PRM §9.9.14**, rejected by this 386-oriented
+image. No configuration knob accepts 486 A-bit behavior. All three produce
+zero ASCII bytes and reach error HLT at 00D0:FE89; FFh completion remains
+unreached. The goldens sample fault causes and pin distinct final deliveries.
+See [coverage and CPU findings](design/protected-mode-gaps.md#test386-full-machine-validation-2026-11-24)
+and the [fixture contract](../../vendor/test386/README.md).
 
 ## Virtual-8086 DOS monitor on generic ISA boards (2026-11-24)
 
@@ -182,10 +196,13 @@ transcripts and retired counts are pinned on all three models, including
 small bounded run chunks. The CPU requires page tables in RAM and returns
 a typed refusal for table storage in device/ROM regions. V86 coverage is recorded above.
 
-Host writes, partial register restores and RAM-preserving CPU resets now call
+At CPU pin `6a38ae49`, host writes, partial register restores and RAM-preserving CPU resets call
 `invalidate_paging`; EMS restores use the host-write path. Whole-machine
 snapshots remain deferred. DMA keeps physical writes and the normal SMC
-notification path without a paging flush per byte. See the
+notification path without a paging flush per byte. The per-vCPU TLB can retain
+stale mappings until a guest CR3 reload or 486 INVLPG; host edits instead use
+the explicit adapter barrier. Remapping tests cover fetches, operands and
+equal-byte/value restores. See the
 [restore audit](design/protected-mode-gaps.md#paging-restore-audit).
 
 ## Generic 486 ISA board (2026-11-24)

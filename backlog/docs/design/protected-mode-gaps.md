@@ -11,6 +11,11 @@ The raw variant uses DOS/32A's own host; the VCPI variant first loads
 **JemmEx 5.85**, `LOAD NOEMS NORAM NOVMW`. The six normal goldens are named
 `*_seabios_freedos_dos32a_{raw,vcpi}` in the generic386/generic486 binaries.
 
+**MEASURED revalidation at `6a38ae4964555495c2b5c82ef72fea34e686c0b4`:**
+all six raw/VCPI goldens retain their exact screen hashes and retired counts,
+including the following keyboard command. Wall times below are the earlier
+fc07c81f samples, not a timing comparison with the TLB repin.
+
 All runs print `DOS32-PM32-BEGIN`, a live CR0 line, and
 `DOS32-1M-SUM=FFFE0000`. The client allocates 1 MiB above 1 MiB through DPMI
 0501h, fills and sums 262,144 dwords, frees it with 0502h and exits with
@@ -88,7 +93,7 @@ remain `be15dc9ad686ee5c33d21165e6ee837a1c6875b0acf5cae0935b7e2faaf7bc7c`
 
 ## test386 full-machine validation (2026-11-24)
 
-**MEASURED**, CPU pin `fc07c81f580689c31f182f4421fb9cc5f07374d1`, upstream
+**MEASURED**, CPU pin `6a38ae4964555495c2b5c82ef72fea34e686c0b4`, upstream
 test386 commit `cfd052d1e64d5375dea5a681c1eadeed64ceda2c`:
 `test386_golden` boots the unchanged 64 KiB ROM at F0000h on the 80386DX
 and both 80486DX generic ISA boards. E0000h is FFh padding for the board's
@@ -96,12 +101,15 @@ and both 80486DX generic ISA boards. E0000h is FFh padding for the board's
 `ROM128=0` remain unchanged; see the
 [fixture recipe](../../../vendor/test386/README.md).
 
-All three produce POST **`00 01 02 03 04 05 06 08 09 20 21 22 0b 0c 0d
-0e 0f 10 11`**, zero ASCII bytes and **1,413,097** retired instructions,
-then error HLT at **00D0:FE89** (next EIP FE8Ah). Initial wall times were
-0.81–0.86 s for three concurrent tests. The cap is 5,000,000 virtual units.
-FFh completion is not reached. The stream is unchanged, but the diagnostic
-advances 3,322 instructions past the previous stop within POST 11.
+| CPU | POST stream | Retired at error HLT |
+| --- | --- | ---: |
+| 80386DX | `00 01 02 03 04 05 06 08 09 20 21 22 0b 0c 0d 0e 0f 10 11 12 13 14 15 16 17` | **1,429,164** |
+| both 80486DX entries | `00 01 02 03 04 05 06 08 09 20 21 22 0b 0c 0d 0e 0f 10 11` | **1,413,097** |
+
+All produce zero ASCII bytes and reach the shared error HLT at
+**00D0:FE89** (next EIP FE8Ah), rather than FFh completion. The bound is
+5,000,000 virtual units. The 386 advances 16,067 retired instructions from
+the prior row-11 stop; both 486 stops and their counts are unchanged.
 
 | POST | Coverage at this pin |
 | --- | --- |
@@ -112,51 +120,87 @@ advances 3,322 instructions past the previous stop within POST 11.
 | 21 | V86 entry/exit, IOPL-sensitive faults, TSS bitmap denial/allowance and interrupt checks complete. ROM128-only 16-bit-gate checks stay excluded. |
 | 22 | Common task setup executes; extended task-switch tests are ROM128-only and are not claimed. |
 | 0b–10 | Protected segment moves, sign/zero extension, LEA, segment overrides and string/REP tests complete. |
-| 11 | All ten not-present PDE/PTE rows and the first user read-only read pass; the first user write-protection fault reaches its handler, which rejects PDE.A=1. |
-| 12 onward, FF | Unreached; POST numbers are not execution order. |
+| 11, 386 | All 74 paging rows complete, followed by the read-then-write PTE.D check. |
+| 11, both 486 | All ten not-present rows and the first user read-only read pass; row index 11 rejects the architecturally correct fault-time A bits. |
+| 12–16, 386 | Other memory-access faults, bit scans, 16/32-bit bit tests, register/memory SETcc and protected calls complete. |
+| 17, 386 | Register ARPL and writable-memory adjustment pass; the unchanged-selector ARPL in a read-only segment faults. |
+| 18 onward, FF | Unreached; POST numbers are not execution order. |
 
 ### CPU FINDINGS
 
-**MEASURED: CPU-policy/diagnostic-expectation mismatch, no board defect.**
-`src/test386.asm:1297–1328` iterates the table. The failing row is
+**MEASURED: 386 ARPL CPU-policy/diagnostic-expectation mismatch, no board
+defect.** `src/test386.asm:1483–1487` makes DS read-only after the earlier
+ARPL changed the memory selector from FFF0h to FFF2h. At **00D0:B51C**,
+linear **000FB51C**, bytes **`63 1D 00 00 02 00`** encode
+`ARPL word [00020000h],BX`. DS=001Ch, base=0002B000h,
+limit=000FFFFFh, attributes=0091h. The operand's physical address
+**0004B000h** contains **FFF2h** and BX=0002h, so the RPLs are equal.
+Test386 expects no write, ZF=0 and continuation without an exception.
+Actual: **#GP(0)** at retired **1,429,159**, CPL 0→0, VM 0→0; the default
+handler reaches the error HLT five retired instructions later. Operand
+memory remains FFF2h. The golden samples the instruction and operand before
+the fault and pins the final delivery, rather than accepting any error HLT.
+
+Fault registers: EAX=0, EBX=2, ECX=FFFFFFFFh, EDX=FFFF0080h,
+ESI=EDI=0, EBP=4000h, SS:ESP=0118h:0000FFFFh, FLAGS=0046h;
+CS=00D0h, DS=001Ch, ES=0024h, FS=0130h, GS=001Ch.
+Final registers: EAX=000000D0h, EBX=2, ECX=FFFFFFFFh, EDX=FFFF0080h,
+ESI=EDI=0, EBP=4000h, ESP=FFEFh, EIP=FE8Ah, FLAGS=0046h.
+CS base=F0000h, limit=FFFFh, attributes=409Bh; ES base=6B000h,
+limit=FFFFFh, attributes=0093h; SS base=10000h, limit=7FFFFh,
+attributes=4093h. GDTR=600h:031Fh, IDTR=400h:0177h,
+LDTR=0008h (base A00h, limit 5F7h), TR=0030h (base 5000h, limit 67h),
+CR0=80000001h; A20 on.
+
+**READ:** x86jit `x86jit-core/src/lift/legacy.rs:1249–1268` lowers ARPL
+through a write target before comparing RPLs. Its
+`x86jit-tests/tests/legacy/legacy_ldt.rs:586–602`,
+`arpl_memory_fault_keeps_flags_and_unchanged_rpl_requires_writable_segment`,
+explicitly requires #GP for unchanged RPL in a read-only segment.
+Intel 80386 PRM §17, ARPL, p. 17-25 describes conditional RPL adjustment
+and lists a nonwritable result as #GP(0). The measured result matches that
+existing CPU policy; this run does not independently establish physical-chip
+behavior for the no-change case. Test386 documents the same early check
+for Bochs at `src/test386.asm:1474–1492`; `BOCHS=1` skips this check.
+The pinned image keeps **BOCHS=0**. No CPU fix or ROM patch is made here.
+
+**MEASURED: both 486 row-11 stops are 486-correct.**
+`src/test386.asm:1297–1328` iterates the paging table. Row index 11 is
 `src/tests/paging_p.asm:204`, PDE=05h / PTE=05h (present, user, read-only),
-expected user write #PF(7). ESI=9DF7h selects row index 11. The instruction
-at **00AB:9F88**, linear **000F9F88**, is
-**`C7 05 00 F0 49 00 EF BE AD DE`**, `MOV dword [0049F000h],DEADBEEFh`
-(`paging_p.asm:372`). At retired **1,413,070** it delivers #PF(7),
-CPL 3→0, VM 0→0. That fault and CR2=0049F000h are correct. A sample at
-retired 1,413,080, 00D0:A05C, asserts EAX=0049F000h just after MOV EAX,CR2;
-the handler's error-code and CR2 comparisons pass before its A-bit check.
+expected user write #PF(7). ESI=9DF7h selects it. At **00AB:9F88**,
+linear **000F9F88**, bytes **`C7 05 00 F0 49 00 EF BE AD DE`** encode
+`MOV dword [0049F000h],DEADBEEFh` (`paging_p.asm:372`). At retired
+**1,413,070** it delivers #PF(7), CPL 3→0, VM 0→0, CR2=0049F000h.
+At retired 1,413,080, 00D0:A05C, EAX=0049F000h verifies CR2.
+At retired 1,413,090, 00D0:A06C, **`A9 20 00 00 00`** tests PDE.A;
+EAX=00003025h, and **`0F 85 08 5E 00 00`** branches to error at A071h.
+Physical PDE 1004h is **00003025h**, PTE 327Ch is **0009F025h**:
+both A bits set, D clear, as required by
+[Intel486 PRM §9.9.14](https://bitsavers.trailing-edge.com/components/intel/80486/1992_Intel_486_Programmers_Reference_Manual.pdf).
+The handler at `paging_p.asm:455–463` requires both A bits clear even on
+protection faults, so the unchanged 386-oriented diagnostic rejects this.
+At the same checkpoint the 386 now has PDE=00003005h, PTE=0009F005h;
+its A/D bits remain clear and execution continues through all paging rows.
+Final 386 PDE/PTE values 00003023h/0009F063h reflect the later supervisor
+read/write test, not the row-11 fault-time state.
 
-The handler at `paging_p.asm:455–463` requires PDE.A=0 and PTE.A=D=0 for
-every fault, including protection faults. Actual physical PDE 1004h is
-**00003025h**, PTE 327Ch is **0009F025h**: both A bits set, D clear.
-At retired **1,413,090**, **00D0:A06C**, EAX=00003025h, instruction
-**`A9 20 00 00 00`** tests PDE.A, followed by
-**`0F 85 08 5E 00 00`** at A071h branching to the error routine.
-The golden samples this check as well as the final fault, tables and halt,
-so a different failure reaching the same HLT cannot pass unnoticed.
-
-**READ:** Intel486 Programmer's Reference Manual §9.9.14 requires both A
-bits on operand protection faults; x86jit's
-`x86jit-core/src/interp/legacy/paging.rs` retains that behavior on both 486
-entries and the same deterministic policy on the 386. The 386
-protection-fault A-bit behavior is **ASSUMED CPU policy**, not an independently
-measured physical-chip result. xj-srh.38 (x86jit) changes only the
-not-present walk: no A/D updates until both entries are present. All ten
-not-present rows now pass. No CPU change or vendor patch bypasses the
-next expectation mismatch.
-
-Final registers on all models: EAX=000000D0h, EBX=7, ECX=3Fh, EDX=7,
+Final 486 registers: EAX=000000D0h, EBX=7, ECX=3Fh, EDX=7,
 ESI=9DF7h, EDI=0, EBP=4000h, ESP=FFDBh, EIP=FE8Ah, FLAGS=0046h.
 CS=00D0h (base F0000h, limit FFFFh, attributes 409Bh), DS=0044h (base 0,
 limit FFFFFFFFh, attributes 80F3h), ES=0 unusable, SS=0118h (base 10000h,
 limit 7FFFFh, attributes 4093h). GDTR=600h:031Fh, IDTR=400h:0177h,
 LDTR=0008h (base A00h, limit 5F7h), TR=0030h (base 5000h, limit 67h).
-MSW=0001h on 386 / 0011h on 486; CPL=0, A20 on. The fault's saved
-registers are EAX=44h, EBX=0, ECX=3Fh, EDX=7, ESI=9DF7h, EDI=0,
-EBP=4000h, SS:ESP=012Bh:00007FFFh, FLAGS=0202h, CS=00ABh, DS=0044h.
-Reproduce with all three `test386_*_golden` tests and `--nocapture`.
+CR0=E0000011h (the 486 reset CD/NW bits are retained); CPL=0, A20 on. Fault registers: EAX=44h, EBX=0,
+ECX=3Fh, EDX=7, ESI=9DF7h, EDI=0, EBP=4000h,
+SS:ESP=012Bh:00007FFFh, FLAGS=0202h, CS=00ABh, DS=0044h.
+
+**READ:** `src/configuration.asm:33–46` exposes no knob for 486 A-bit
+behavior; CPU_FAMILY only applies to TEST_UNDEF, and BOCHS only bypasses
+the later ARPL check. The fault-time A/D checks are unconditional at
+`paging_p.asm:455–463`. **READ:** page-flag helpers reload CR3 at
+`paging_p.asm:64–88`; the diagnostic never relies on a guest PTE store
+alone invalidating translations. Reproduce with all three
+`test386_*_golden` tests and `--nocapture`.
 
 ## Repin and absent-coprocessor audit (2026-11-24)
 
@@ -305,21 +349,41 @@ The adapter has these paging barriers, each between runs:
   outstanding handoffs before reset.
 
 DMA/bus-master writes retain the normal Vm write/SMC path and do not flush
-paging on each byte. The pinned walker re-reads tables; host restoration
-still requires an explicit barrier to release derived fetch proofs.
+paging on each byte. At pin `6a38ae4964555495c2b5c82ef72fea34e686c0b4`,
+the per-vCPU TLB can retain a translation after a guest or DMA PTE write.
+The guest must reload CR3 (including the same value), or use INVLPG on 486,
+before relying on a changed mapping (Intel 80386 PRM §5.2.5;
+Intel486 PRM §5.3.5). Host restoration instead requires the adapter's
+explicit `invalidate_paging` barrier, including equal-byte/value restores.
 A nonidentity MMIO operand remains a physical bus transfer; the core exposes
 its original linear address through `pending_mmio_linear_address()`. Page
 _tables_ in ROM/device regions return typed `PagingTableStorage`, not #PF.
-The implementation at this pin has an uncached walker and bounded private
-paged instruction proofs, rather than a hardware TLB-capacity model.
+The core now reuses paged source proofs with the TLB generation; its
+functional cache does not claim a hardware-accurate TLB capacity or timing.
 
 **MEASURED:** equal-byte host PTE restore releases retained paged code
-registrations without retiring an instruction or changing RIP. Removing only
-`write_mem`'s invalidation makes that isolation test fail before resume.
-Removing only the register-restore barrier likewise fails its equal-value
-regression. Reset retains PTE RAM and discards proofs. DMA table writes keep proofs until
-the next walk. See also the
-[project-owned paged ROM](i386-pm-test.md#two-level-paging-rom).
+registrations without retiring an instruction or changing RIP. Reset retains
+PTE RAM and discards proofs. DMA table writes keep fetch registrations before
+resume; no guarantee that a particular translation survives later eviction is
+asserted.
+
+Three additional adapter isolation tests read 11h through a paged operand,
+replace its PTE to map a different frame holding 22h, and require both fetch
+proof release at the host barrier and 22h on the next load. They cover an
+ordinary host remap, an equal-byte memory restore after a physical table edit,
+and an equal-value register restore after the same edit. **MEASURED mutation
+checks:** removing only `write_mem`'s paging invalidation makes each of the
+two memory cases fail; removing only `set_reg`'s invalidation makes the
+register case fail. All 85 CPU unit tests pass after plain-copy restoration
+and a fresh build. No production barrier or device change is needed.
+
+**READ:** the only production direct Vm writes outside `write_mem` are
+initial loading before a vCPU exists and physical DMA. Host callers and test
+helpers use `write_mem`; EMS held-page/shadow replacement uses it as well.
+Test386 page-flag helpers reload CR3, and the project-owned paged ROM tests
+explicit equal-CR3 reloads and 486 INVLPG. No path was found that needs guest
+page-table edits to become visible without an architectural barrier.
+See also the [project-owned paged ROM](i386-pm-test.md#two-level-paging-rom).
 
 ## Current unpaged machine qualification (2026-11-24)
 

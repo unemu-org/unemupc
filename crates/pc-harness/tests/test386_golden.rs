@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Third-party 386 validation ROM on the generic ISA boards. Intel 80386
 //! Programmer's Reference Manual §10 Initialization and §6 Protection.
+//! The 486 entries intentionally stop at paging row 11: Intel486 Programmer's
+//! Reference Manual §9.9.14 requires both A bits on an operand protection fault,
+//! whereas this unchanged 386 diagnostic requires them clear. That stop is
+//! 486-correct; the pinned image has no switch to accept the 486 A-bit rule.
 //! See `backlog/docs/design/protected-mode-gaps.md` for measured coverage.
 
 use assembly::{
@@ -13,9 +17,9 @@ use device::ByteStreamKind;
 #[path = "support/fixtures.rs"]
 mod fixtures;
 
-const CPU_REV: &str = "fc07c81f580689c31f182f4421fb9cc5f07374d1";
+const CPU_REV: &str = "6a38ae4964555495c2b5c82ef72fea34e686c0b4";
 const CAP: u64 = 5_000_000;
-const GOLDEN_POST: &[u8] = &[
+const PAGING_STOP_POST: &[u8] = &[
     0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x08, 0x09, 0x20, 0x21, 0x22, 0x0B, 0x0C, 0x0D, 0x0E,
     0x0F, 0x10, 0x11,
 ];
@@ -101,10 +105,25 @@ fn run(chip: CpuChip) {
     .unwrap();
     assembled.machine.enable_delivery_log().unwrap();
     let started = std::time::Instant::now();
-    // Inspect the handler before its A-bit check, so an identical error HLT
-    // reached for another reason cannot satisfy the golden.
+    // Inspect each failure cause before the shared error HLT, so reaching
+    // that same halt for another reason cannot satisfy the golden.
     let mut cap = 0;
-    for (target, ip, eax) in [(1_413_080, 0xA05C, 0x49F000), (1_413_090, 0xA06C, 0x3025)] {
+    let mut checkpoints = vec![
+        (1_413_080, 0xA05C, 0x49F000),
+        (
+            1_413_090,
+            0xA06C,
+            if chip == CpuChip::I80386 {
+                0x3005
+            } else {
+                0x3025
+            },
+        ),
+    ];
+    if chip == CpuChip::I80386 {
+        checkpoints.push((1_429_159, 0xB51C, 0));
+    }
+    for (target, ip, eax) in checkpoints {
         while assembled.machine.cpu().retired() < target {
             // REP iterations consume steps without each retiring an instruction.
             cap += target - assembled.machine.cpu().retired();
@@ -116,8 +135,50 @@ fn run(chip: CpuChip) {
         }
         assert_eq!(assembled.machine.cpu().reg(CpuReg::Rip), ip);
         assert_eq!(assembled.machine.cpu().reg(CpuReg::Rax), eax);
+        if target == 1_413_090 {
+            for (address, expected) in [
+                (0x1004, eax as u32),
+                (
+                    0x327C,
+                    if chip == CpuChip::I80386 {
+                        0x9F005
+                    } else {
+                        0x9F025
+                    },
+                ),
+            ] {
+                let mut bytes = [0; 4];
+                assembled
+                    .machine
+                    .cpu()
+                    .read_mem(address, &mut bytes)
+                    .unwrap();
+                assert_eq!(u32::from_le_bytes(bytes), expected);
+            }
+        }
+        if target == 1_429_159 {
+            let ds = assembled.machine.cpu().diagnostic_state().segments[3];
+            assert_eq!(
+                (ds.selector, ds.base, ds.limit, ds.attributes),
+                (0x1C, 0x2B000, 0xFFFFF, 0x91)
+            );
+            let mut bytes = [0; 6];
+            assembled
+                .machine
+                .cpu()
+                .read_mem(0xFB51C, &mut bytes)
+                .unwrap();
+            assert_eq!(bytes, [0x63, 0x1D, 0, 0, 2, 0]);
+            let mut selector = [0; 2];
+            assembled
+                .machine
+                .cpu()
+                .read_mem(0x4B000, &mut selector)
+                .unwrap();
+            assert_eq!(u16::from_le_bytes(selector), 0xFFF2);
+        }
         eprintln!(
-            "{} handler: retired={target}; IP={ip:04x}; EAX={eax:08x}",
+            "{} checkpoint: retired={target}; IP={ip:04x}; EAX={eax:08x}",
             chip.name()
         );
     }
@@ -157,23 +218,35 @@ fn run(chip: CpuChip) {
     ] {
         eprintln!("{reg:?}={:08x}", assembled.machine.cpu().reg(reg));
     }
+    let is_386 = chip == CpuChip::I80386;
+    let mut expected_post = PAGING_STOP_POST.to_vec();
+    if is_386 {
+        expected_post.extend_from_slice(&[0x12, 0x13, 0x14, 0x15, 0x16, 0x17]);
+    }
     assert_eq!(
-        post, GOLDEN_POST,
+        post, expected_post,
         "test386 progress changed; review and advance the golden"
     );
-    assert_eq!(text, "", "printing follows the paging tests");
-    assert_eq!(retired, 1_413_097);
+    assert_eq!(text, "", "printing follows the current stops");
+    assert_eq!(retired, if is_386 { 1_429_164 } else { 1_413_097 });
     assert_eq!(outcome.unwrap(), machine::RunOutcome::Halted);
     let state = assembled.machine.cpu().diagnostic_state();
     assert_eq!(state.code_linear, 0xFFE8A);
     assert_eq!(state.before_code.value(), Some(0xF4));
     let system = state.system.unwrap();
+    assert_eq!(system.cr0, if is_386 { 0x8000_0001 } else { 0xE000_0011 });
     assert!(system.protected());
     assert!(!system.virtual_8086);
     assert_eq!(system.cpl, 0);
     assert_eq!(assembled.machine.cpu().reg(CpuReg::Rip), 0xFE8A);
-    assert_eq!(assembled.machine.cpu().reg(CpuReg::Rsi), 0x9DF7);
-    for (address, expected) in [(0x1004, 0x3025u32), (0x327C, 0x9F025)] {
+    assert_eq!(
+        assembled.machine.cpu().reg(CpuReg::Rsi),
+        if is_386 { 0 } else { 0x9DF7 }
+    );
+    for (address, expected) in [
+        (0x1004, if is_386 { 0x3023u32 } else { 0x3025 }),
+        (0x327C, if is_386 { 0x9F063 } else { 0x9F025 }),
+    ] {
         let mut bytes = [0; 4];
         assembled
             .machine
@@ -185,15 +258,52 @@ fn run(chip: CpuChip) {
     let recent = assembled.machine.recent_deliveries().unwrap();
     let machine::DeliveryEntry::Deliveries { last: fault, .. } = recent.entries.last().unwrap()
     else {
-        panic!("expected the final page-fault record");
+        panic!("expected the final fault record");
     };
     eprintln!("last delivery: {fault}");
-    assert_eq!(
-        (fault.vector, fault.error_code, fault.cs, fault.ip),
-        (14, Some(7), 0xAB, 0x9F88)
-    );
-    assert_eq!(fault.retired, 1_413_070);
-    assert_eq!(fault.regs.unwrap().edx, 7);
+    if is_386 {
+        assert_eq!(
+            (fault.vector, fault.error_code, fault.cs, fault.ip),
+            (13, Some(0), 0xD0, 0xB51C)
+        );
+        assert_eq!(fault.retired, 1_429_159);
+        assert_eq!(
+            fault.bytes.map(|byte| byte.value()),
+            [
+                Some(0x63),
+                Some(0x1D),
+                Some(0),
+                Some(0),
+                Some(2),
+                Some(0),
+                Some(0x60),
+                Some(0x9C)
+            ]
+        );
+        let regs = fault.regs.unwrap();
+        assert_eq!(
+            (regs.eax, regs.ebx, regs.ecx, regs.edx),
+            (0, 2, u32::MAX, 0xFFFF0080)
+        );
+        assert_eq!(
+            (regs.ds, regs.es, regs.ss, regs.esp),
+            (0x1C, 0x24, 0x118, 0xFFFF)
+        );
+        let mut selector = [0; 2];
+        assembled
+            .machine
+            .cpu()
+            .read_mem(0x4B000, &mut selector)
+            .unwrap();
+        assert_eq!(u16::from_le_bytes(selector), 0xFFF2);
+    } else {
+        assert_eq!(
+            (fault.vector, fault.error_code, fault.cs, fault.ip),
+            (14, Some(7), 0xAB, 0x9F88)
+        );
+        assert_eq!(fault.retired, 1_413_070);
+        assert_eq!(fault.regs.unwrap().edx, 7);
+    }
     assert!(!fault.virtual_8086_before);
 }
 

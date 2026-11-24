@@ -1217,6 +1217,68 @@ mod tests {
         assert_eq!(cpu.reg(CpuReg::Rip), ip);
     }
 
+    fn paged_operand_guest() -> X86JitCpu {
+        let mut cpu = paged_guest();
+        cpu.write_mem(0x2000, &[0xA0, 0, 0x60, 0, 0, 0xA0, 0, 0x60, 0, 0])
+            .unwrap();
+        // Keep the warm-up free of operand A-bit writes.
+        cpu.write_mem(0x5018, &0x6023u32.to_le_bytes()).unwrap();
+        cpu.write_mem(0x6000, &[0x11]).unwrap();
+        cpu.write_mem(0x7000, &[0x22]).unwrap();
+        cpu.set_reg(CpuReg::Rip, 0x2000);
+        cpu.run_steps(1, StepRunOptions::default()).unwrap();
+        assert_eq!(cpu.reg(CpuReg::Rax) & 0xFF, 0x11);
+        cpu
+    }
+
+    #[test]
+    fn host_page_table_remap_changes_the_next_paged_operand() {
+        let mut cpu = paged_operand_guest();
+        cpu.write_mem(0x5018, &0x7003u32.to_le_bytes()).unwrap();
+        assert!(
+            !cpu.vm.mem.is_code_page(2),
+            "host remap must discard fetch proofs"
+        );
+        cpu.run_steps(1, StepRunOptions::default()).unwrap();
+        assert_eq!(cpu.reg(CpuReg::Rax) & 0xFF, 0x22);
+    }
+
+    #[test]
+    fn equal_byte_host_restore_reloads_a_changed_page_table() {
+        let mut cpu = paged_operand_guest();
+        // Stage a physical table edit so the equal-value restore must discard
+        // any translation still retained from the first operand read.
+        cpu.vm
+            .write_bytes(0x5018, &0x7003u32.to_le_bytes())
+            .unwrap();
+        let mut pte = [0; 4];
+        cpu.read_mem(0x5018, &mut pte).unwrap();
+        cpu.write_mem(0x5018, &pte).unwrap();
+        assert!(
+            !cpu.vm.mem.is_code_page(2),
+            "equal-byte restore must discard fetch proofs"
+        );
+        cpu.run_steps(1, StepRunOptions::default()).unwrap();
+        assert_eq!(cpu.reg(CpuReg::Rax) & 0xFF, 0x22);
+    }
+
+    #[test]
+    fn equal_register_restore_reloads_a_changed_page_table() {
+        let mut cpu = paged_operand_guest();
+        // Stage a physical table edit so the equal-value restore must discard
+        // any translation still retained from the first operand read.
+        cpu.vm
+            .write_bytes(0x5018, &0x7003u32.to_le_bytes())
+            .unwrap();
+        cpu.set_reg(CpuReg::Rip, cpu.reg(CpuReg::Rip));
+        assert!(
+            !cpu.vm.mem.is_code_page(2),
+            "equal-register restore must discard fetch proofs"
+        );
+        cpu.run_steps(1, StepRunOptions::default()).unwrap();
+        assert_eq!(cpu.reg(CpuReg::Rax) & 0xFF, 0x22);
+    }
+
     #[test]
     fn reset_keeps_page_table_ram_and_discards_paged_fetch_proofs() {
         let mut cpu = paged_guest();
@@ -1231,7 +1293,7 @@ mod tests {
     }
 
     #[test]
-    fn dma_page_table_write_keeps_fetch_proofs_until_the_next_walk() {
+    fn dma_page_table_write_keeps_fetch_proofs_without_a_paging_barrier() {
         let mut cpu = paged_guest();
         assert_eq!(cpu.guest_dma_write(0x5008, 0x23), DmaAccess::Complete(()));
         assert!(cpu.vm.mem.is_code_page(2));
