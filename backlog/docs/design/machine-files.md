@@ -233,7 +233,7 @@ canonical order, M2). The values are today's presets, unchanged.
 | 5 | word 8237 DMA | `DmaWord` | `0xC0–0xDF`, page `0x89–0x8F` | — | channel 4 is cascade |
 | 6 | 8042 KBC | `Keyboard` | `0x60`, `0x64` | 1 | |
 | 7 | MC146818 RTC | `Rtc` | `0x70–0x71` | 8 | |
-| 8 | empty 80287 socket | `Coprocessor` | `0xF0–0xF1`, `0xF8–0xFF` | 13 | |
+| 8 | optional 80287 socket | `Coprocessor` | `0xF0–0xF1`, `0xF8–0xFF` | 13 | |
 | 9 | system control | `SysControl` | `0x61` | — | |
 | 10 | POST latch | `Post` | `post_port` | — | omitted when `"none"` |
 
@@ -607,8 +607,10 @@ Explicit NVRAM images are preserved, even if their equipment bit disagrees.
 On the I286 machine profile, an empty socket returns FFFFh for FNSTCW m16
 and FNSTSW m16/AX, completing BIOS presence probes; other output stores
 leave memory unchanged and WAIT completes (`decision-25 (x86jit)`).
-EM/TS/MP retain the architectural #NM controls. FERR#/IRQ13 and F0h/F1h
-coprocessor control wiring remain unimplemented.
+EM/TS/MP retain the architectural #NM controls. A present 80287 uses external
+ERROR# routing through the board IRQ13 latch; F0h releases BUSY and clears the
+latch without clearing numeric status. F1h reset and F8h–FFh bus transactions
+remain unmodelled; see [coprocessor controls](machine-config.md#coprocessor-controls).
 
 ### `[memory]`
 

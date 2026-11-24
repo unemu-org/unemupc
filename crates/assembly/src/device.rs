@@ -589,7 +589,7 @@ pub enum DeviceKind {
     Dma(DmaCfg),
     /// AT word/cascade configuration of the 8237A.
     DmaWord(DmaCfg),
-    /// IBM AT coprocessor controls with no 80287 fitted.
+    /// IBM AT socket controls; assembly connects ERROR# when an FPU is fitted.
     AbsentCoprocessor,
     /// Lo-tech 2MB expanded-memory board.
     LotechEms(LotechEmsCfg),

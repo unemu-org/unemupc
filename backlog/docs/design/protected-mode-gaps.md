@@ -110,6 +110,10 @@ I386 absent outputs retain refusal. Intel 80286 and 80287 Programmer's
 Reference Manual, Part I Appendix A and Part II Appendix B, item 10, ground
 the chosen all-high bus default; it is not a universal electrical value.
 Derived CMOS equipment bit 1 follows the selected FPU; explicit images do not.
+Present AT coprocessors route ERROR# through IRQ13, with F0h acknowledging the
+board BUSY latch without clearing numeric status. This does not extend the
+protected-mode x87 forms accepted by the CPU; see
+[coprocessor controls](machine-config.md#coprocessor-controls).
 See [machine configuration](machine-config.md#cpu-model-selection).
 The deliberate generation differences remain: I286 rejects 386-only 66h/67h
 forms with #UD, and legacy follows the architectural operand/stack rules.

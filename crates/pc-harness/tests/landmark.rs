@@ -24,7 +24,7 @@ use std::{
 };
 
 const ENTRY_ID: &str = "landmark-rom-post-at-1.2.0";
-const CPU_REV: &str = "b7c10b6fdda8f84d3eda9c5d7751fcda1c5893ed";
+const CPU_REV: &str = "89532547e3bca71f82d63dfb463e018d7b471ac0";
 const STEP_BUDGET: u64 = 30_000_000;
 // Historical Application Real16 prefix after the PIT refresh calibration.
 const REAL16_GOLDEN_RETIRED: u64 = 15_785_137;

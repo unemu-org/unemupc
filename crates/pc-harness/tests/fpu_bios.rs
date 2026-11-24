@@ -56,3 +56,51 @@ fn kiselev_empty_socket_finishes_the_coprocessor_probe() {
     assert_eq!(report, "Mathematics Co-processor:   Absent");
     eprintln!("Coprocessor report: {report:?} -> {report:?}");
 }
+
+#[test]
+#[ignore = "requires the open BIOS fixture and boots the project-owned IRQ13 guest"]
+fn kiselev_irq13_chains_to_int2_for_numeric_errors() {
+    use cpu::Cpu;
+    let Some(rom) = fixtures::fixture("kiselev-bios/bios-xi8088.bin") else {
+        return;
+    };
+    assert!(
+        include_str!("../../../Cargo.lock").contains("#89532547e3bca71f82d63dfb463e018d7b471ac0")
+    );
+    // Kiselev 8088 BIOS, bios.asm int_75: both EOIs precede software INT 02h.
+    // The guest keeps that firmware vector and replaces only INT 02h.
+    let mut floppy = vec![0; 1_474_560];
+    floppy[..512].copy_from_slice(include_bytes!(
+        "../../machine-file/tests/fixtures/at-irq13-boot.bin"
+    ));
+    let mut config = bios(rom, Some(floppy));
+    config.cpu.fpu = FpuChip::I80287;
+    let started = std::time::Instant::now();
+    let mut assembled = machine_file::assemble(&config).unwrap();
+    assembled.machine.set_idle_limit(Some(2000));
+    assert_eq!(
+        assembled
+            .machine
+            .run_bounded(Some(pc_harness::BIOS_GOLDEN_MAX_RETIRED))
+            .unwrap(),
+        machine::RunOutcome::Halted
+    );
+    let mut result = [0; 12];
+    assembled
+        .machine
+        .cpu()
+        .read_mem(0x500, &mut result)
+        .unwrap();
+    assert_eq!(
+        u16::from_le_bytes([result[0], result[1]]),
+        2,
+        "two BIOS INT 75h entries reached the guest INT 02h handler"
+    );
+    assert_eq!(&result[2..4], &[0; 2], "no exception 16");
+    assert_eq!(&result[10..], &0xa55au16.to_le_bytes(), "guest finished");
+    eprintln!(
+        "BIOS IRQ13 chain: retired={}, wall={:?}",
+        assembled.machine.cpu().retired(),
+        started.elapsed()
+    );
+}

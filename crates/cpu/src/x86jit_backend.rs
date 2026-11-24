@@ -17,8 +17,9 @@
 //! CPU without any local x86jit checkout present.
 
 use x86jit_core::{
-    CpuMode, CpuModel, CpuState, ExceptionDelivery, ExecutionProfile, Exit, FpuModel, PortDir,
-    Prot, Reg, RegionKind, ResetOptions, StepOptions, StepRunError, StepStop, Vcpu, Vm, VmConfig,
+    CpuMode, CpuModel, CpuState, ExceptionDelivery, ExecutionProfile, Exit, FpuModel,
+    NumericErrorEvent, NumericErrorRoute, PortDir, Prot, Reg, RegionKind, ResetOptions,
+    StepOptions, StepRunError, StepStop, Vcpu, Vm, VmConfig,
 };
 
 use crate::{Cpu, CpuError, CpuReg, CpuStepRun, CpuStepStop, CpuStop, DmaAccess, StepRunOptions};
@@ -239,11 +240,24 @@ impl X86JitCpu {
         vm.set_cpu_model(model);
         vm.set_exception_delivery(ExceptionDelivery::InGuest);
         vm.set_fpu_model(fpu);
+        let external = fpu_present && matches!(model, CpuModel::I80286 | CpuModel::I80386);
+        if external {
+            vm.set_numeric_error_route(NumericErrorRoute::External)
+                .map_err(|e| CpuError::UnexpectedExit {
+                    what: format!("numeric error route: {e:?}"),
+                })?;
+        }
         let mut cpu = vm.new_vcpu();
         cpu.cpu = CpuState::legacy_real_entry([cs, segments.ds, segments.es, segments.ss, 0, 0]);
         // Installing the real-mode entry replaces the FPU policy inherited
         // from the VM, so restore the board's choice on the vCPU as well.
         cpu.set_fpu_model(fpu);
+        if external {
+            cpu.set_numeric_error_route(NumericErrorRoute::External)
+                .map_err(|e| CpuError::UnexpectedExit {
+                    what: format!("numeric error route: {e:?}"),
+                })?;
+        }
         cpu.cpu.legacy.cr0 = if model == CpuModel::I80386 {
             0x10
         } else {
@@ -720,6 +734,10 @@ impl X86JitCpu {
             Exit::MmioWrite {
                 addr, size, value, ..
             } => Ok(CpuStop::MmioWrite { addr, size, value }),
+            Exit::ExternalNumericError { event, .. } => Ok(match event {
+                NumericErrorEvent::Asserted => CpuStop::NumericErrorAsserted,
+                NumericErrorEvent::Waiting => CpuStop::NumericErrorWaiting,
+            }),
             Exit::Hlt => Ok(CpuStop::Halt),
             Exit::Shutdown { .. } => Ok(CpuStop::Shutdown),
             Exit::Exception {
@@ -820,6 +838,18 @@ fn reset_legacy_image() -> x86jit_core::legacy::LegacyCpuState {
 }
 
 impl Cpu for X86JitCpu {
+    fn numeric_error_pending(&self) -> bool {
+        self.cpu.numeric_error_pending()
+    }
+
+    fn ack_external_numeric_error(&mut self) -> Result<(), CpuError> {
+        self.cpu
+            .ack_external_numeric_error()
+            .map_err(|e| CpuError::UnexpectedExit {
+                what: format!("numeric error acknowledgement: {e:?}"),
+            })
+    }
+
     fn set_a20_enabled(&mut self, enabled: bool) {
         self.cpu.set_a20_enabled(enabled);
     }
@@ -834,7 +864,11 @@ impl Cpu for X86JitCpu {
         let a20_enabled = self.cpu.a20_enabled();
         if self.vm.cpu_model() == Some(CpuModel::I80386) {
             let fpu = self.cpu.cpu.fpu_model;
+            let route = self.cpu.cpu.numeric_error_route;
+            let error = self.cpu.cpu.external_numeric_error;
             self.cpu.cpu = CpuState::i386_reset(fpu);
+            self.cpu.cpu.numeric_error_route = route;
+            self.cpu.cpu.external_numeric_error = error;
             // The reset image enables A20, but a CPU reset retains the board line.
             self.cpu.set_a20_enabled(a20_enabled);
             return Ok(());
@@ -1067,6 +1101,64 @@ mod tests {
         cpu.map_ram(0, 0x10000).unwrap();
         cpu.write_mem(0x1000, code).unwrap();
         cpu
+    }
+
+    #[test]
+    fn numeric_error_routes_follow_supported_machine_models_and_survive_reset() {
+        for (model, present, route) in [
+            (CpuModel::I80286, true, NumericErrorRoute::External),
+            (CpuModel::I80386, true, NumericErrorRoute::External),
+            (CpuModel::I80286, false, NumericErrorRoute::Internal),
+            (CpuModel::I80386, false, NumericErrorRoute::Internal),
+            (CpuModel::I80486Dx, true, NumericErrorRoute::Internal),
+            (CpuModel::I80486DxCpuid, true, NumericErrorRoute::Internal),
+        ] {
+            let mut cpu = X86JitCpu::new_machine_bare(
+                0x10000,
+                0,
+                0x1000,
+                RealSegments::flat(0x7000),
+                present,
+                false,
+                model,
+            )
+            .unwrap();
+            assert_eq!(cpu.cpu.numeric_error_route(), route);
+            cpu.reset().unwrap();
+            assert_eq!(cpu.cpu.numeric_error_route(), route);
+        }
+    }
+
+    #[test]
+    fn external_numeric_assertion_retires_and_wait_acknowledgement_preserves_status() {
+        let mut cpu = i286_guest(&[
+            0xdb, 0xe3, // FNINIT
+            0xd9, 0x2e, 0x00, 0x06, // FLDCW [0600h]
+            0xd9, 0xe8, 0xd9, 0xee, // FLD1; FLDZ
+            0xde, 0xf9, // FDIVP ST1, ST0
+            0x9b, 0xf4, // WAIT; HLT
+        ]);
+        cpu.write_mem(0x600, &0x037bu16.to_le_bytes()).unwrap();
+        let asserted = cpu.run_steps(100, StepRunOptions::default()).unwrap();
+        assert_eq!(
+            asserted.stop,
+            CpuStepStop::Exit(CpuStop::NumericErrorAsserted)
+        );
+        assert_eq!(asserted.steps, 5);
+        assert!(cpu.numeric_error_pending());
+        let before = cpu.retired();
+        let ip = cpu.reg(CpuReg::Rip);
+        let waiting = cpu.run_steps(100, StepRunOptions::default()).unwrap();
+        assert_eq!(
+            waiting.stop,
+            CpuStepStop::Exit(CpuStop::NumericErrorWaiting)
+        );
+        assert_eq!(waiting.steps, 0);
+        assert_eq!(cpu.retired(), before);
+        assert_eq!(cpu.reg(CpuReg::Rip), ip);
+        cpu.ack_external_numeric_error().unwrap();
+        assert!(cpu.numeric_error_pending());
+        assert_eq!(cpu.run(None).unwrap(), CpuStop::Halt);
     }
 
     /// The delivery log: off by default; enabled, a software interrupt and a

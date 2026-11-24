@@ -433,7 +433,7 @@ Map**, **Keyboard Controller**, and **Real-Time Clock/CMOS RAM Information**.
 | 5. `DmaWord` | Second 8237 at C0h–DFh (odd ports alias the preceding even register), pages 89h–8Fh, channels 4–7; channel 4 is cascade | No cycle-level arbitration between banks |
 | 6. `Keyboard` | 8042 at 60h/64h, IRQ1; D1h output bit 0 and F0h–FFh pulses restart only the CPU | A20 source latch drives CPU physical bit 20 and survives CPU-only reset; pulse duration and temporary output levels are not timed |
 | 7. `Rtc` | MC146818 at 70h–71h, IRQ8, NMI-mask state | Seed and virtual timing remain configurable |
-| 8. `Coprocessor` | F0h, F1h, F8h–FFh; IRQ13 wired inactive | Port face remains an empty socket even when the CPU has an optional FPU; FERR#/IRQ13 and F0h/F1h controls are unimplemented |
+| 8. `Coprocessor` | F0h, F1h, F8h–FFh; IRQ13 | Empty socket by default; a present FPU latches ERROR# onto IRQ13, cleared by F0h |
 | 9. `SysControl` | 61h control/status | Shares PIT state: refresh flip-flop from OUT1, OUT2 status, bit-0 GATE2; bit 1 AND OUT2 feeds the speaker audio source |
 | 10. `Post` | Diagnostic latch at 80h by default | Optional, relocatable diagnostic decode |
 
@@ -464,7 +464,53 @@ assigned port return the emulator's open-bus byte FFh, and writes of any
 value are discarded. FFh is the emulator's bus convention, not an IBM-defined
 absent-coprocessor status value. This describes only the I/O bus socket.
 CPU coprocessor presence is selected independently through `CpuConfig.fpu`,
-as described above. Installing one does not enable the board error/control wiring.
+as described above.
+
+### Coprocessor controls
+
+On AT-class boards with a present coprocessor, the adapter selects x86jit's
+External numeric-error route for supported 286/386 Machine profiles. Internal
+routing remains selected for unsupported models (including the 486 entries).
+A committed ERROR# assertion sets `AtCoprocessor`'s board latch; its existing
+IRQ13 wire reaches slave 8259A input 5 through `InterruptController`. An F0h
+write of any value clears that latch and releases the CPU wait interlock through
+`Cpu::ack_external_numeric_error`, without changing x87 SW.ES. The guest must
+still clear the numeric exception (for example, FNCLEX). EOI is independent.
+The generic 386 board has the same socket wiring, but still offers no populated
+coprocessor configuration. No 387 machine-file option is introduced.
+
+A blocked WAIT retires nothing. The machine suspends it using the HLT idle
+path: device deadlines advance deterministic virtual ticks, charged as halted
+PIT-clock time under the configured CPU ratio. IRQ arbitration resumes the CPU
+at the waiting instruction or its handler; caps and idle limits remain effective.
+With IF clear the run returns quiescent, as for HLT. No wall clock or dummy
+instruction contributes to execution time (decision-14 and the scheduler design).
+
+Numeric-error assertions sample the board IRQ outputs at the producing
+instruction boundary. An unmasked IRQ13 is therefore eligible before the next
+instruction, including an immediately following WAIT, with no idle ticking or
+unrelated device deadline. A suspended WAIT also resumes on the next run when
+the PIC already holds a serviceable IRQ.
+
+Whole-machine snapshot/restore is unavailable, including while WAIT is held:
+`Machine` and `Cpu` expose no save/restore API. Device `save`/`restore` alone
+cannot capture the CPU's pending numeric error and external BUSY hold, its
+instruction pointer, the machine's suspended flag, clock/remainder counters,
+and IRQ sampling history. This is the deferred snapshot feature described in
+`backlog/docs/deferred.md` §Snapshot / save-restore of a running machine, not
+a runtime refusal specific to WAIT. The device-restore regression keeps the
+same suspended CPU and scheduler, restores the board latch, and verifies that
+unmasking the pending IRQ resumes the guest without idle ticking; it does not
+claim whole-machine replay coverage.
+
+Coverage: F0h and the IRQ13 latch are modelled. F1h reset and F8h–FFh CPU-internal
+coprocessor bus transactions remain unmodelled (floating reads, ignored writes);
+F2h–F7h remain undecoded. This is functional board wiring, not signal-cycle timing
+or generation-specific 287 arithmetic. The CPU's existing protected-mode x87
+scope refusals remain unchanged. The Kiselev BIOS's `bios.asm:int_75` sends both
+PIC EOIs then executes INT 02h; it leaves F0h and numeric clearing to that handler.
+The owned `at-irq13.asm` guest tests both a direct INT 75h handler and this BIOS
+chain.
 
 **Keyboard Controller**, **Commands** and **Output Port** (pp. 1-53–1-55)
 connect output bit 0 to active-low System Reset. D1h lowering that bit latches

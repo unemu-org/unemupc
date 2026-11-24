@@ -1,36 +1,62 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Empty IBM AT 80287 socket and its motherboard controls.
+//! IBM AT coprocessor socket and motherboard error latch.
 //!
 //! IBM Personal Computer AT Technical Reference (September 1985), System
 //! Board, I/O Address Map (p. 1-37), NMI and Coprocessor Controls (p. 1-38),
-//! System Interrupts, and Section 2, Coprocessor: F0h clears latched BUSY,
-//! F1h resets the coprocessor, and F8h–FFh select the coprocessor. F2h–F7h
-//! are not assigned to this circuit. With no 80287 fitted there is no data
-//! driver or error source: all assigned reads return the emulator's open-bus
-//! byte FFh, all writes are discarded, and IRQ13 stays low. FFh is an open-bus
-//! convention, not a coprocessor status register value specified by IBM.
-//! F0h/F1h are write-only controls (IBM specifies writing zero); with an empty
-//! socket other written values also have no effect. This is an empty socket
-//! on the I/O bus only: the pinned CPU core executes ungated x87 instructions
-//! in Real16, and FNINIT/FNSTCW stores 037Fh despite this bus configuration.
-//! An absent-FPU mode is requested from the CPU core project; instruction
-//! gating belongs there. BUSY timing and populated-socket bus behaviour are
-//! not implemented here.
-//! See `backlog/docs/design/machine-config.md` §Board model.
+//! System Interrupts, and Section 2, Coprocessor: ERROR# feeds IRQ13 and an
+//! F0h write clears latched BUSY. The CPU supplies assertion events; the board
+//! holds IRQ13 until any F0h write, independently of x87 ES. Reads float to FFh.
+//! F1h reset and CPU-internal F8h–FFh coprocessor transfers are not modelled;
+//! their reads float and writes are ignored. F2h–F7h are not decoded. With an
+//! empty socket every output remains inactive. See
+//! `backlog/docs/design/machine-config.md` §Coprocessor controls.
+
+use std::{cell::Cell, rc::Rc};
 
 use device::{AccessDir, Device, DeviceError, NextEvent, TraceEvent, VClock};
 
-/// Motherboard control decode with no 80287 installed; never raises IRQ13.
-#[derive(Default)]
-pub struct Absent80287 {
-    now: VClock,
-    trace: device::TraceBuffer,
+/// Shared AT board latch, separate from the coprocessor's sticky status.
+#[derive(Clone, Default)]
+pub struct CoprocessorErrorLine {
+    irq: Rc<Cell<bool>>,
+    acknowledged: Rc<Cell<bool>>,
 }
 
-impl Absent80287 {
+impl CoprocessorErrorLine {
+    /// Latch an ERROR# assertion until a guest F0h write.
+    pub fn assert(&self) {
+        self.irq.set(true);
+    }
+
+    /// Consume a board acknowledgement so assembly can release CPU BUSY.
+    pub fn take_acknowledgement(&self) -> bool {
+        self.acknowledged.replace(false)
+    }
+}
+
+/// AT motherboard controls, optionally connected to a populated socket.
+#[derive(Default)]
+pub struct AtCoprocessor {
+    now: VClock,
+    trace: device::TraceBuffer,
+    error: Option<CoprocessorErrorLine>,
+}
+
+/// Compatibility name for the empty-socket constructor.
+pub type Absent80287 = AtCoprocessor;
+
+impl AtCoprocessor {
     /// Create an empty socket with inactive BUSY/error outputs.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Connect a present coprocessor's external error output to board controls.
+    pub fn with_error_line(error: CoprocessorErrorLine) -> Self {
+        Self {
+            error: Some(error),
+            ..Self::default()
+        }
     }
 
     fn check(port: u16) -> Result<(), DeviceError> {
@@ -55,9 +81,13 @@ impl Absent80287 {
     }
 }
 
-impl Device for Absent80287 {
+impl Device for AtCoprocessor {
     fn name(&self) -> &'static str {
-        "absent-80287"
+        if self.error.is_some() {
+            "at-coprocessor"
+        } else {
+            "absent-80287"
+        }
     }
     fn port_read(&mut self, port: u16, size: u8) -> Result<u32, DeviceError> {
         Self::check(port)?;
@@ -66,6 +96,12 @@ impl Device for Absent80287 {
     }
     fn port_write(&mut self, port: u16, size: u8, value: u32) -> Result<(), DeviceError> {
         Self::check(port)?;
+        if port == 0xF0 {
+            if let Some(error) = &self.error {
+                error.irq.set(false);
+                error.acknowledged.set(true);
+            }
+        }
         self.trace_port(port, size, AccessDir::Write, value);
         Ok(())
     }
@@ -91,25 +127,42 @@ impl Device for Absent80287 {
         NextEvent::Dormant
     }
     fn irq_pending(&self) -> bool {
-        false
+        self.error.as_ref().is_some_and(|error| error.irq.get())
     }
     fn reset(&mut self) {
         self.now = VClock::ZERO;
         self.trace.clear();
+        if let Some(error) = &self.error {
+            error.irq.set(false);
+            error.acknowledged.set(false);
+        }
     }
     fn save(&self) -> Vec<u8> {
-        let mut blob = vec![1];
+        let mut blob = vec![2];
         blob.extend_from_slice(&self.now.0.to_le_bytes());
+        blob.push(u8::from(self.irq_pending()));
+        blob.push(u8::from(
+            self.error.as_ref().is_some_and(|e| e.acknowledged.get()),
+        ));
         blob
     }
     fn restore(&mut self, snapshot: &[u8]) -> Result<(), DeviceError> {
-        if snapshot.len() != 9 || snapshot[0] != 1 {
+        if snapshot.len() != 11
+            || snapshot[0] != 2
+            || snapshot[9] > 1
+            || snapshot[10] > 1
+            || (self.error.is_none() && snapshot[9..].iter().any(|&b| b != 0))
+        {
             return Err(DeviceError::InvalidSnapshot {
                 device: "absent-80287",
                 reason: "invalid snapshot",
             });
         }
         self.now = VClock(u64::from_le_bytes(std::array::from_fn(|i| snapshot[i + 1])));
+        if let Some(error) = &self.error {
+            error.irq.set(snapshot[9] != 0);
+            error.acknowledged.set(snapshot[10] != 0);
+        }
         Ok(())
     }
     fn set_trace_policy(&mut self, policy: device::TracePolicy) {
@@ -127,6 +180,50 @@ impl Device for Absent80287 {
 mod tests {
     use super::*;
     use testkit::MockBus;
+
+    #[test]
+    fn populated_socket_latches_irq_until_any_f0_write_and_rearms() {
+        let error = CoprocessorErrorLine::default();
+        let mut bus = MockBus::new(Box::new(AtCoprocessor::with_error_line(error.clone())));
+        for value in [0, 0x55, 0xff] {
+            error.assert();
+            assert!(bus.device().irq_pending());
+            for port in [0xf1, 0xf8, 0xff] {
+                bus.port_write(port, 1, value).unwrap();
+                assert_eq!(bus.port_read(port, 1).unwrap(), 0xff);
+                assert!(bus.device().irq_pending());
+                assert!(!error.take_acknowledgement());
+            }
+            bus.tick(10);
+            assert!(bus.device().irq_pending());
+            bus.port_write(0xf0, 1, value).unwrap();
+            assert!(!bus.device().irq_pending());
+            assert!(error.take_acknowledgement());
+            assert!(!error.take_acknowledgement());
+            bus.port_write(0xf0, 1, value).unwrap();
+            assert!(error.take_acknowledgement());
+        }
+    }
+
+    #[test]
+    fn populated_socket_snapshot_and_reset_preserve_the_board_latch_contract() {
+        let error = CoprocessorErrorLine::default();
+        let mut bus = MockBus::new(Box::new(AtCoprocessor::with_error_line(error.clone())));
+        error.assert();
+        let latched = bus.device().save();
+        bus.port_write(0xf0, 1, 0).unwrap();
+        let acknowledged = bus.device().save();
+        bus.device_mut().restore(&latched).unwrap();
+        assert!(bus.device().irq_pending());
+        assert!(!error.take_acknowledgement());
+        bus.device_mut().restore(&acknowledged).unwrap();
+        assert!(!bus.device().irq_pending());
+        assert!(error.take_acknowledgement());
+        error.assert();
+        bus.device_mut().reset();
+        assert!(!bus.device().irq_pending());
+        assert!(!error.take_acknowledgement());
+    }
 
     #[test]
     fn empty_socket_reads_open_bus_discards_writes_and_never_interrupts() {

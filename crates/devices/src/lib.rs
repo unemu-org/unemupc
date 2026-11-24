@@ -54,7 +54,7 @@ pub const OPL3_NOTICE: &str = concat!(
 pub use a20::A20Line;
 pub use ata::{Ata, AtaConfigError, AtaDrive, AtaGeometry};
 pub use cmos_rtc::{CmosConfig, CmosDiagnostic, CmosRtc};
-pub use coprocessor::Absent80287;
+pub use coprocessor::{Absent80287, AtCoprocessor, CoprocessorErrorLine};
 pub use debug_console::DebugConsole;
 pub use device::{DmaMemory, DmaOp, DmaOutcome, DmaRequest};
 pub use dma8237::{Dma8237, TransferType};

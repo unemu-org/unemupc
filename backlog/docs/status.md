@@ -5294,7 +5294,7 @@ wall-time comparison and historical CPU sample shares.
   controls. The `"80287"`
   option uses `Present`, with no generation-specific fidelity claim, and
   FNINIT/FNSTCW stores 037Fh. Socket ports still read FFh and ignore writes;
-  FERR#/IRQ13 and F0h/F1h control wiring remain unimplemented.
+  ERROR#/IRQ13 and F0h acknowledgement are implemented; F1h reset remains unmodelled.
 
 - Multi-byte scalar accesses crossing a RAM/MMIO boundary in either direction
   ended the run with `Exit::UnmappedMemory` in historical x86jit
@@ -5444,3 +5444,22 @@ wall-time comparison and historical CPU sample shares.
 ## Not started
 
 See `bd ready --exclude-type epic` and `bd list --type epic`. Don't duplicate the bead list here.
+
+
+## AT coprocessor numeric-error routing (2026-11-24)
+
+Present 286/287 Machine CPUs now use x86jit External numeric-error routing:
+ERROR# latches IRQ13, and any F0h write clears the board latch and releases the
+CPU wait interlock without clearing x87 status. WAIT suspension advances devices
+and virtual time using the HLT idle path. The 386 socket wiring is ready for a
+future present coprocessor, with no new configuration option. Unsupported CPU
+models retain Internal routing. F1h reset, F8h–FFh internal bus transfers and
+unsupported protected-mode 287 forms remain outside coverage.
+
+The owned `at-irq13.asm` guest checks one IRQ13 per unmasked divide error,
+re-arming, preserved status across F0h, masked errors, absence of exception 16,
+and timer progress while WAIT is held. MEASURED: 96 retired instructions and
+1,955 virtual instruction equivalents. The open Kiselev BIOS test preserves its
+INT 75h handler and checks its INT 02h chain (MEASURED: 6,390,584 retired
+instructions). See
+[board coverage](design/machine-config.md#coprocessor-controls).

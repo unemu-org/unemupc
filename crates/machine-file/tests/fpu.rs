@@ -144,3 +144,188 @@ fn unsupported_fpu_names_have_exact_typed_diagnostics() {
         }
     }
 }
+
+#[test]
+fn at_numeric_errors_reach_irq13_before_wait_without_idle_ticks() {
+    use cpu::Cpu;
+    let mut assembled = immediate_irq13_machine();
+    assert_eq!(assembled.machine.idle_limit(), None);
+    assert_eq!(
+        assembled.machine.run_bounded(Some(500)).unwrap(),
+        machine::RunOutcome::RetiredCapReached,
+        "an unmasked numeric error must reach the handler before WAIT blocks"
+    );
+    let mut result = [0; 12];
+    assembled
+        .machine
+        .cpu()
+        .read_mem(0x500, &mut result)
+        .unwrap();
+    assert_eq!(&result[..6], &[2, 0, 0, 0, 0, 0]);
+    assert_eq!(&result[10..], &0xa55au16.to_le_bytes());
+    assert_eq!(
+        assembled.machine.virtual_time(),
+        assembled.machine.cpu().completed_steps()
+    );
+    assert!(!assembled.machine.halted());
+}
+
+fn immediate_irq13_machine() -> AssembledMachine {
+    struct NumericErrorImage;
+    impl ImageReader for NumericErrorImage {
+        fn read(&mut self, _: &Path) -> io::Result<Vec<u8>> {
+            Ok(include_bytes!("fixtures/at-irq13-immediate.bin").to_vec())
+        }
+    }
+    let path = Path::new("machines/numeric-error.toml");
+    let text = "schema = 1\n[board]\nmodel = 'ibm-5170'\n[cpu]\nfpu = '80287'\n[firmware.bios]\nimage = 'bios.bin'\n";
+    let config = lower(
+        &parse_toml(path, text).unwrap(),
+        &Origins::from_toml(path, text).unwrap(),
+        &mut NumericErrorImage,
+    )
+    .unwrap();
+    assemble_with_options(
+        &config,
+        AssemblyOptions {
+            allow_unlisted_firmware: true,
+        },
+    )
+    .unwrap()
+}
+
+#[test]
+fn at_suspended_wait_survives_device_restore_and_resumes_without_idle_ticks() {
+    use cpu::{Cpu, CpuReg};
+    let mut assembled = immediate_irq13_machine();
+    for cap in 1..500 {
+        assert_eq!(
+            assembled.machine.run_bounded(Some(cap)).unwrap(),
+            machine::RunOutcome::RetiredCapReached
+        );
+        if assembled.machine.cpu().numeric_error_pending() {
+            break;
+        }
+    }
+    assert!(assembled.machine.cpu().numeric_error_pending());
+    assembled
+        .machine
+        .bus_mut()
+        .port_write(0xa1, 1, 0xff)
+        .unwrap();
+    assert_eq!(
+        assembled.machine.run().unwrap(),
+        machine::RunOutcome::Halted
+    );
+    assert!(assembled.machine.halted());
+    let held = (
+        assembled.machine.cpu().reg(CpuReg::Rip),
+        assembled.machine.cpu().retired(),
+        assembled.machine.clock(),
+    );
+    let index = assembled.device_index[&DeviceId::Coprocessor];
+    let snapshot = assembled.machine.bus().device(index).unwrap().save();
+    let device = assembled.machine.bus_mut().device_mut(index).unwrap();
+    device.reset();
+    assert!(!device.irq_pending());
+    device.restore(&snapshot).unwrap();
+    assert!(device.irq_pending());
+    assert_eq!(
+        assembled.machine.run().unwrap(),
+        machine::RunOutcome::Halted
+    );
+    assert_eq!(
+        (
+            assembled.machine.cpu().reg(CpuReg::Rip),
+            assembled.machine.cpu().retired(),
+            assembled.machine.clock(),
+        ),
+        held,
+        "device restoration must preserve the suspended WAIT and its time"
+    );
+    assembled
+        .machine
+        .bus_mut()
+        .port_write(0xa1, 1, 0xdf)
+        .unwrap();
+    assert_eq!(
+        assembled.machine.run_bounded(Some(500)).unwrap(),
+        machine::RunOutcome::RetiredCapReached,
+        "the already latched IRQ must wake WAIT on the next run"
+    );
+    let mut result = [0; 12];
+    assembled
+        .machine
+        .cpu()
+        .read_mem(0x500, &mut result)
+        .unwrap();
+    assert_eq!(&result[..6], &[2, 0, 0, 0, 0, 0]);
+    assert_eq!(&result[10..], &0xa55au16.to_le_bytes());
+    assert_eq!(assembled.machine.idle_limit(), None);
+    assert!(!assembled.machine.halted());
+}
+
+#[test]
+fn at_numeric_errors_reach_irq13_and_wait_keeps_device_time_running() {
+    use cpu::Cpu;
+    assert!(
+        include_str!("../../../Cargo.lock").contains("#89532547e3bca71f82d63dfb463e018d7b471ac0")
+    );
+    let started = std::time::Instant::now();
+    let mut config = bios(
+        include_bytes!("fixtures/at-irq13.bin").to_vec(),
+        Some(vec![0; 1_474_560]),
+    );
+    config.cpu.fpu = FpuChip::I80287;
+    let mut assembled = assemble_with_options(
+        &config,
+        AssemblyOptions {
+            allow_unlisted_firmware: true,
+        },
+    )
+    .unwrap();
+    assembled.machine.set_idle_limit(Some(2000));
+    assert_eq!(
+        assembled.machine.run_bounded(Some(500)).unwrap(),
+        machine::RunOutcome::RetiredCapReached
+    );
+    assert!(
+        assembled.machine.halted(),
+        "WAIT remains suspended across runner calls"
+    );
+    assert_eq!(
+        assembled.machine.run_bounded(Some(100_000)).unwrap(),
+        machine::RunOutcome::Halted
+    );
+    let mut bytes = [0; 12];
+    assembled.machine.cpu().read_mem(0x500, &mut bytes).unwrap();
+    let words: Vec<u16> = bytes
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|v| u16::from_le_bytes([v[0], v[1]]))
+        .collect();
+    assert_eq!(words[0], 2, "one IRQ13 for each unmasked error");
+    assert_eq!(words[1], 0, "AT numeric errors never deliver exception 16");
+    assert_eq!(words[2], 1, "the timer unmasked IRQ13 while WAIT was held");
+    assert_ne!(words[3] & 0x80, 0, "ES was asserted in the handler");
+    assert_eq!(
+        words[3], words[4],
+        "F0h must preserve the complete status word"
+    );
+    assert_eq!(
+        words[5], 0xa55a,
+        "both WAIT retries and the masked error completed"
+    );
+    assert!(
+        assembled.machine.virtual_time() > assembled.machine.cpu().retired(),
+        "blocked WAIT advances virtual time without retiring instructions"
+    );
+    assert_eq!(assembled.machine.cpu().retired(), 96);
+    eprintln!(
+        "IRQ13 guest: retired={}, virtual={}, wall={:?}",
+        assembled.machine.cpu().retired(),
+        assembled.machine.virtual_time(),
+        started.elapsed()
+    );
+}

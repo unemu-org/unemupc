@@ -137,6 +137,13 @@ pub enum CpuStop {
         /// The value the guest wrote.
         value: u64,
     },
+    /// The coprocessor asserted ERROR# after a committed instruction.
+    /// IBM PC AT Technical Reference, System Board, Coprocessor: board logic
+    /// latches this signal onto IRQ13. See machine-config.md §Coprocessor controls.
+    NumericErrorAsserted,
+    /// WAIT or a waiting x87 instruction is blocked by the board BUSY latch.
+    /// Nothing retired; IRQ arbitration remains available on the next run.
+    NumericErrorWaiting,
     /// Guest executed `hlt`.
     Halt,
     /// The processor faulted while delivering double fault and requests reset.
@@ -352,6 +359,20 @@ pub enum DmaAccess<T> {
 /// access, port/MMIO completion handshakes, the IRQ-injection contract (§5.2),
 /// and completed-step accounting for virtual time (§6).
 pub trait Cpu {
+    /// Raw x87 error level, independent of the board IRQ latch (Intel 80286
+    /// and 80287 PRM, Part II, NPX Status Word, ES). See machine-config.md
+    /// §Coprocessor controls. Backends without a coprocessor report false.
+    fn numeric_error_pending(&self) -> bool {
+        false
+    }
+
+    /// Release the external error wait after the board's F0h write, preserving
+    /// x87 status. IBM PC AT Technical Reference, NMI and Coprocessor Controls;
+    /// see machine-config.md §Coprocessor controls.
+    fn ack_external_numeric_error(&mut self) -> Result<(), CpuError> {
+        Ok(())
+    }
+
     /// Drive the board's A20 gate on every vCPU owned by this backend.
     ///
     /// IBM PC AT Technical Reference, Keyboard Controller, Output Port: a low

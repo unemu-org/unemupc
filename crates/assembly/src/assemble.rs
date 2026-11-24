@@ -52,8 +52,9 @@ use bus::{Bus, DecodeMap, MmioRange, PortRange};
 use cpu::x86jit_backend::X86JitCpu;
 use device::{Device, InterruptController};
 use devices::{
-    A20Line, Absent80287, Ata, AtaDrive, AtaGeometry, CmosRtc, DebugConsole, Dma8237, Drive, FwCfg,
-    MdaText, PostPort, SysControl, SysCtrlPortA, Uart16550, Upd765, VgaText, I8042,
+    A20Line, Absent80287, AtCoprocessor, Ata, AtaDrive, AtaGeometry, CmosRtc, CoprocessorErrorLine,
+    DebugConsole, Dma8237, Drive, FwCfg, MdaText, PostPort, SysControl, SysCtrlPortA, Uart16550,
+    Upd765, VgaText, I8042,
 };
 use machine::{DmaChannelWiring, DmaWiring, IrqLine, Machine};
 use sha2::{Digest, Sha256};
@@ -354,6 +355,7 @@ pub fn assemble_preverified(
     let mut pic: Option<chipset::CascadedPic> = None;
     let reset_signal = Rc::new(Cell::new(false));
     let a20_line = A20Line::default();
+    let mut coprocessor_error = None;
     let pit = devices::pit8253::SharedPit8253::default();
     let mut persistence = Vec::new();
     let mut native_audio = Vec::new();
@@ -494,7 +496,20 @@ pub fn assemble_preverified(
             }
             DeviceKind::Dma(_) => Box::new(Dma8237::new()),
             DeviceKind::DmaWord(_) => Box::new(Dma8237::new_at_word()),
-            DeviceKind::AbsentCoprocessor => Box::new(Absent80287::new()),
+            DeviceKind::AbsentCoprocessor => {
+                if config.cpu.fpu != crate::FpuChip::None
+                    && matches!(
+                        config.board,
+                        crate::BoardModel::Ibm5170 | crate::BoardModel::Generic386Isa
+                    )
+                {
+                    let error = CoprocessorErrorLine::default();
+                    coprocessor_error = Some(error.clone());
+                    Box::new(AtCoprocessor::with_error_line(error))
+                } else {
+                    Box::new(Absent80287::new())
+                }
+            }
         };
         let index = devices.len();
         devices.push(boxed);
@@ -555,6 +570,13 @@ pub fn assemble_preverified(
         .with_cpu_rate(rate_numerator, rate_denominator)
         .with_dma_wirings(dma_wirings)
         .with_dma_channel_wirings(dma_channel_wirings);
+    if let Some(error) = coprocessor_error {
+        let asserted = error.clone();
+        machine = machine.with_numeric_error_lines(
+            move || asserted.assert(),
+            move || error.take_acknowledgement(),
+        );
+    }
     if has_a20_source(config) {
         let line = a20_line.clone();
         machine = machine

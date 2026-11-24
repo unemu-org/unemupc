@@ -817,7 +817,9 @@ remain ASSUMED until checked in the corresponding device work.
   - second 8237 at C0h–DFh with page registers 89h–8Fh: implemented
     (READ `crates/assembly/src/board.rs:104–108`, `assemble.rs:304`);
   - empty 80287 socket ports F0h/F1h, F8h–FFh: implemented (READ
-    `board.rs:125–130`); CPU-side absent-FPU behavior remains unqualified;
+    `board.rs:125–130`); a present 80287 now drives the IRQ13 latch and F0h
+    releases BUSY without clearing numeric status. F1h reset and F8h–FFh bus
+    transfers remain unmodelled; see [coverage](machine-config.md#coprocessor-controls);
   - 8042 `FEh` reset pulse and CPU-reset seam: implemented; RAM and CMOS
     0Fh survive (READ `assemble.rs:261–264,338–339`,
     `crates/machine/src/lib.rs:305–316`);

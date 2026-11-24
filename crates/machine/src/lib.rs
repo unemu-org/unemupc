@@ -29,9 +29,10 @@
 //! ## Virtual clock (§6)
 //!
 //! Completed steps convert to whole virtual ticks at a configured rational
-//! rate, with carried remainder. While HLT suspends execution, time jumps to the
+//! rate, with carried remainder. While HLT or coprocessor BUSY suspends execution,
+//! time jumps to the
 //! next event, idle bound, or cap, without retiring instructions or consuming
-//! the running remainder. IF-clear HLT stops immediately because NMI is absent.
+//! the running remainder. IF-clear suspension stops immediately because NMI is absent.
 //! Virtual-time caps include accumulated halted instruction equivalents; active
 //! caps are exact and halted caps round up to a whole virtual tick. No wall time
 //! enters execution. See `backlog/docs/design/scheduler.md` §Adoption.
@@ -226,7 +227,7 @@ pub struct Machine<C: Cpu> {
     engine: SchedulerEngine,
     completed_steps: u64,
     step_limit: NonZeroU64,
-    /// HLT remains suspended across runner calls until an IRQ can wake the CPU.
+    /// HLT or coprocessor WAIT stays suspended across runs until an IRQ can wake it.
     halted: bool,
     /// Total virtual ticks spent halted, charged to the virtual-time safety cap.
     halted_clocks: u64,
@@ -258,6 +259,8 @@ pub struct Machine<C: Cpu> {
     reset_pending: bool,
     a20_line: Option<Box<dyn Fn() -> (u64, bool)>>,
     a20_changes: u64,
+    numeric_error_assert: Option<Box<dyn Fn()>>,
+    numeric_error_ack: Option<Box<dyn Fn() -> bool>>,
     /// Whether the CPU still fetches through the code base it loaded at
     /// reset; see [`Self::with_reset_fetch_probe`].
     reset_fetch_probe: Option<ResetFetchProbe<C>>,
@@ -354,6 +357,8 @@ impl<C: Cpu> Machine<C> {
             reset_pending: false,
             a20_line: None,
             a20_changes: 0,
+            numeric_error_assert: None,
+            numeric_error_ack: None,
             reset_fetch_probe: None,
             reset_fetch_window: false,
             memory_map: None,
@@ -391,6 +396,20 @@ impl<C: Cpu> Machine<C> {
         self.cpu.set_a20_enabled(enabled);
         self.a20_changes = changes;
         self.a20_line = Some(Box::new(line));
+        self
+    }
+
+    /// Connect board numeric-error assertion and acknowledgement signals.
+    /// IBM PC AT Technical Reference, NMI and Coprocessor Controls: the board
+    /// owns IRQ13 and F0h; the CPU owns its wait interlock. See
+    /// `backlog/docs/design/machine-config.md` §Coprocessor controls.
+    pub fn with_numeric_error_lines(
+        mut self,
+        assert: impl Fn() + 'static,
+        acknowledge: impl Fn() -> bool + 'static,
+    ) -> Self {
+        self.numeric_error_assert = Some(Box::new(assert));
+        self.numeric_error_ack = Some(Box::new(acknowledge));
         self
     }
 
@@ -589,7 +608,7 @@ impl<C: Cpu> Machine<C> {
         Ok(())
     }
 
-    /// Whether the CPU sits in HLT, waiting for an interrupt, across runs.
+    /// Whether HLT or coprocessor BUSY suspends the CPU across runs.
     pub fn halted(&self) -> bool {
         self.halted
     }
@@ -984,6 +1003,22 @@ impl<C: Cpu> Machine<C> {
                     self.cpu.complete_mmio_read(value);
                     completing = true;
                 }),
+                CpuStop::NumericErrorAsserted => {
+                    if let Some(assert) = &self.numeric_error_assert {
+                        assert();
+                        // The next WAIT can retire nothing, so no later clock
+                        // advance is guaranteed to expose this IRQ to the PIC.
+                        self.sample_irq_lines();
+                    }
+                    Ok(())
+                }
+                CpuStop::NumericErrorWaiting => {
+                    // BUSY suspends instruction retirement just like HLT. Keep
+                    // device clocks and interrupt arbitration alive while held.
+                    self.halted = true;
+                    no_progress = 0;
+                    Ok(())
+                }
                 CpuStop::Exception { vector } => return Err(MachineError::Exception { vector }),
                 // IBM Personal Computer AT Technical Reference, System Board,
                 // Logic Diagrams: shutdown decoding resets the processor alone.
@@ -998,6 +1033,9 @@ impl<C: Cpu> Machine<C> {
                 }
                 CpuStop::BudgetExhausted => Ok(()),
             };
+            if self.numeric_error_ack.as_ref().is_some_and(|ack| ack()) {
+                self.cpu.ack_external_numeric_error()?;
+            }
             if accessed {
                 // A register can gate another device's timer. Refresh every
                 // deadline before advancing through the stopping instruction.
@@ -2177,6 +2215,84 @@ mod tests {
             limit,
         )
         .with_step_limit(NonZeroU64::MIN)
+    }
+
+    #[test]
+    fn numeric_error_assertion_samples_irq_without_advancing_clock() {
+        let error = devices::CoprocessorErrorLine::default();
+        let ack = error.clone();
+        let bus = Bus::new(
+            vec![Box::new(devices::AtCoprocessor::with_error_line(
+                error.clone(),
+            ))],
+            DecodeMap::default(),
+        );
+        let mut machine = Machine::new(
+            instruction_cpu(vec![CpuStop::NumericErrorAsserted], true),
+            bus,
+            Box::<CountingIc>::default(),
+            vec![IrqLine {
+                device: 0,
+                output: 0,
+                irq: 13,
+            }],
+            None,
+        )
+        .with_step_limit(NonZeroU64::MIN)
+        .with_cpu_rate(NonZeroU64::new(u64::MAX).unwrap(), NonZeroU64::MIN)
+        .with_numeric_error_lines(move || error.assert(), move || ack.take_acknowledgement());
+        assert_eq!(
+            machine.run_bounded(Some(1)).unwrap(),
+            RunOutcome::RetiredCapReached
+        );
+        assert_eq!(machine.pic.poll(), Some(0x08));
+        assert_eq!(machine.clock(), VClock::ZERO);
+        assert!(machine.cpu().injected.is_empty(), "the cap wins over INTA");
+    }
+
+    #[test]
+    fn numeric_error_waiting_resumes_for_a_latched_irq_without_idle_ticks() {
+        let cpu = MockCpu::new(Vec::new())
+            .with_interrupts_enabled(true)
+            .with_step_program(vec![
+                testkit::MockCpuStep {
+                    max_steps: 1,
+                    run: cpu::CpuStepRun {
+                        steps: 0,
+                        stop: CpuStepStop::Exit(CpuStop::NumericErrorWaiting),
+                    },
+                    retired: 0,
+                    irq_ready: true,
+                },
+                testkit::MockCpuStep {
+                    max_steps: 1,
+                    run: cpu::CpuStepRun {
+                        steps: 1,
+                        stop: CpuStepStop::Exit(CpuStop::BudgetExhausted),
+                    },
+                    retired: 1,
+                    irq_ready: true,
+                },
+            ]);
+        let mut machine = Machine::new(
+            cpu,
+            Bus::new(Vec::new(), DecodeMap::default()),
+            Box::<CountingIc>::default(),
+            Vec::new(),
+            None,
+        )
+        .with_step_limit(NonZeroU64::MIN);
+        assert_eq!(machine.run().unwrap(), RunOutcome::Halted);
+        assert!(machine.halted());
+        assert_eq!(machine.virtual_time(), 0);
+        machine.pic.set_irq_line(13, true);
+        assert_eq!(
+            machine.run_bounded(Some(1)).unwrap(),
+            RunOutcome::RetiredCapReached
+        );
+        assert!(!machine.halted());
+        assert_eq!(machine.cpu().delivered, [0x08]);
+        assert_eq!(machine.virtual_time(), 1);
     }
 
     #[test]
