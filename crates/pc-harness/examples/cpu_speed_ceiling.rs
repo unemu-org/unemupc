@@ -12,7 +12,7 @@ mod speed;
 
 fn main() {
     assert!(
-        include_str!("../../../Cargo.lock").contains("5a17667764080c2fe7a33d446584a3e175b7923d")
+        include_str!("../../../Cargo.lock").contains("d8bf798ed05520b6b06bbb787a71f3906a0c65d9")
     );
     for board in [
         BoardModel::Ibm5170,
@@ -30,13 +30,20 @@ fn main() {
                 include_bytes!("../tests/fixtures/cpu-ceiling-protected32.bin").as_slice(),
             )
         };
-        for (mode, rom) in [
+        let mut cases = vec![
             (
                 "real16",
                 include_bytes!("../tests/fixtures/cpu-ceiling-real.bin").as_slice(),
             ),
             protected,
-        ] {
+        ];
+        if board != BoardModel::Ibm5170 {
+            cases.push((
+                "paged32",
+                include_bytes!("../tests/fixtures/cpu-ceiling-paged32.bin").as_slice(),
+            ));
+        }
+        for (mode, rom) in cases {
             let config = speed::board(rom, board);
             let mut rig = assembly::assemble_with_options(
                 &config,
@@ -58,6 +65,11 @@ fn main() {
                     .protected(),
                 mode != "real16"
             );
+            if mode == "paged32" {
+                let mut pde = [0; 4];
+                rig.machine.cpu().read_mem(0x1000, &mut pde).unwrap();
+                assert_ne!(u32::from_le_bytes(pde) & 0x20, 0, "paging must set PDE.A");
+            }
             for sample in 1..=3 {
                 let before = rig.machine.cpu().retired();
                 let start = Instant::now();

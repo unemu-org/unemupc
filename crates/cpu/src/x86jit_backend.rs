@@ -347,9 +347,7 @@ impl X86JitCpu {
     /// to populate a ROM, which is immutable to the guest thereafter.
     pub fn map_rom(&mut self, base: u64, blob: &[u8]) -> Result<(), CpuError> {
         self.map_region(base, blob.len(), Prot::RX, RegionKind::Rom)?;
-        self.vm
-            .write_bytes(base, blob)
-            .map_err(|e| CpuError::Memory(format!("{e:?}")))
+        self.write_mem(base, blob)
     }
 
     /// Map one immutable region filled with a repeated byte, using at most
@@ -378,18 +376,23 @@ impl X86JitCpu {
         self.map_region(base, size as usize, Prot::RX, RegionKind::Rom)
     }
 
-    /// Write `bytes` into guest RAM at linear address `addr` through the `Vm`
-    /// API (so SMC tracking sees it). For an embedder that seeds the IVT or a
-    /// device table into low memory before execution.
+    /// Write `bytes` at physical address `addr` through the `Vm` loader API.
+    ///
+    /// Host edits may replace page tables without a guest CR3 reload. Flush
+    /// derived paging state even for equal-byte restores, as well as notifying
+    /// SMC tracking. Call only between runs; complete pending device handoffs
+    /// before restoring memory. Intel 80386 Programmer's Reference Manual,
+    /// §5.2.5 Page-Translation Cache; see protected-mode-gaps.md §Paging restore audit.
     pub fn write_mem(&mut self, addr: u64, bytes: &[u8]) -> Result<(), CpuError> {
         self.vm
             .write_bytes(addr, bytes)
-            .map_err(|e| CpuError::Memory(format!("{e:?}")))
+            .map_err(|e| CpuError::Memory(format!("{e:?}")))?;
+        self.cpu.invalidate_paging();
+        Ok(())
     }
 
-    /// Read `buf.len()` bytes of guest memory at linear address `addr` through the
-    /// `Vm` API. For a runner that reads back the bytes at the stopping CS:IP to
-    /// disassemble where a run ended.
+    /// Read `buf.len()` bytes at physical address `addr` through the `Vm` API.
+    /// Host inspection bypasses guest paging, as does [`Self::write_mem`].
     pub fn read_mem(&self, addr: u64, buf: &mut [u8]) -> Result<(), CpuError> {
         self.vm
             .read_bytes(addr, buf)
@@ -911,6 +914,8 @@ impl Cpu for X86JitCpu {
             self.cpu.cpu.external_numeric_error = error;
             // The reset image enables A20, but a CPU reset retains the board line.
             self.cpu.set_a20_enabled(a20_enabled);
+            // RAM survives reset; discard proofs derived from the old CPU image.
+            self.cpu.invalidate_paging();
             return Ok(());
         }
         let state = &mut self.cpu.cpu;
@@ -934,6 +939,7 @@ impl Cpu for X86JitCpu {
         state.ss = 0;
         state.flags.set_flags16(0x0002);
         state.rflags_system = 0;
+        self.cpu.invalidate_paging();
         Ok(())
     }
 
@@ -1028,6 +1034,8 @@ impl Cpu for X86JitCpu {
 
     fn set_reg(&mut self, reg: CpuReg, value: u64) {
         self.cpu.set_reg(to_core_reg(reg), value);
+        // A host register restore is a paging barrier even for equal values.
+        self.cpu.invalidate_paging();
     }
 
     fn complete_port_in(&mut self, value: u64) {
@@ -1134,6 +1142,79 @@ impl Cpu for X86JitCpu {
 mod tests {
     use super::*;
     use crate::diagnostic::Peek;
+
+    fn paged_guest() -> X86JitCpu {
+        use x86jit_core::legacy::SegmentCache;
+        let mut cpu = X86JitCpu::new_i386_bare(0, 0x2000, RealSegments::flat(0)).unwrap();
+        cpu.map_ram(0, 0x10000).unwrap();
+        cpu.write_mem(0x2000, &[0x90, 0xEB, 0xFD]).unwrap();
+        cpu.write_mem(0x4000, &0x5003u32.to_le_bytes()).unwrap();
+        cpu.write_mem(0x5008, &0x2003u32.to_le_bytes()).unwrap();
+        let state = &mut cpu.cpu.cpu;
+        state.cs = 8;
+        state.ds = 0x10;
+        state.ss = 0x10;
+        state.legacy.cr0 = 0x8000_0011;
+        state.legacy.cr3 = 0x4000;
+        state.legacy.segments = std::array::from_fn(|index| SegmentCache {
+            base: 0,
+            limit: u32::MAX,
+            attributes: if index == 0 { 0xC09B } else { 0xC093 },
+            ..SegmentCache::default()
+        });
+        cpu.run_steps(1, StepRunOptions::default()).unwrap();
+        assert_eq!(cpu.reg(CpuReg::Rip), 0x2001);
+        assert!(cpu.vm.mem.is_code_page(2));
+        cpu
+    }
+
+    #[test]
+    fn host_page_table_restore_discards_paged_fetch_proofs_even_for_equal_bytes() {
+        let mut cpu = paged_guest();
+        let mut pte = [0; 4];
+        cpu.read_mem(0x5008, &mut pte).unwrap();
+        let before = cpu.retired();
+        cpu.write_mem(0x5008, &pte).unwrap();
+        assert!(
+            !cpu.vm.mem.is_code_page(2),
+            "host restore must release stale fetch proofs"
+        );
+        assert_eq!(cpu.retired(), before);
+        assert_eq!(cpu.reg(CpuReg::Rip), 0x2001);
+        cpu.run_steps(1, StepRunOptions::default()).unwrap();
+        assert_eq!(cpu.reg(CpuReg::Rip), 0x2000);
+    }
+
+    #[test]
+    fn host_register_restore_discards_paged_fetch_proofs_even_for_equal_values() {
+        let mut cpu = paged_guest();
+        let ip = cpu.reg(CpuReg::Rip);
+        cpu.set_reg(CpuReg::Rip, ip);
+        assert!(!cpu.vm.mem.is_code_page(2));
+        assert_eq!(cpu.reg(CpuReg::Rip), ip);
+    }
+
+    #[test]
+    fn reset_keeps_page_table_ram_and_discards_paged_fetch_proofs() {
+        let mut cpu = paged_guest();
+        let mut before = [0; 4];
+        cpu.read_mem(0x5008, &mut before).unwrap();
+        cpu.reset().unwrap();
+        assert!(!cpu.vm.mem.is_code_page(2));
+        let mut after = [0; 4];
+        cpu.read_mem(0x5008, &mut after).unwrap();
+        assert_eq!(after, before);
+        assert_eq!(cpu.cpu.cpu.legacy.cr0 & 0x8000_0001, 0);
+    }
+
+    #[test]
+    fn dma_page_table_write_keeps_fetch_proofs_until_the_next_walk() {
+        let mut cpu = paged_guest();
+        assert_eq!(cpu.guest_dma_write(0x5008, 0x23), DmaAccess::Complete(()));
+        assert!(cpu.vm.mem.is_code_page(2));
+        cpu.run_steps(1, StepRunOptions::default()).unwrap();
+        assert_eq!(cpu.reg(CpuReg::Rip), 0x2000);
+    }
 
     fn i286_guest(code: &[u8]) -> X86JitCpu {
         let mut cpu =

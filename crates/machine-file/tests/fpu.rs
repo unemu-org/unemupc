@@ -271,7 +271,7 @@ fn at_suspended_wait_survives_device_restore_and_resumes_without_idle_ticks() {
 fn at_numeric_errors_reach_irq13_and_wait_keeps_device_time_running() {
     use cpu::Cpu;
     assert!(
-        include_str!("../../../Cargo.lock").contains("#5a17667764080c2fe7a33d446584a3e175b7923d")
+        include_str!("../../../Cargo.lock").contains("#d8bf798ed05520b6b06bbb787a71f3906a0c65d9")
     );
     let started = std::time::Instant::now();
     let mut config = bios(

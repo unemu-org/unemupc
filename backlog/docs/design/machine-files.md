@@ -923,11 +923,30 @@ loops on this shared host, not a guarantee for BIOS boot, games, memory-heavy
 code or floating point. The nominal clock controls virtual throughput even
 when the host cannot keep real time; no wall-clock pacing is introduced.
 
+**MEASURED after the paging repin**, same host class and method, CPU pin
+`d8bf798ed05520b6b06bbb787a71f3906a0c65d9`:
+
+| Board | Real16 MIPS (min–max) | Protected MIPS (min–max) | Paged protected32 MIPS (min–max) |
+|---|---:|---:|---:|
+| IBM 5170 | 91.843–92.835 | 9.489–9.623 | unavailable on 286 |
+| Generic 386 ISA | 93.475–95.122 | 8.066–8.172 | **1.832–1.888** |
+| Generic 486 ISA (early DX) | 94.102–94.824 | 7.795–7.853 | **1.837–1.854** |
+
+Each of the 24 samples retires exactly 10,000,000 instructions. Paged 386
+sample wall times are 5.350275, 5.459869 and 5.295930 s; paged 486 times
+are 5.392324, 5.442370 and 5.406629 s. The paged fixture maps the first MiB
+through RAM tables, enables PG and runs the same five register instructions;
+the host checks PDE.A after warmup to prove a walk occurred. One-instruction
+paged interpretation and repeated walks are materially slower than PG=0.
+These shared-host timings cannot isolate the small PG=0 regression reported
+by x86jit; unpaged deterministic retired counts must remain unchanged.
+
 Reproduce with `cargo run --offline --release -p pc-harness --example cpu_speed_ceiling`
 inside the project devShell (shared hosts use their mandated Cargo wrapper).
 Assemble `tests/fixtures/cpu-ceiling.asm` under `crates/pc-harness/` with
 `nasm -f bin`, adding `-DPROTECTED` for protected16 and both `-DPROTECTED`
-and `-DPROTECTED32` for protected32. `cpu-speed.asm` uses `nasm -f bin`.
+and `-DPROTECTED32` for protected32; additionally use `-DPAGED32` for
+`cpu-ceiling-paged32.bin`. `cpu-speed.asm` uses `nasm -f bin`.
 
 ### Clock-related golden changes
 

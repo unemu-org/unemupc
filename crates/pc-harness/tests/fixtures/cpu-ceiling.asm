@@ -1,6 +1,8 @@
 ; SPDX-License-Identifier: AGPL-3.0-or-later
 ; Intel 80286 and 80287 Programmer's Reference Manual, System Initialization,
 ; entering protected mode. A 16-bit protected loop also works on the 286.
+; Intel 80386 Programmer's Reference Manual §5.2 Page Translation defines
+; the optional identity-mapped paged32 case; see machine-files.md §Measured speed ceilings.
 bits 16
 org 0
 start:
@@ -16,11 +18,34 @@ count:
 %ifdef PROTECTED32
     bits 32
 %endif
+%ifdef PAGED32
+    mov ax, 0x10
+    mov ds, ax
+    mov es, ax
+    xor eax, eax
+    mov edi, 0x1000
+    mov ecx, 2048
+    rep stosd
+    mov dword [0x1000], 0x2003
+    mov edi, 0x2000
+    mov eax, 3
+    mov ecx, 256
+.pages:
+    stosd
+    add eax, 0x1000
+    loop .pages
+    mov eax, 0x1000
+    mov cr3, eax
+    mov eax, cr0
+    or eax, 0x80000000
+    mov cr0, eax
+%endif
+count_loop:
     inc ax
     add bx, ax
     xor dx, bx
     dec cx
-    jmp count
+    jmp count_loop
 %ifdef PROTECTED
 align 8
 gdt:
@@ -31,6 +56,9 @@ gdt:
     db 0x0f, 0x9a, 0x40, 0
 %else
     db 0x0f, 0x9a, 0, 0
+%endif
+%ifdef PAGED32
+    dq 0x00CF92000000FFFF
 %endif
 gdtr:
     dw $-gdt-1

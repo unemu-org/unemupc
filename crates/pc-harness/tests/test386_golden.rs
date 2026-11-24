@@ -13,9 +13,11 @@ use device::ByteStreamKind;
 #[path = "support/fixtures.rs"]
 mod fixtures;
 
-const CPU_REV: &str = "5a17667764080c2fe7a33d446584a3e175b7923d";
+const CPU_REV: &str = "d8bf798ed05520b6b06bbb787a71f3906a0c65d9";
 const CAP: u64 = 1_000_000;
-const GOLDEN_POST: &[u8] = &[0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x08];
+const GOLDEN_POST: &[u8] = &[
+    0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x08, 0x09, 0x20, 0x21,
+];
 
 fn board(rom: Vec<u8>, chip: CpuChip) -> MachineConfig {
     // The board owns a 128 KiB decode; place the 64 KiB ROM in its upper half.
@@ -136,40 +138,46 @@ fn run(chip: CpuChip) {
         post, GOLDEN_POST,
         "test386 progress changed; review and advance the golden"
     );
-    assert_eq!(text, "", "print routines follow the paging boundary");
+    assert_eq!(text, "", "printing follows the virtual-8086 tests");
     assert_eq!(
-        retired, 793_775,
+        retired, 796_780,
         "retired count changed: review newly reached test386 sections and advance the golden"
     );
     assert!(
         matches!(&outcome,
         Err(machine::MachineError::Cpu(cpu::CpuError::UnsupportedSystem {
-            operation, cs: 0xF000, ip: 0x267C
-        })) if operation == "LegacyExecution"),
-        "expected the PG=1 refusal; when paging lands, advance test386: {outcome:?}"
+            operation, cs: 0xD0, ip: 0x2CA0
+        })) if operation == "InvalidLegacyContext(Virtual8086Unsupported)"),
+        "expected the virtual-8086 boundary; review further progress: {outcome:?}"
     );
     let state = assembled.machine.cpu().diagnostic_state();
-    assert_eq!(state.code_linear, 0xF267C);
+    assert_eq!(state.code_linear, 0xF2CA0);
     assert_eq!(
-        state.code[..3]
+        state.code[..1]
             .iter()
             .map(|byte| byte.value().unwrap())
             .collect::<Vec<_>>(),
-        [0x0F, 0x22, 0xC0]
+        [0xCF]
     );
     let system = state.system.unwrap();
-    assert!(
-        !system.protected(),
-        "the refused PE|PG write must not take effect"
-    );
+    assert!(system.protected());
     assert_eq!(system.cpl, 0);
+    assert_eq!(assembled.machine.cpu().reg(CpuReg::Rax), 0x118);
+    let mut frame = [0; 36];
+    assembled
+        .machine
+        .cpu()
+        .read_mem(0x1FFD7, &mut frame)
+        .unwrap();
+    let words: Vec<_> = frame
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|bytes| u32::from_le_bytes(*bytes))
+        .collect();
     assert_eq!(
-        assembled.machine.cpu().reg(CpuReg::Rax),
-        if chip == CpuChip::I80386 {
-            0x80000001
-        } else {
-            0xE0000011
-        }
+        words,
+        [0x5630, 0xF000, 0x20246, 0x7FFF, 0x1000, 0x3040, 0x2010, 0x5060, 0x7080]
     );
 }
 

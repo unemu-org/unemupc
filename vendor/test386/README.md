@@ -43,15 +43,16 @@ at FFFF0000h–FFFFFFFFh. Tests fill E0000h–EFFFFh with FFh to satisfy the
 board's 128 KiB decode. Tests use the explicit unlisted-fixture assembly option,
 leaving shipped firmware catalogue and scan policy intact. No SeaBIOS runs.
 
-At CPU pin `5a17667764080c2fe7a33d446584a3e175b7923d`, all three models
-produce POST `00 01 02 03 04 05 06 08` and no ASCII bytes. They retire 793,775
-instructions, then refuse `MOV CR0,EAX` (`0F 22 C0`) at F000:267C with typed
-`LegacyExecution`. The ROM enables PE and PG together in POST 08h, before its
-protected-mode tests. No protected-mode or paging pass is claimed. The test
-has a 1,000,000-instruction bound and runs normally (about 0.03–0.06 seconds).
-The 486 variants retain their different CR0 reset bits but reach the same stop.
-When paging is enabled upstream, advance the golden after reviewing progress.
-The retained bare scheduler rig also captures POST at 80h.
+At CPU pin `d8bf798ed05520b6b06bbb787a71f3906a0c65d9`, all three models
+produce POST `00 01 02 03 04 05 06 08 09 20 21` and zero ASCII bytes. They
+retire 796,780 instructions, then refuse `IRETD` (`CF`, USE32) at 00D0:2CA0
+with typed `InvalidLegacyContext(Virtual8086Unsupported)`. Combined PE/PG
+entry, protected stacks and ring transitions now run; POST 21 attempts V86.
+The later dedicated page-fault tests (POST 11) and FFh completion remain
+unreached. No source is patched to bypass that boundary. A separate
+project-owned paging ROM checks aliases, permissions and #PF independently.
+The 1,000,000 virtual-time-unit bound remains; measured test-profile times are
+0.049–0.058 seconds. The retained bare scheduler rig also captures POST at 80h.
 
 See [measured coverage and CPU findings](../../backlog/docs/design/protected-mode-gaps.md)
 and `crates/pc-harness/tests/test386_golden.rs` for the pinned stop contract.

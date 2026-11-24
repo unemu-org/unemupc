@@ -23,7 +23,7 @@ fn budget(chip: CpuChip, previous_steps: u64) -> u64 {
 
 fn shipped(chip: CpuChip) -> Option<assembly::MachineConfig> {
     assert!(
-        include_str!("../../../../Cargo.lock").contains("5a17667764080c2fe7a33d446584a3e175b7923d")
+        include_str!("../../../../Cargo.lock").contains("d8bf798ed05520b6b06bbb787a71f3906a0c65d9")
     );
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     if ["bios-1.17.0-isa.bin", "build/vgabios-1.17.0-stdvga.bin"]

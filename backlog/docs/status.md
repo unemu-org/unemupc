@@ -29,6 +29,14 @@ through 25 MHz and none of the listed 486 clocks fits that loop. These are
 workload-specific ceilings, not a game-performance promise.
 See [clock mapping, sources, presets and measurement method](design/machine-files.md#nominal-cpu-clocks).
 
+**MEASURED after paging repin `d8bf798e`:** the same release example now
+also measures paged protected32. Three 10-million-instruction samples give
+**1.832–1.888 MIPS** on the 386 and **1.837–1.854 MIPS** on the early 486DX.
+Unpaged protected32 ranges are 8.066–8.172 and 7.795–7.853 MIPS respectively.
+The walker is uncached and paged blocks contain one instruction. These are
+shared-host throughput measurements, not a change to guest retired counts;
+see [all rates and wall times](design/machine-files.md#measured-speed-ceilings).
+
 ## FreeDOS on generic ISA boards (2026-11-24)
 
 **MEASURED**, CPU pin `5a17667764080c2fe7a33d446584a3e175b7923d`:
@@ -87,21 +95,35 @@ The serial-only counts in the older board entries below are historical.
 
 ## test386 full-machine validation (2026-11-24)
 
-**MEASURED**, x86jit `5a17667764080c2fe7a33d446584a3e175b7923d`: the pinned
-third-party test386 ROM boots without SeaBIOS on `generic-386-isa` and both
-`generic-486-isa` CPU variants. All report POST `00 01 02 03 04 05 06 08`
-and stop after 793,775 retired instructions at F000:267C (`0F 22 C0`,
-MOV CR0,EAX), with the expected typed `LegacyExecution` paging refusal.
-The same 386-defined-behavior configuration uses POST 80h and ASCII 402h;
-text output is empty because printing is later. No unexpected failure was
-observed; the 486 stop differs only in retained CR0/FLAGS values.
-
-The ROM enables PE and PG together at POST 08h, so its protected-mode and
-paging sections remain unexecuted. This run qualifies its preceding real-mode
-sections; it does not imply full test386 completion. Normal integration tests
-pin the exact progress and refusal, and a synthetic reset ROM checks both
-output routes. See [coverage and CPU findings](design/protected-mode-gaps.md#test386-full-machine-validation-2026-11-24)
+**MEASURED**, x86jit `d8bf798ed05520b6b06bbb787a71f3906a0c65d9`: test386
+boots without a BIOS on `generic-386-isa` and both `generic-486-isa` variants.
+All report POST **`00 01 02 03 04 05 06 08 09 20 21`**, zero bytes on port
+402h, and **796,780** retired instructions. Paging entry, protected stacks
+and ring transitions now execute. The first V86 `IRETD` (`CF`) at
+00D0:2CA0 receives `InvalidLegacyContext(Virtual8086Unsupported)`.
+This CPU limitation is the honest golden stop, not FFh completion; dedicated
+upstream page-fault tests later in execution remain unreached. Normal tests
+assert the instruction, return frame, exact progress, text and count.
+See [coverage and CPU findings](design/protected-mode-gaps.md#test386-full-machine-validation-2026-11-24)
 and [fixture configuration](../../vendor/test386/README.md).
+
+## Two-level paging on generic ISA boards (2026-11-24)
+
+**MEASURED at the same CPU pin:** the project-owned
+[paging ROM](design/i386-pm-test.md#two-level-paging-rom) checks identity and
+alias mappings, PDE/PTE accessed and dirty bits, recoverable #PF with CR2,
+CPL-3 PDE/PTE U/S and R/W restrictions, equal CR3 reload and a new directory.
+Both 486 models also pass INVLPG after a PTE change and CR0.WP supervisor
+write faults on read-only user and supervisor mappings. Exact port-402h
+transcripts and retired counts are pinned on all three models, including
+small bounded run chunks. The CPU requires page tables in RAM and returns
+a typed refusal for table storage in device/ROM regions; V86 remains absent.
+
+Host writes, partial register restores and RAM-preserving CPU resets now call
+`invalidate_paging`; EMS restores use the host-write path. Whole-machine
+snapshots remain deferred. DMA keeps physical writes and the normal SMC
+notification path without a paging flush per byte. See the
+[restore audit](design/protected-mode-gaps.md#paging-restore-audit).
 
 ## Generic 486 ISA board (2026-11-24)
 
@@ -168,7 +190,8 @@ IRQs, ring-3 INT and timer delivery on the TSS stack, and return to real mode.
 The exact port-402h golden reports zero failures and halts after **8,120
 retired instructions**, identically on repeated runs. Delivery records agree
 between Deadline and PerClock and across bounded run chunks. This qualifies
-unpaged execution only: paging, I/O bitmaps and a DOS extender remain pending.
+unpaged execution only. The separate paging ROM above supplies paging coverage;
+a DOS extender remains unqualified.
 
 `seabios-1.17.0-unemu1-isa` remains **Listed**; the exact FreeDOS profiles
 are qualified above. The fixture now builds from the source of truth, `unemu-org/seabios`, commit
