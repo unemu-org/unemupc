@@ -1642,3 +1642,7 @@ pub fn seabios_freedos_dos32a(chip: CpuChip, vcpi: bool) {
         assembled.machine.cpu().diagnostic_state()
     );
 }
+
+#[path = "user_media.rs"]
+mod user_media;
+pub use user_media::doom as user_media_doom;

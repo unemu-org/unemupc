@@ -68,3 +68,9 @@ fn generic386_seabios_freedos_dos32a_raw() {
 fn generic386_seabios_freedos_dos32a_vcpi() {
     generic_isa::seabios_freedos_dos32a(assembly::CpuChip::I80386, true);
 }
+
+#[test]
+#[ignore = "local-only commercial media; set UNEMUPC_USER_DOOM_DIR"]
+fn user_media_doom_386() {
+    generic_isa::user_media_doom(assembly::CpuChip::I80386);
+}

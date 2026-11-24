@@ -1,5 +1,18 @@
 # Status
 
+## Local DOOM startup (2026-11-24)
+
+**MEASURED:** registered DOOM 1.2 from a user-supplied directory reaches mode
+13h on `generic-386-isa` under FreeDOS, with DOS/4G and the selected startup
+identifiers observed. The first qualifying 320×200 picture contains 243 palette
+indices at 159,571,631 retired instructions (37.7 seconds in the local probe).
+Both 486 variants also pass at 226,874,445/226,874,473 retired instructions
+(243 indices, about 99 seconds while running together).
+The ignored `user_media_doom_` tests require `UNEMUPC_USER_DOOM_DIR`; no game
+bytes, media/frame digests or private paths are stored. The temporary FAT16 IDE
+base stays immutable and guest configuration writes use the volatile overlay.
+See [preparation, limits and measurements](user-media.md).
+
 ## DOS extender phase B exit (2026-11-24)
 
 **MEASURED at x86jit `fc07c81f`: phase B exit is achieved.** The 80386DX
