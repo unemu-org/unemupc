@@ -23,6 +23,14 @@ use crate::{schema::v1, MachineFile, Origin, Origins};
 
 const MIB: u64 = 0x100000;
 
+pub(crate) fn board_model(model: v1::BoardModel) -> BoardModel {
+    match model {
+        v1::BoardModel::Ibm5170 => BoardModel::Ibm5170,
+        v1::BoardModel::Generic386Isa => BoardModel::Generic386Isa,
+        v1::BoardModel::Generic486Isa => BoardModel::Generic486Isa,
+    }
+}
+
 /// Image I/O seam: everything the lowering asks of the host goes through it.
 ///
 /// Lowering verifies each referenced image through this seam, including
@@ -1482,11 +1490,7 @@ fn lower_tracked_mode<R: ImageReader>(
         "board.model",
         document.board.as_ref().and_then(|board| board.model),
     )?;
-    let board = match board {
-        v1::BoardModel::Ibm5170 => BoardModel::Ibm5170,
-        v1::BoardModel::Generic386Isa => BoardModel::Generic386Isa,
-        v1::BoardModel::Generic486Isa => BoardModel::Generic486Isa,
-    };
+    let board = board_model(board);
     let mut devices = board.motherboard_devices();
     if let Some(settings) = &document.board {
         if let Some(mouse) = settings.mouse {

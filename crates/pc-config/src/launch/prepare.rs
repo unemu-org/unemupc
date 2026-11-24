@@ -21,11 +21,14 @@ pub fn prepare(bytes: &[u8], uses: &[BindingUse]) -> std::result::Result<Launch,
     let resolved = plan.resolve(uses)?;
     let mut launch = decode(bytes).map_err(config)?;
     let original = launch.config.clone();
-    let catalogue = match resolved.document.board.as_ref().and_then(|b| b.model) {
-        Some(schema::BoardModel::Generic386Isa) => assembly::BoardModel::Generic386Isa,
-        _ => assembly::BoardModel::Ibm5170,
-    }
-    .firmware_catalogue();
+    // Preserve the IBM 5170 catalogue fallback when the document omits a board model.
+    let board = resolved
+        .document
+        .board
+        .as_ref()
+        .and_then(|b| b.model)
+        .unwrap_or(schema::BoardModel::Ibm5170);
+    let catalogue = crate::lower::board_model(board).firmware_catalogue();
     for item in &resolved.items {
         if item.kind == BindingKind::FirmwareRom
             && !catalogue.iter().any(|entry| {

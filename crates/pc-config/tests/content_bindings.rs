@@ -849,3 +849,44 @@ fn bound_option_byte_errors_retain_selector_position_and_package_context() {
         }
     }
 }
+
+#[test]
+fn generic_boards_reject_reviewed_system_bios_in_video_slot() {
+    let catalogue = assembly::BoardModel::Generic386Isa.firmware_catalogue();
+    let item = |id: &str, entry_id: &str, role: &str| {
+        let entry = catalogue.iter().find(|entry| entry.id == entry_id).unwrap();
+        let digest = format!("sha256:{}", entry.sha256)
+            .parse::<pc_config::image::Digest>()
+            .unwrap()
+            .sha256();
+        BindingItem::new(id, K::FirmwareRom, entry.size, digest).with_roles(vec![role.into()])
+    };
+    let system = item("system", "seabios-1.17.0-unemu1-isa", "system-bios");
+    let video = item("adapter", "seavgabios-1.17.0-unemu1-stdvga", "video-bios");
+    for (board, cpu) in [
+        ("generic-386-isa", "80386dx"),
+        ("generic-486-isa", "80486dx"),
+    ] {
+        let text = format!(
+            "schema=1\n[board]\nmodel='{board}'\n[cpu]\nmodel='{cpu}'\n\
+             [firmware.bios]\nuse='bios'\nrom='system'\nbase=0xE0000\nsize=131072\n\
+             [[firmware.option_roms]]\nuse='video'\nrom='adapter'\nbase=0xC0000\n\
+             [[card]]\nkind='vga'\n\
+             [[card]]\nkind='uart-16550'\nport=0x3F8\nirq=4\n"
+        );
+        let plan = plan(&text);
+        let mut uses = [
+            BindingUse::new("bios", "manifest", vec![system.clone()]),
+            BindingUse::new("video", "manifest", vec![video.clone()]),
+        ];
+        plan.resolve(&uses).unwrap();
+        uses[1].items[0] = item("adapter", "seabios-1.17.0-unemu1-isa", "video-bios");
+        let error = plan.resolve(&uses).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("catalogue firmware kind conflicts with video position"),
+            "{board}: {error}"
+        );
+    }
+}

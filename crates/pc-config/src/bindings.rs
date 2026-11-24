@@ -891,12 +891,14 @@ impl BindingPlan {
             }
             let mut role = occurrence.required_role;
             if role.is_some() {
-                let catalogue = match self.document.board.as_ref().and_then(|b| b.model) {
-                    Some(BoardModel::Generic386Isa) => {
-                        assembly::BoardModel::Generic386Isa.firmware_catalogue()
-                    }
-                    _ => assembly::BoardModel::Ibm5170.firmware_catalogue(),
-                };
+                // Preserve the IBM 5170 catalogue fallback when the document omits a board model.
+                let board = self
+                    .document
+                    .board
+                    .as_ref()
+                    .and_then(|b| b.model)
+                    .unwrap_or(BoardModel::Ibm5170);
+                let catalogue = crate::lower::board_model(board).firmware_catalogue();
                 if let Some(entry) = catalogue
                     .iter()
                     .find(|entry| entry.sha256 == hex(&item.sha256) && entry.size == item.size)

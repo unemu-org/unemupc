@@ -81,6 +81,94 @@ fn facts(dos: bool) -> Option<(Vec<BindingUse>, Source)> {
     Some((uses, source))
 }
 
+fn compose_reviewed_generic_firmware(board: &str, cpu: &str) {
+    let core: &dyn Core = &PcCore;
+    let text = format!(
+        "schema=1\nplatform='ibm-pc'\n[machine]\nschema=1\n\
+         [machine.board]\nmodel='{board}'\n\
+         [machine.cpu]\nmodel='{cpu}'\n\
+         [machine.firmware.bios]\nuse='bios'\nrom='system-bios'\nrole='system-bios'\nbase=0xE0000\nsize=131072\n\
+         [[machine.firmware.option_roms]]\nuse='vga'\nrom='video-bios'\nrole='video-bios'\nbase=0xC0000\nsize=32768\n\
+         [[machine.card]]\nkind='vga'\n\
+         [[machine.card]]\nkind='uart-16550'\nport=0x3F8\nirq=4\n"
+    );
+    let mut uses = Vec::new();
+    let mut source = Source::default();
+    for (id, role, entry_id, path) in [
+        (
+            "bios",
+            "system-bios",
+            "seabios-1.17.0-unemu1-isa",
+            "seabios/bios-1.17.0-isa.bin",
+        ),
+        (
+            "vga",
+            "video-bios",
+            "seavgabios-1.17.0-unemu1-stdvga",
+            "seabios/build/vgabios-1.17.0-stdvga.bin",
+        ),
+    ] {
+        let entry = assembly::BoardModel::Generic386Isa
+            .firmware_catalogue()
+            .iter()
+            .find(|entry| entry.id == entry_id)
+            .unwrap();
+        let digest = format!("sha256:{}", entry.sha256)
+            .parse::<Digest>()
+            .unwrap()
+            .sha256();
+        let Some(bytes) = fixtures::fixture(path) else {
+            return;
+        };
+        assert_eq!(bytes.len() as u64, entry.size);
+        assert_eq!(Digest::of(&bytes).sha256(), digest);
+        uses.push(BindingUse::new(
+            id,
+            "opaque:package",
+            vec![
+                BindingItem::new(role, BindingKind::FirmwareRom, entry.size, digest)
+                    .with_roles(vec![role.into()]),
+            ],
+        ));
+        source.blobs.insert(digest, bytes);
+    }
+    let slots = core.binding_slots("ibm-pc", doc(&text)).unwrap();
+    assert_eq!(slots.len(), 2);
+    assert_eq!(slots[0].role.as_deref(), Some("system-bios"));
+    assert_eq!(slots[1].role.as_deref(), Some("video-bios"));
+    let prepared = core
+        .compose("ibm-pc", doc(&text), BindingFacts::new(&uses, &source))
+        .unwrap();
+    assert_eq!(source.opens.get(), 2);
+    assert_eq!(prepared.validated.content.len(), 2);
+    check_prepared(core, "ibm-pc", &prepared).unwrap();
+    assert!(core
+        .binding_slots("ibm-pc", prepared.config.as_document())
+        .unwrap()
+        .is_empty());
+    let launch = launch::decode(&prepared.config.bytes).unwrap();
+    assert_eq!(
+        launch.config.machine["board"]["model"].as_str(),
+        Some(board)
+    );
+    assert_eq!(launch.config.machine["cpu"]["model"].as_str(), Some(cpu));
+}
+
+#[test]
+fn generic_486_dx_composes_reviewed_seabios_and_seavgabios() {
+    compose_reviewed_generic_firmware("generic-486-isa", "80486dx");
+}
+
+#[test]
+fn generic_486_dx_cpuid_composes_reviewed_seabios_and_seavgabios() {
+    compose_reviewed_generic_firmware("generic-486-isa", "80486dx-cpuid");
+}
+
+#[test]
+fn generic_386_dx_composes_reviewed_seabios_and_seavgabios() {
+    compose_reviewed_generic_firmware("generic-386-isa", "80386dx");
+}
+
 #[test]
 fn supported_operations_check_arguments_and_advertise_bindings() {
     let core: &dyn Core = &PcCore;
