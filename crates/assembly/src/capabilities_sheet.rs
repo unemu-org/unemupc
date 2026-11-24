@@ -60,7 +60,11 @@ impl Draft {
             display_switch: DisplaySwitch::Auto,
             cpu: CpuConfig {
                 chip: board.cpu_chip(),
-                fpu: FpuChip::None,
+                fpu: if board == BoardModel::Generic486Isa {
+                    FpuChip::Integrated
+                } else {
+                    FpuChip::None
+                },
                 reset: ResetSpec::reset_vector(),
                 segments: SegmentSeed::flat(0xF000),
             },
@@ -159,6 +163,8 @@ pub fn fields(draft: &Draft) -> Vec<Field> {
         Value::Name(
             if config.cpu.fpu == FpuChip::None {
                 "none"
+            } else if config.cpu.fpu == FpuChip::Integrated {
+                "integrated"
             } else {
                 "80287"
             }

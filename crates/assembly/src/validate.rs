@@ -454,7 +454,7 @@ impl MachineConfig {
         };
         let protected_end = size.map_or(0xFFFF1, |size| protected_base.saturating_add(size));
         for ram in &self.memory.ram {
-            if self.board == BoardModel::Generic386Isa {
+            if self.board.is_generic_isa() {
                 continue;
             }
             if ram.size > 0 && ranges_overlap(protected_base, protected_end, ram.base, ram.end()) {
@@ -602,7 +602,7 @@ impl MachineConfig {
     fn check_rtc_ram(&self) -> Result<(), ConfigError> {
         for device in &self.devices {
             if let DeviceKind::Rtc(cfg) = &device.kind {
-                if self.board == BoardModel::Generic386Isa && cfg.ram != crate::CmosRam::Bytes128 {
+                if self.board.is_generic_isa() && cfg.ram != crate::CmosRam::Bytes128 {
                     return Err(ConfigError::BoardConfiguration {
                         board: self.board.id(),
                         reason: "requires a 128-byte CMOS RTC",
@@ -643,10 +643,30 @@ impl MachineConfig {
         if self.board == BoardModel::Bare {
             return Ok(());
         }
-        if self.cpu.chip != self.board.cpu_chip() {
+        let cpu_matches = if self.board == BoardModel::Generic486Isa {
+            matches!(
+                self.cpu.chip,
+                crate::CpuChip::I80486Dx | crate::CpuChip::I80486DxCpuid
+            )
+        } else {
+            self.cpu.chip == self.board.cpu_chip()
+        };
+        if !cpu_matches {
             return Err(ConfigError::BoardConfiguration {
                 board: self.board.id(),
                 reason: "CPU model does not match the board",
+            });
+        }
+        if self.board == BoardModel::Generic486Isa && self.cpu.fpu != crate::FpuChip::Integrated {
+            return Err(ConfigError::BoardConfiguration {
+                board: self.board.id(),
+                reason: "requires cpu.fpu = integrated",
+            });
+        }
+        if self.board != BoardModel::Generic486Isa && self.cpu.fpu == crate::FpuChip::Integrated {
+            return Err(ConfigError::BoardConfiguration {
+                board: self.board.id(),
+                reason: "integrated FPU requires an Intel486 DX board",
             });
         }
         if self.board == BoardModel::Generic386Isa && self.cpu.fpu != crate::FpuChip::None {
@@ -744,7 +764,10 @@ impl MachineConfig {
                     && matches!(&d.kind, DeviceKind::Pic(cfg) if !cfg.cascade)
             }) {
                 "no slave PIC".into()
-            } else if !matches!(self.board, BoardModel::Ibm5170 | BoardModel::Generic386Isa) {
+            } else if !matches!(
+                self.board,
+                BoardModel::Ibm5170 | BoardModel::Generic386Isa | BoardModel::Generic486Isa
+            ) {
                 format!("unsupported board {}", self.board.id())
             } else {
                 continue;
@@ -856,7 +879,10 @@ impl MachineConfig {
     fn check_fw_cfg(&self) -> Result<(), ConfigError> {
         for device in &self.devices {
             if let DeviceKind::FwCfg(cfg) = &device.kind {
-                if !matches!(self.board, BoardModel::Bare | BoardModel::Generic386Isa) {
+                if !matches!(
+                    self.board,
+                    BoardModel::Bare | BoardModel::Generic386Isa | BoardModel::Generic486Isa
+                ) {
                     return Err(ConfigError::FwCfgBoard);
                 }
                 if device.ports != crate::FwCfgCfg::port_windows()
@@ -874,7 +900,10 @@ impl MachineConfig {
     fn check_sys_ctrl_port_a(&self) -> Result<(), ConfigError> {
         for device in &self.devices {
             if matches!(device.kind, DeviceKind::SysCtrlPortA) {
-                if !matches!(self.board, BoardModel::Bare | BoardModel::Generic386Isa) {
+                if !matches!(
+                    self.board,
+                    BoardModel::Bare | BoardModel::Generic386Isa | BoardModel::Generic486Isa
+                ) {
                     return Err(ConfigError::SysCtrlPortABoard);
                 }
                 if device.ports != [PortWindow::single(0x92)]
@@ -891,7 +920,10 @@ impl MachineConfig {
     fn check_debug_console(&self) -> Result<(), ConfigError> {
         for device in &self.devices {
             if let DeviceKind::DebugConsole(cfg) = device.kind {
-                if !matches!(self.board, BoardModel::Bare | BoardModel::Generic386Isa) {
+                if !matches!(
+                    self.board,
+                    BoardModel::Bare | BoardModel::Generic386Isa | BoardModel::Generic486Isa
+                ) {
                     return Err(ConfigError::DebugConsoleBoard);
                 }
                 if device.ports != [PortWindow::single(cfg.port)]
@@ -1128,7 +1160,7 @@ impl MachineConfig {
     /// range as machine files. IBM Personal Computer AT Technical Reference,
     /// Section 1 "System Board", System Memory Map (READ).
     fn check_board_memory(&self) -> Result<(), ConfigError> {
-        if self.board == BoardModel::Generic386Isa {
+        if self.board.is_generic_isa() {
             return self.check_386_memory();
         }
         if self.board != BoardModel::Ibm5170 {

@@ -84,6 +84,8 @@ pub fn materialize(hardware: &mut Table, config: &assembly::MachineConfig) -> Re
         match config.cpu.chip {
             assembly::CpuChip::I80286 => "80286",
             assembly::CpuChip::I80386 => "80386dx",
+            assembly::CpuChip::I80486Dx => "80486dx",
+            assembly::CpuChip::I80486DxCpuid => "80486dx-cpuid",
         }
         .into(),
     );
@@ -100,6 +102,7 @@ pub fn materialize(hardware: &mut Table, config: &assembly::MachineConfig) -> Re
         match config.cpu.fpu {
             assembly::FpuChip::None => "none",
             assembly::FpuChip::I80287 => "80287",
+            assembly::FpuChip::Integrated => "integrated",
         }
         .into(),
     );

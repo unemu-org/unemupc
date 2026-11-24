@@ -193,6 +193,7 @@ fn repository_machine_file_parity() {
         // The open AT BIOS's mono display switch.
         ("machines/at-ide.toml".into(), "e42872c37de7d3674033a09efaf304ff1e47f95392af3baa9f2ed2553ab8a60d".into()),
         ("machines/generic-386-seabios.toml".into(), "954de502cba8fc199bcea13428c7eb6ee10f7b1fea651a7abec458d4073ee285".into()),
+        ("machines/generic-486-seabios.toml".into(), "ad88a2605ad5573bf591aa15b9e7e36a4d4a6aea73d4f53147637af7aa76c862".into()),
         ("machines/presets/ibm-5170.toml".into(), "resolve:<repo>/machines/presets/ibm-5170.toml:16: firmware.bios.image: required fields are missing: firmware.bios.image (<repo>/machines/presets/ibm-5170.toml:16); inheritance chain: <repo>/machines/presets/ibm-5170.toml".into()),
     ];
     assert_eq!(observed, expected);

@@ -460,6 +460,41 @@ cargo run --offline -p unemupc -- run --machine machines/generic-386-seabios.tom
 The board's default rate is one retired step per PIT clock, an uncalibrated
 deterministic policy rather than an instruction-cycle model.
 
+### Generic 486 ISA board
+
+`board.model = "generic-486-isa"` requires an explicit `cpu.model`:
+`"80486dx"` is the early DX without CPUID, and `"80486dx-cpuid"` is the
+DX with toggleable EFLAGS.ID and CPUID. Unknown names retain their TOML/YAML
+source position. Omitting the model is a validation error. The FPU domain is
+`"integrated"` (also the default for this board); `"none"` and `"80287"` are
+rejected. Other boards reject `"integrated"`.
+
+The shipped `machines/generic-486-seabios.toml` explicitly selects the early
+DX and integrated FPU. Changing only its CPU model selects the CPUID variant.
+Both use the unchanged `seabios-1.17.0-unemu1-isa` catalogue image and hash;
+its compatible-board list includes both generic ISA boards.
+
+The 486 shares the 386 board's 640 KiB conventional RAM, up to 63 MiB extended
+RAM in 64 KiB steps, 128-byte CMOS, OR-wired 8042/92h A20 sources, debug console,
+fw_cfg, writable C0000h–FFFFFh shadow and pristine high reset copy. Sparse
+backing reserves 4 GiB while committing only the mapped population. CPU-only
+reset from triple fault, port 92h bit 0 or 8042 FEh uses `CpuState::i486_reset`
+for both variants, including CR0=60000010h and the model's EDX signature
+(0403h or 0410h). The shared reset-storm guard and RAM/device retention apply.
+
+**Design choice:** a separate board identity reuses those services without
+making `generic-386-isa` mean two processor generations. It keeps firmware
+fits and CPU/FPU validation explicit, and preserves existing 386 defaults.
+A CPU choice on the 386 identity would require exceptions to its documented
+empty-socket domain and firmware identity. No new chipset or device is needed.
+
+**Known gap (READ, pinned CPU API):** the core refuses external numeric-error
+routing for both DX variants with `NumericErrorConfigError::UnsupportedModel`.
+The board therefore retains internal routing; its reserved F0h/F1h ports use
+the inert absent-socket device, never the AT IRQ13 error latch. This is a
+provisional emulator policy, not CR0.NE-driven FERR#/IGNNE# fidelity. See
+[486 gaps](protected-mode-gaps.md#486-board-coverage-and-gaps).
+
 ### Serial mouse
 
 An AT pointing device can attach to a UART card instead of the optional PS/2
@@ -586,8 +621,8 @@ format, recovery diagnostics, host failures and offline tools follow
 
 | Field | Type | Default | v1 | Lowers to |
 |---|---|---|---|---|
-| `model` | string | from the board (`"80286"` on `ibm-5170`, `"80386dx"` on `generic-386-isa`) | `"80286"`, `"80386dx"` | `CpuConfig.chip` |
-| `fpu` | string | `"none"` | `"none"` or `"80287"` on `ibm-5170` | `CpuConfig.fpu`; derived CMOS 14h bit 1 follows the choice |
+| `model` | string | from the board on 286/386; required on 486 | `"80286"`, `"80386dx"`, `"80486dx"`, `"80486dx-cpuid"` | `CpuConfig.chip` |
+| `fpu` | string | `"integrated"` on 486; `"none"` otherwise | `"none"` or `"80287"` on `ibm-5170`; `"none"` on 386; `"integrated"` on 486 | `CpuConfig.fpu`; derived CMOS 14h bit 1 follows the choice |
 | `rate` | `"A/B"` string or a positive integer `A` | board default (`"8/13"` on `ibm-5170`) | yes | `ClockConfig` A/B. Both parts must be positive. It is a ratio of completed steps per PIT input clock, not a frequency. |
 
 An omitted `rate` comes from `BoardModel::default_clock` in
@@ -601,9 +636,18 @@ which the CPU core does not have". A model that does not match the board is
 rejected. `turbo` is reserved. `fpu = "none"` leaves the optional 80287 socket
 empty; `fpu = "80287"` selects the core's existing present x87 engine, which
 does not claim generation-specific 80287 fidelity. Other names receive a typed
-`ParseError` with the exact message ``unsupported cpu.fpu `80387`; allowed values: `none`, `80287` ``
+`ParseError` with the exact message ``unsupported cpu.fpu `80387`; allowed values: `none`, `80287`, `integrated` ``
 (substituting the rejected name). TOML and YAML share this enum and diagnostic.
 Explicit NVRAM images are preserved, even if their equipment bit disagrees.
+Derived CMOS 14h bit 1 is set for every selected FPU, including both 486 DX
+models' integrated FPU. It remains clear on `generic-386-isa` with `fpu = "none"`.
+SeaBIOS does not consume CMOS 14h: `src/misc.c` `mathcp_setup` sets the BDA FPU
+flag independently, and `handle_11` returns the BDA equipment word. The unemu
+AT BIOS also returns the BDA word (`src/bios.asm` `int_11`); its POST compares
+the CMOS FPU bit with detected hardware (`src/at_cmos.inc` `cmos_check`).
+Measured after correcting the 486 seed: both 486 SeaBIOS serial/debug transcripts
+and retired counts are unchanged (diskless POST 5,885,053; keyboard-reset resume
+5,887,802; INT 15h probes 5,768,863 at 16 MiB and 5,768,833 at 4 MiB).
 On the I286 machine profile, an empty socket returns FFFFh for FNSTCW m16
 and FNSTSW m16/AX, completing BIOS presence probes; other output stores
 leave memory unchanged and WAIT completes (`decision-25 (x86jit)`).

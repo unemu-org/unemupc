@@ -80,6 +80,8 @@ case "$step" in
             bash vendor/at-pm-test/build.sh
             echo "== fixtures: vendor/i386-pm-test/build.sh"
             bash vendor/i386-pm-test/build.sh
+            echo "== fixtures: vendor/i486-pm-test/build.sh"
+            bash vendor/i486-pm-test/build.sh
             echo "== fixtures: vendor/at-loadall-test/build.sh"
             bash vendor/at-loadall-test/build.sh
             echo "== fixtures: vendor/vga-modex-test/build.sh"

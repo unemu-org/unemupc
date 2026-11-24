@@ -310,7 +310,9 @@ pub fn describe(draft: &Draft, path: &str) -> Option<FieldDescriptor> {
         "board.model" => return Some(names(&[draft.config.board.id()])),
         "cpu.model" => return Some(names(&[draft.config.cpu.chip.name()])),
         "cpu.fpu" => {
-            return Some(names(if draft.config.board == BoardModel::Generic386Isa {
+            return Some(names(if draft.config.board == BoardModel::Generic486Isa {
+                &["integrated"]
+            } else if draft.config.board.is_generic_isa() {
                 &["none"]
             } else {
                 &["none", "80287"]
@@ -331,7 +333,7 @@ pub fn describe(draft: &Draft, path: &str) -> Option<FieldDescriptor> {
         "memory.conventional_kib" => {
             return Some(number(
                 IntegerDomain {
-                    min: if draft.config.board == BoardModel::Generic386Isa {
+                    min: if draft.config.board.is_generic_isa() {
                         640
                     } else {
                         CONVENTIONAL_KIB.min
@@ -630,6 +632,8 @@ pub fn validate_draft(draft: &Draft) -> Validation {
             ("cpu.fpu", Value::Name(name)) => {
                 config.cpu.fpu = if name == "none" {
                     FpuChip::None
+                } else if name == "integrated" {
+                    FpuChip::Integrated
                 } else {
                     FpuChip::I80287
                 };

@@ -21,7 +21,7 @@ use std::{
 #[path = "support/fixtures.rs"]
 mod fixtures;
 
-const CPU_REV: &str = "89532547e3bca71f82d63dfb463e018d7b471ac0";
+const CPU_REV: &str = "274d48a8ab9dabdfd598c3c3116cf72363ffa049";
 
 fn policy() -> ObservationPolicy {
     ObservationPolicy {

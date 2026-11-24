@@ -12,6 +12,8 @@ use cpu::x86jit_backend::RealSegments;
 /// the 80286 starts in real mode and enters protected mode through LMSW.
 /// Bare compatibility rigs without an A20 source retain the fixed Real16
 /// application interpreter; rigs with an 8042 or port 92h use the machine model.
+/// Intel486 DX Programmer's Reference Manual, §2 Basic Architecture and
+/// §10.1 Initialization define the integrated FPU and 32-bit bus/reset.
 /// See `backlog/docs/design/machine-config.md` §CPU model selection.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
 pub enum CpuChip {
@@ -20,6 +22,10 @@ pub enum CpuChip {
     I80286,
     /// Intel 80386DX with a 32-bit physical bus.
     I80386,
+    /// Early Intel486 DX without CPUID.
+    I80486Dx,
+    /// Intel486 DX with EFLAGS.ID and CPUID.
+    I80486DxCpuid,
 }
 
 impl CpuChip {
@@ -28,6 +34,8 @@ impl CpuChip {
         match self {
             Self::I80286 => "80286",
             Self::I80386 => "80386dx",
+            Self::I80486Dx => "80486dx",
+            Self::I80486DxCpuid => "80486dx-cpuid",
         }
     }
 
@@ -39,7 +47,7 @@ impl CpuChip {
     pub const fn physical_address_bits(self) -> u8 {
         match self {
             Self::I80286 => 24,
-            Self::I80386 => 32,
+            Self::I80386 | Self::I80486Dx | Self::I80486DxCpuid => 32,
         }
     }
 }
@@ -142,10 +150,11 @@ impl From<SegmentSeed> for RealSegments {
     }
 }
 
-/// Optional math coprocessor for an IBM PC/AT.
+/// Optional AT math coprocessor or integrated Intel486 DX FPU.
 ///
 /// IBM Personal Computer AT Technical Reference, Section 2, Coprocessor:
-/// the 80287 occupies an optional socket. See
+/// the 80287 occupies an optional socket. Intel486 DX Programmer's Reference
+/// Manual, §2 Basic Architecture defines the on-chip FPU. See
 /// `backlog/docs/design/machine-config.md` §CPU model selection.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
 pub enum FpuChip {
@@ -154,6 +163,8 @@ pub enum FpuChip {
     None,
     /// Installed 80287, using the core's existing present x87 engine.
     I80287,
+    /// On-chip Intel486 DX FPU; not an optional socket.
+    Integrated,
 }
 
 /// The CPU section of a [`crate::MachineConfig`] (§2).
@@ -164,8 +175,8 @@ pub enum FpuChip {
 pub struct CpuConfig {
     /// The modelled processor and its execution semantics.
     pub chip: CpuChip,
-    /// Optional coprocessor on IBM PC/AT boards. Bare rigs retain their
-    /// constructor's existing FPU behaviour regardless of this field.
+    /// Optional coprocessor on AT boards; mandatory integrated FPU on 486 DX.
+    /// Bare rigs retain their constructor's FPU behaviour regardless of this field.
     pub fpu: FpuChip,
     /// Where execution begins after reset.
     pub reset: ResetSpec,

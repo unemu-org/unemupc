@@ -4,7 +4,7 @@
 //! shadow.c qemu_prep_reset. See machine-files.md §Generic 386 ISA board.
 
 use super::*;
-use crate::{BoardModel, CpuChip, PortWindow, RamRegion};
+use crate::{BoardModel, CpuChip, FpuChip, PortWindow, RamRegion};
 use cpu::{Cpu, CpuReg, DmaAccess};
 
 fn board() -> MachineConfig {
@@ -392,8 +392,24 @@ impl ResetSource {
     }
 }
 
-fn guest_reset_board(source: ResetSource, storm: bool) -> crate::AssembledMachine {
+fn guest_reset_board(source: ResetSource, storm: bool, chip: CpuChip) -> crate::AssembledMachine {
     let mut config = board();
+    if chip != CpuChip::I80386 {
+        config.board = BoardModel::Generic486Isa;
+        config.cpu.chip = chip;
+        config.cpu.fpu = crate::FpuChip::Integrated;
+        config.devices = config
+            .board
+            .motherboard_devices()
+            .into_iter()
+            .chain(
+                config
+                    .devices
+                    .into_iter()
+                    .filter(|d| d.id == DeviceId::Uart),
+            )
+            .collect();
+    }
     let ImageSource::Inline(bytes) = &mut config.images[0].source else {
         panic!("expected inline BIOS");
     };
@@ -432,9 +448,9 @@ fn guest_reset_board(source: ResetSource, storm: bool) -> crate::AssembledMachin
     .unwrap()
 }
 
-fn check_guest_reset(source: ResetSource) {
+fn check_guest_reset(source: ResetSource, chip: CpuChip) {
     for (keyboard_a20, fast_a20) in [(false, false), (false, true), (true, false), (true, true)] {
-        let mut assembled = guest_reset_board(source, false);
+        let mut assembled = guest_reset_board(source, false, chip);
         let machine = &mut assembled.machine;
         machine.bus_mut().port_write(0x64, 1, 0xD1).unwrap();
         let output_port = if keyboard_a20 { 3 } else { 1 };
@@ -468,13 +484,23 @@ fn check_guest_reset(source: ResetSource) {
         assert_eq!(machine.cpu().retired(), retired);
         assert_eq!(machine.virtual_time(), time);
         assert_eq!(machine.clock(), clock);
-        assert_eq!(machine.cpu().reg(CpuReg::Rdx), 0x0303);
+        assert_eq!(
+            machine.cpu().reg(CpuReg::Rdx),
+            match chip {
+                CpuChip::I80486Dx => 0x0403,
+                CpuChip::I80486DxCpuid => 0x0410,
+                _ => 0x0303,
+            }
+        );
         assert_eq!(machine.cpu().reg(CpuReg::Rip), 0xFFF0);
         let state = machine.cpu().diagnostic_state();
         assert_eq!(state.cs().selector, 0xF000);
         assert_eq!(state.cs().base, 0xFFFF0000);
         let system = state.system.unwrap();
-        assert_eq!(system.msw & 0x1F, 0);
+        assert_eq!(
+            system.msw & 0x1F,
+            if chip == CpuChip::I80386 { 0 } else { 0x10 }
+        );
         assert_eq!(system.idtr.limit, 0x3FF);
         assert!(machine.reset_fetch_window_open());
         assert!(machine.cpu().a20_enabled());
@@ -530,27 +556,31 @@ fn check_guest_reset(source: ResetSource) {
 
 #[test]
 fn generic386_guest_triple_fault_resets_and_keeps_ram() {
-    check_guest_reset(ResetSource::TripleFault);
+    check_guest_reset(ResetSource::TripleFault, CpuChip::I80386);
 }
 
 #[test]
 fn generic386_guest_port92_edge_resets_and_keeps_ram() {
-    check_guest_reset(ResetSource::Port92);
+    check_guest_reset(ResetSource::Port92, CpuChip::I80386);
 }
 
 #[test]
 fn generic386_guest_keyboard_pulse_resets_and_keeps_ram() {
-    check_guest_reset(ResetSource::Keyboard);
+    check_guest_reset(ResetSource::Keyboard, CpuChip::I80386);
 }
 
 #[test]
 fn generic386_guest_reset_storm_reports_each_source() {
+    check_reset_storm(CpuChip::I80386);
+}
+
+fn check_reset_storm(chip: CpuChip) {
     for source in [
         ResetSource::TripleFault,
         ResetSource::Port92,
         ResetSource::Keyboard,
     ] {
-        let mut assembled = guest_reset_board(source, true);
+        let mut assembled = guest_reset_board(source, true, chip);
         for _ in 1..cpu::RESET_STORM_RESETS {
             assert_eq!(
                 assembled.machine.run_bounded(Some(10_000)).unwrap(),
@@ -634,4 +664,106 @@ fn generic386_conventional_memory_choices_match_board_validation() {
         describe(&ibm, "memory.conventional_kib").unwrap().domain,
         Domain::Integer(crate::descriptors::CONVENTIONAL_KIB)
     );
+}
+
+#[test]
+fn generic486_both_models_reset_from_all_sources_and_guard_storms() {
+    for chip in [CpuChip::I80486Dx, CpuChip::I80486DxCpuid] {
+        for source in [
+            ResetSource::TripleFault,
+            ResetSource::Port92,
+            ResetSource::Keyboard,
+        ] {
+            check_guest_reset(source, chip);
+        }
+        check_reset_storm(chip);
+    }
+}
+
+#[test]
+fn generic486_dx_cmos_reports_integrated_fpu() {
+    check_cmos_fpu(CpuChip::I80486Dx, FpuChip::Integrated, 2);
+}
+
+#[test]
+fn generic486_cpuid_cmos_reports_integrated_fpu() {
+    check_cmos_fpu(CpuChip::I80486DxCpuid, FpuChip::Integrated, 2);
+}
+
+#[test]
+fn existing_boards_cmos_coprocessor_inventory_is_unchanged() {
+    check_cmos_fpu(CpuChip::I80286, FpuChip::None, 0);
+    check_cmos_fpu(CpuChip::I80286, FpuChip::I80287, 2);
+    check_cmos_fpu(CpuChip::I80386, FpuChip::None, 0);
+}
+
+fn check_cmos_fpu(chip: CpuChip, fpu: FpuChip, installed: u8) {
+    let mut config = if chip == CpuChip::I80286 {
+        crate::bios(vec![0xF4; 0x8000], Some(vec![0; 1_474_560]))
+    } else {
+        board()
+    };
+    if matches!(chip, CpuChip::I80486Dx | CpuChip::I80486DxCpuid) {
+        config.board = BoardModel::Generic486Isa;
+    }
+    config.cpu.chip = chip;
+    config.cpu.fpu = fpu;
+    config.validate().unwrap();
+    let seed = derive_cmos_config(&config).unwrap();
+    assert_eq!(seed[0x14] & 2, installed, "{chip:?} {fpu:?}");
+    assert_eq!(&derive_cmos_layout(&config).unwrap()[..64], &seed);
+    let sum: u16 = seed[0x10..=0x2D].iter().map(|&b| u16::from(b)).sum();
+    assert_eq!(&seed[0x2E..=0x2F], &sum.to_be_bytes());
+    let mut bus = testkit::MockBus::new(Box::new(devices::CmosRtc::new().with_nvram(seed)));
+    for index in [0x14, 0x2E, 0x2F] {
+        bus.port_write(0x70, 1, index).unwrap();
+        assert_eq!(
+            bus.port_read(0x71, 1).unwrap(),
+            u32::from(seed[index as usize])
+        );
+    }
+}
+
+#[test]
+fn generic486_requires_integrated_fpu_and_matching_cpu() {
+    let mut config = board();
+    config.board = BoardModel::Generic486Isa;
+    config.devices = config
+        .board
+        .motherboard_devices()
+        .into_iter()
+        .chain(
+            config
+                .devices
+                .into_iter()
+                .filter(|d| d.id == DeviceId::Uart),
+        )
+        .collect();
+    for chip in [CpuChip::I80486Dx, CpuChip::I80486DxCpuid] {
+        config.cpu.chip = chip;
+        for fpu in [FpuChip::None, FpuChip::I80287, FpuChip::Integrated] {
+            config.cpu.fpu = fpu;
+            assert_eq!(config.validate().is_ok(), fpu == FpuChip::Integrated);
+        }
+        let draft = crate::capabilities::Draft::new(config.clone());
+        assert_eq!(
+            crate::capabilities::describe(&draft, "cpu.fpu")
+                .unwrap()
+                .domain,
+            crate::capabilities::Domain::Values(vec![crate::capabilities::Value::Name(
+                "integrated".into()
+            )])
+        );
+        let cpu = build_cpu(&config).unwrap();
+        assert_eq!(cpu.memory_backing_stats().reserved_bytes, 1 << 32);
+        assert!(cpu.memory_backing_stats().sparse);
+        assert!(!cpu.numeric_error_pending());
+    }
+    for chip in [CpuChip::I80286, CpuChip::I80386] {
+        config.cpu.chip = chip;
+        assert!(matches!(
+            config.validate(),
+            Err(ConfigError::BoardConfiguration { .. })
+        ));
+    }
 }

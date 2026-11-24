@@ -770,6 +770,43 @@ dev86 builds and no serial console. Its CMOS inputs are 10h, 12h/19h/1Ah,
 2Dh, 30h/31h, 34h/35h, 5Bh–5Dh, 38h/3Dh, 3Fh and 32h (READ); fallback
 therefore needs register-level VGA from its first run.
 
+### 3.7 Generic 486 ISA board
+
+The `generic-486-isa` identity shares the 386 ISA board's memory map, A20/reset
+wiring, shadow RAM, fw_cfg and peripherals (§3.6). A separate identity keeps
+machine files and catalogue compatibility explicit while giving the DX its
+mandatory integrated FPU. This is smaller than weakening the 386 board's CPU
+and empty-socket validation. The machine class is `At486`; the CPU choice is
+explicitly `80486dx` or `80486dx-cpuid`, backed by x86jit's `I80486Dx` and
+`I80486DxCpuid` at revision `274d48a8ab9dabdfd598c3c3116cf72363ffa049`.
+
+Both use the same Listed SeaBIOS fork build and SHA-256 as §3.6. Only the
+catalogue's board fits change; no firmware bytes, source or build options do.
+The 486 reset helper installs CR0=60000010h; reset EDX is 0403h for the early
+DX and 0410h for the CPUID model. The latter reports GenuineIntel, leaf 0
+maximum 1, and leaf 1 EAX=0410h, EDX=1 (FPU). These signatures are the CPU
+core's representative stepping choices, not a claim about every physical DX.
+
+**MEASURED at `274d48a8` (2026-11-24):** both DX variants finish diskless
+POST at 5,885,053 retired instructions and reach keyboard reset/resume at
+5,887,802. INT 15h AH=88h/E801h/E820h checks pass at 16 MiB (5,768,863)
+and 4 MiB (5,768,833). Both print `No apic - only the main cpu is present.`
+and `No bootable device.`; neither prints a vendor/model identification line.
+**READ:** the fork's `src/x86.c:10–22` probes EFLAGS.ID before CPUID;
+`src/fw/smp.c:104–114` reports the no-APIC message for either an absent
+CPUID or a leaf-1 result without APIC. The identical text is expected even
+though the CPUID DX advertises its on-chip FPU. The project-owned ROM
+separately checks the ID policy and all leaf-0/1 values on the selected model.
+No CPU boundary was encountered in these SeaBIOS probes.
+
+External numeric-error routing remains refused by the CPU on both models.
+Assembly keeps internal delivery and does not attach the AT F0h/IRQ13 latch.
+CR0.NE-driven FERR#/IGNNE# routing remains a gap alongside paging, CPL-3 #AC
+and TR3–TR5. The project-owned 486 ROM checks only WP/AM/AC read-back, never
+paging protection or alignment exception delivery. See
+[machine-file keys and board policy](machine-files.md#generic-486-isa-board)
+and [CPU gaps](protected-mode-gaps.md#486-board-coverage-and-gaps).
+
 ## 4. Classes and device sets
 
 ### 4.1 Standard wiring per class

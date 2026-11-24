@@ -10,7 +10,7 @@ use crate::device::DeviceId;
 /// See `backlog/docs/design/machine-config.md` §MemoryConfig.
 pub const IBM5170_MAX_EXTENDED_KIB: u32 = 15232;
 
-/// Emulator board policy: 63 MiB of extended RAM, a 64 MiB RAM ceiling.
+/// Shared generic 386/486 board policy: 63 MiB extended, 64 MiB RAM ceiling.
 /// Intel 80386 Programmer's Reference Manual, §2.1 Memory Organization permits
 /// a 4 GiB physical bus; this smaller population bounds the configured guest RAM population.
 /// See `backlog/docs/design/machine-files.md` §Generic 386 ISA board.

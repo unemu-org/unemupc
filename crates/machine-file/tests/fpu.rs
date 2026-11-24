@@ -139,7 +139,9 @@ fn unsupported_fpu_names_have_exact_typed_diagnostics() {
         for error in errors {
             assert_eq!(
                 error.message(),
-                format!("unsupported cpu.fpu `{name}`; allowed values: `none`, `80287`")
+                format!(
+                    "unsupported cpu.fpu `{name}`; allowed values: `none`, `80287`, `integrated`"
+                )
             );
         }
     }
@@ -269,7 +271,7 @@ fn at_suspended_wait_survives_device_restore_and_resumes_without_idle_ticks() {
 fn at_numeric_errors_reach_irq13_and_wait_keeps_device_time_running() {
     use cpu::Cpu;
     assert!(
-        include_str!("../../../Cargo.lock").contains("#89532547e3bca71f82d63dfb463e018d7b471ac0")
+        include_str!("../../../Cargo.lock").contains("#274d48a8ab9dabdfd598c3c3116cf72363ffa049")
     );
     let started = std::time::Instant::now();
     let mut config = bios(

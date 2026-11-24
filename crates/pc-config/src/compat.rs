@@ -194,6 +194,7 @@ pub fn firmware(sha256: &str, size: u64) -> image::Result<Release> {
     for entry in [
         assembly::BoardModel::Ibm5170,
         assembly::BoardModel::Generic386Isa,
+        assembly::BoardModel::Generic486Isa,
     ]
     .into_iter()
     .flat_map(|board| board.firmware_catalogue())
@@ -265,7 +266,7 @@ fn machine_values(machine: &schema::MachineFile) -> AppVersion {
 pub fn board_model(value: schema::BoardModel) -> AppVersion {
     match value {
         schema::BoardModel::Ibm5170 => BASELINE,
-        schema::BoardModel::Generic386Isa => NEXT_RELEASE,
+        schema::BoardModel::Generic386Isa | schema::BoardModel::Generic486Isa => NEXT_RELEASE,
     }
 }
 
@@ -273,7 +274,9 @@ pub fn board_model(value: schema::BoardModel) -> AppVersion {
 pub fn cpu_model(value: schema::CpuModel) -> AppVersion {
     match value {
         schema::CpuModel::I80286 => BASELINE,
-        schema::CpuModel::I80386 => NEXT_RELEASE,
+        schema::CpuModel::I80386 | schema::CpuModel::I80486Dx | schema::CpuModel::I80486DxCpuid => {
+            NEXT_RELEASE
+        }
     }
 }
 
@@ -281,6 +284,7 @@ pub fn cpu_model(value: schema::CpuModel) -> AppVersion {
 pub fn fpu_model(value: schema::FpuModel) -> AppVersion {
     match value {
         schema::FpuModel::None | schema::FpuModel::I80287 => BASELINE,
+        schema::FpuModel::Integrated => NEXT_RELEASE,
     }
 }
 
@@ -622,10 +626,13 @@ mod tests {
         let mut all = vec![
             board_model(BoardModel::Ibm5170),
             board_model(BoardModel::Generic386Isa),
+            board_model(BoardModel::Generic486Isa),
             cpu_model(CpuModel::I80386),
+            cpu_model(CpuModel::I80486Dx),
+            cpu_model(CpuModel::I80486DxCpuid),
             cpu_model(CpuModel::I80286),
         ];
-        all.extend([FpuModel::None, FpuModel::I80287].map(fpu_model));
+        all.extend([FpuModel::None, FpuModel::I80287, FpuModel::Integrated].map(fpu_model));
         all.extend(
             [
                 CardKind::Mda,
@@ -675,13 +682,16 @@ mod tests {
 
     #[test]
     fn newest_row_and_catalogue_coverage_are_core_owned() {
-        let catalogue: Vec<_> = [
+        let mut catalogue: Vec<_> = [
             assembly::BoardModel::Ibm5170,
             assembly::BoardModel::Generic386Isa,
+            assembly::BoardModel::Generic486Isa,
         ]
         .into_iter()
         .flat_map(|board| board.firmware_catalogue())
         .collect();
+        catalogue.sort_by_key(|entry| entry.id);
+        catalogue.dedup_by_key(|entry| entry.id);
         for entry in &catalogue {
             assert!(lookup(&[CATALOGUE], entry.id).is_some(), "{}", entry.id);
         }

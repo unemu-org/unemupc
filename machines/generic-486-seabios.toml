@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+schema = 1
+name = "generic-486-seabios"
+description = "Intel486 DX ISA board with the unemu SeaBIOS fork and COM1"
+
+[board]
+model = "generic-486-isa"
+
+[board.rtc]
+start = "2000-01-01T00:00:00"
+nvram = "derived"
+
+[cpu]
+model = "80486dx"
+fpu = "integrated"
+rate = 1
+
+[memory]
+conventional_kib = 640
+extended_kib = 15360
+
+[firmware.bios]
+image = "../vendor/seabios/bios-1.17.0-isa.bin"
+sha256 = "ad50fdb5e12a03dd5c17eac481a4183a7793b84252319eea02b8c878667c994f"
+
+[[card]]
+kind = "vga"
+
+[[card]]
+kind = "uart-16550"
+port = 0x3F8
+irq = 4

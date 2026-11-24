@@ -49,7 +49,7 @@ macro_rules! named_values {
 
 named_values! {
     /// Implemented board spellings; reserved names appear only in parse errors.
-    BoardModel, "board model" { Ibm5170 => "ibm-5170", Generic386Isa => "generic-386-isa" } reserved {
+    BoardModel, "board model" { Ibm5170 => "ibm-5170", Generic386Isa => "generic-386-isa", Generic486Isa => "generic-486-isa" } reserved {
         "ibm-5160" => "needs the XT 8255 PPI keyboard interface and an 8088 CPU model",
         "ibm-5150" => "needs the XT 8255 PPI keyboard interface and an 8088 CPU model",
         "bare" => "file-based bare-board composition is not implemented; use Rust test rigs",
@@ -60,11 +60,12 @@ named_values! {
     }
 }
 
-/// Optional IBM PC/AT coprocessor; an omitted field selects an empty socket.
+/// AT socket or integrated Intel486 DX FPU; defaults follow the board.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FpuModel {
     None,
     I80287,
+    Integrated,
 }
 
 impl<'de> Deserialize<'de> for FpuModel {
@@ -73,8 +74,9 @@ impl<'de> Deserialize<'de> for FpuModel {
         match name.as_str() {
             "none" => Ok(Self::None),
             "80287" => Ok(Self::I80287),
+            "integrated" => Ok(Self::Integrated),
             _ => Err(de::Error::custom(format!(
-                "unsupported cpu.fpu `{name}`; allowed values: `none`, `80287`"
+                "unsupported cpu.fpu `{name}`; allowed values: `none`, `80287`, `integrated`"
             ))),
         }
     }
@@ -82,12 +84,12 @@ impl<'de> Deserialize<'de> for FpuModel {
 
 named_values! {
     /// CPU model names; instruction-set and board compatibility are separate.
-    CpuModel, "cpu model" { I80286 => "80286", I80386 => "80386dx" } reserved {
+    CpuModel, "cpu model" { I80286 => "80286", I80386 => "80386dx", I80486Dx => "80486dx", I80486DxCpuid => "80486dx-cpuid" } reserved {
         "8086" => "needs an 8086 instruction model, which the CPU core does not have yet",
         "8088" => "needs an 8088 instruction model, which the CPU core does not have yet",
         "v20" => "needs a V20 instruction model, which the CPU core does not have yet",
         "80386sx" => "needs an 80386SX CPU model for firmware machines",
-        "80486" => "needs an 80486 CPU model for firmware machines",
+        "80486" => "select 80486dx or 80486dx-cpuid explicitly",
         "pentium" => "needs a Pentium CPU model for firmware machines",
         "pentium-ii" => "needs a Pentium II CPU model for firmware machines",
         "pentium-iii" => "needs a Pentium III CPU model for firmware machines",

@@ -49,6 +49,8 @@ pub enum FirmwareCpu {
     I80286,
     /// A catalogue requirement that the current core cannot satisfy.
     I80386,
+    /// Intel486 DX, including its CPUID variant.
+    I80486,
 }
 
 impl std::fmt::Display for FirmwareCpu {
@@ -57,6 +59,7 @@ impl std::fmt::Display for FirmwareCpu {
             Self::I80186 => "80186",
             Self::I80286 => "80286",
             Self::I80386 => "80386",
+            Self::I80486 => "80486",
         })
     }
 }
@@ -473,7 +476,7 @@ pub const SEABIOS_1_17_0_ISA: FirmwareEntry = FirmwareEntry {
     capabilities: &[FirmwareCapability::CmosQemuLayout],
     requires: &[FirmwarePart::Kbc8042, FirmwarePart::RtcCmos128, FirmwarePart::PicCascade],
     cpu_min: FirmwareCpu::I80386,
-    boards: &["generic-386-isa"],
+    boards: &["generic-386-isa", "generic-486-isa"],
     distribution: FirmwareDistribution::Open {
         fetch: "vendor/seabios/fetch.sh",
         license: "LGPL-3.0-only",
@@ -1064,6 +1067,7 @@ pub fn check_entry_requirements(
     let cpu = match config.cpu.chip {
         CpuChip::I80286 => FirmwareCpu::I80286,
         CpuChip::I80386 => FirmwareCpu::I80386,
+        CpuChip::I80486Dx | CpuChip::I80486DxCpuid => FirmwareCpu::I80486,
     };
     if cpu < entry.cpu_min {
         return Err(ConfigError::FirmwareNeedsCpu {

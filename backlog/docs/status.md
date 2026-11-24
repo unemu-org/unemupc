@@ -1,5 +1,30 @@
 # Status
 
+## Generic 486 ISA board (2026-11-24)
+
+`generic-486-isa` accepts explicit `80486dx` (early DX) or `80486dx-cpuid`,
+with `cpu.fpu = "integrated"`. It shares the 386 board's sparse memory map,
+64 MiB population cap, CMOS, shadow RAM, fw_cfg, A20 and CPU-only reset paths.
+The shipped `machines/generic-486-seabios.toml` uses the early DX and the
+unchanged Listed SeaBIOS fork build. Both variants reset through
+`CpuState::i486_reset`: CR0=60000010h, EDX=0403h or 0410h.
+
+**MEASURED at CPU pin `274d48a8`:** both variants complete diskless POST
+(5,885,053 retired), INT 15h at 16 MiB (5,768,863) and 4 MiB (5,768,833),
+and keyboard reset/resume (5,887,802). Both print
+`No apic - only the main cpu is present.` and `No bootable device.`; this
+SeaBIOS build emits no vendor/model identification line for either variant.
+The project-owned 486 ROM passes at 1,694 retired instructions on early DX
+and 2,119 on CPUID DX, with zero deliveries and exact transcripts; repeated
+runs, Deadline/PerClock and run chunks agree. The existing 386 ROM remains
+unchanged.
+
+Paging, CPL-3 #AC, TR3–TR5 and CR0.NE-driven FERR#/IGNNE# routing remain
+CPU gaps. The 486 uses internal numeric-error delivery and never selects
+the AT IRQ13/F0h error latch. WP/AM/AC checks assert read-back only. See
+[machine files](design/machine-files.md#generic-486-isa-board) and
+[coverage limits](design/protected-mode-gaps.md#486-board-coverage-and-gaps).
+
 ## Generic 386 ISA board (2026-11-24)
 
 The `generic-386-isa` board accepts the 80386DX CPU model, 640 KiB conventional
@@ -17,7 +42,7 @@ verify the sparse backing, 4 GiB reservation, numeric committed bytes bounded
 by the mapped population, and unmapped gaps. The tested 64 KiB-aligned regions
 need no host-page rounding on supported hosts.
 
-The CPU pin is `b7c10b6f` (x86jit). The adapter installs
+The CPU pin is `274d48a8` (x86jit). The adapter installs
 `CpuState::i386_reset`, then reapplies the retained board A20 line. Synthetic
 CPU and board tests execute the high reset copy, retain its hidden base across
 a near jump, reload CS into low memory and preserve RAM over repeated resets.

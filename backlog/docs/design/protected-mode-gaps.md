@@ -22,6 +22,28 @@ After complete POST, CMOS 0Fh=0 and 8042 FEh reach the resume marker.
 The former REP NOP stop is passed: F3 90 executes as NOP on every model. See
 [machine-file qualification](machine-files.md#generic-386-isa-board).
 
+## 486 board coverage and gaps
+
+**READ**, CPU pin `274d48a8`: `generic-486-isa` selects either `I80486Dx`
+or `I80486DxCpuid`, always with the integrated FPU. The separate
+[486 ROM](i386-pm-test.md#486-extension) covers unpaged instructions and
+identification without changing the existing 386 ROM.
+
+| Gap | Current boundary |
+| --- | --- |
+| Paging | CR0.PG is refused by x86jit (xj-srh.7, x86jit). CR0.WP can be set/read, but supervisor write protection needs paging and is not qualified. |
+| Alignment check | CR0.AM and EFLAGS.AC can be read back at CPL 0. CPL-3 #AC is refused; no alignment-delivery test is claimed. |
+| Numeric errors | External routing returns `UnsupportedModel` for both 486 entries until CR0.NE-driven FERR#/IGNNE# routing exists (xj-31k.4, x86jit). Internal routing is provisional. The board must not select the AT IRQ13/F0h error latch. |
+| Cache test registers | TR3–TR5 are refused with typed CPU errors. TR6/TR7 semantics are outside the new ROM's coverage. |
+| Cache effects | INVD/WBINVD and unpaged INVLPG execute, but the interpreter has no emulated cache or paged TLB to invalidate. |
+| Word BSWAP | Refused by the CPU; only 32-bit BSWAP is tested. |
+
+Architectural references: Intel486 DX Programmer's Reference Manual, §4 System
+Architecture, §8 Exceptions, §10 Initialization, Chapter 26 instruction
+reference; Embedded Intel486 Processor Family Developer's Manual, Appendix D
+CPUID. No Windows, DOS extender or paged operating-system qualification is
+implied by POST or the unpaged ROM.
+
 ## Context
 
 **Historical verdict: the investigated core cannot execute a DOS extender's protected-mode

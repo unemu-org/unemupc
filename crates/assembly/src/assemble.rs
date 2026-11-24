@@ -497,6 +497,8 @@ pub fn assemble_preverified(
             DeviceKind::Dma(_) => Box::new(Dma8237::new()),
             DeviceKind::DmaWord(_) => Box::new(Dma8237::new_at_word()),
             DeviceKind::AbsentCoprocessor => {
+                // The 486 core refuses external numeric-error routing until it
+                // implements CR0.NE-driven FERR/IGNNE, so keep these ports inert.
                 if config.cpu.fpu != crate::FpuChip::None
                     && matches!(
                         config.board,
@@ -739,7 +741,9 @@ pub fn build_cpu_with_mapping_trace(
     let board_memory = config.board == crate::BoardModel::Ibm5170;
     let physical_end = match config.board {
         crate::BoardModel::Ibm5170 => crate::memory::AT_PHYSICAL_END,
-        crate::BoardModel::Generic386Isa => crate::memory::I386_PHYSICAL_END,
+        crate::BoardModel::Generic386Isa | crate::BoardModel::Generic486Isa => {
+            crate::memory::I386_PHYSICAL_END
+        }
         crate::BoardModel::Bare => config.memory.address_space_bytes,
     };
     let mut cpu = match (config.board, config.cpu.chip) {
@@ -755,10 +759,21 @@ pub fn build_cpu_with_mapping_trace(
             config.cpu.reset.ip(),
             config.cpu.segments.into(),
         )?,
-        (crate::BoardModel::Generic386Isa, crate::CpuChip::I80286) => {
+        (_, chip @ (crate::CpuChip::I80486Dx | crate::CpuChip::I80486DxCpuid)) => {
+            X86JitCpu::new_i486_bare(
+                config.cpu.reset.cs(),
+                config.cpu.reset.ip(),
+                config.cpu.segments.into(),
+                chip == crate::CpuChip::I80486DxCpuid,
+            )?
+        }
+        (
+            crate::BoardModel::Generic386Isa | crate::BoardModel::Generic486Isa,
+            crate::CpuChip::I80286,
+        ) => {
             return Err(ConfigError::BoardConfiguration {
                 board: config.board.id(),
-                reason: "requires an 80386DX CPU",
+                reason: "CPU model does not match the board",
             }
             .into());
         }
@@ -793,7 +808,7 @@ pub fn build_cpu_with_mapping_trace(
         cpu.map_mmio(base, end - base)?;
         record_mapping(base, end, "mmio");
     }
-    if firmware_board && config.board != crate::BoardModel::Generic386Isa {
+    if firmware_board && !config.board.is_generic_isa() {
         // Physical adapter decoding belongs to the board, independently of
         // whether this firmware searches for option ROMs.
         let end = crate::firmware::system_bios(config)?.base;
@@ -835,7 +850,7 @@ pub fn build_cpu_with_mapping_trace(
     for image in &config.images {
         let bytes = load_image_bytes(&image.source)?;
         match image.kind {
-            ImageKind::Rom if config.board == crate::BoardModel::Generic386Isa => {
+            ImageKind::Rom if config.board.is_generic_isa() => {
                 cpu.write_mem(image.base, &bytes)?;
                 if std::ptr::eq(image, crate::firmware::system_bios(config)?) {
                     cpu.map_rom(crate::memory::I386_HIGH_BIOS_BASE, &bytes)?;
@@ -882,7 +897,7 @@ pub fn build_cpu_with_mapping_trace(
             record(crate::memory::AT_HIGH_ALIAS_BASE, physical_end, "rom");
         }
     }
-    if (board_memory || config.board == crate::BoardModel::Generic386Isa)
+    if (board_memory || config.board.is_generic_isa())
         && matches!(config.cpu.reset, crate::ResetSpec::ResetVector { .. })
     {
         cpu::Cpu::reset(&mut cpu)?;
@@ -1591,8 +1606,8 @@ pub fn medium_geometry(
 /// memory sizes against the real machine, so these are computed here rather than
 /// supplied by the caller: base memory is the RAM below 640 KiB, extended memory
 /// is the RAM at or above 1 MiB, and the floppy nibbles and equipment byte come
-/// from the primary display and floppy drives on the primary controller
-/// (DeviceId::Fdc). Secondary
+/// from the selected FPU, primary display and floppy drives on the primary controller
+/// (DeviceId::Fdc). Socketed and integrated FPUs both count as installed. Secondary
 /// controllers have no entries in the AT CMOS diskette inventory. For a plain AT — 640 KiB base, one 1.44 MB
 /// floppy, no display, hard disk or coprocessor — this reproduces [`devices::CmosConfig::default`]
 /// byte-for-byte apart from the BIOS century byte at 32h, seeded in BCD from
@@ -1679,7 +1694,7 @@ pub fn derive_cmos_layout_with_catalogue(
     }
 
     let mut equipment = config.primary_display()?.cmos_video_bits();
-    if config.board == crate::BoardModel::Ibm5170 && config.cpu.fpu == crate::FpuChip::I80287 {
+    if config.cpu.fpu != crate::FpuChip::None {
         equipment |= 0x02;
     }
     if floppy_count > 0 {

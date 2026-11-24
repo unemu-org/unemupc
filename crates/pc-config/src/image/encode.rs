@@ -61,9 +61,9 @@ macro_rules! names {
         }
     };
 }
-names!(BoardModel { Ibm5170 => "ibm-5170", Generic386Isa => "generic-386-isa" });
-names!(CpuModel { I80286 => "80286", I80386 => "80386dx" });
-names!(FpuModel { None => "none", I80287 => "80287" });
+names!(BoardModel { Ibm5170 => "ibm-5170", Generic386Isa => "generic-386-isa", Generic486Isa => "generic-486-isa" });
+names!(CpuModel { I80286 => "80286", I80386 => "80386dx", I80486Dx => "80486dx", I80486DxCpuid => "80486dx-cpuid" });
+names!(FpuModel { None => "none", I80287 => "80287", Integrated => "integrated" });
 names!(DisplaySwitch { Auto => "auto", Mono => "mono", Colour => "colour" });
 names!(CardKind { Mda => "mda", VgaText => "vga-text", Vga => "vga", Uart16550 => "uart-16550", Fdc765 => "fdc-765", Ide => "ide", Sb16 => "sb16", LotechEms => "lotech-ems" });
 names!(ControllerModel { Ata => "ata", AtAdapter => "at-adapter" });

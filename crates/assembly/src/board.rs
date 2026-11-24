@@ -22,6 +22,8 @@ pub enum MachineClass {
     At,
     /// ISA board with a 32-bit 80386DX bus.
     At386,
+    /// ISA board with an Intel486 DX and integrated FPU.
+    At486,
 }
 
 /// Named motherboard constraints on the flat device list.
@@ -36,6 +38,8 @@ pub enum BoardModel {
     Ibm5170,
     /// Emulator ISA board with writable firmware shadow RAM.
     Generic386Isa,
+    /// Emulator ISA board with an Intel486 DX and writable firmware shadow RAM.
+    Generic486Isa,
     /// Hand-wired Rust test rigs, without motherboard constraints or a class.
     Bare,
 }
@@ -46,6 +50,7 @@ impl BoardModel {
         match self {
             Self::Ibm5170 => "ibm-5170",
             Self::Generic386Isa => "generic-386-isa",
+            Self::Generic486Isa => "generic-486-isa",
             Self::Bare => "bare",
         }
     }
@@ -61,7 +66,7 @@ impl BoardModel {
                 retired_per_pit_clock: 8,
                 retired_per_pit_clock_denominator: 13,
             },
-            Self::Bare | Self::Generic386Isa => crate::ClockConfig::default(),
+            Self::Bare | Self::Generic386Isa | Self::Generic486Isa => crate::ClockConfig::default(),
         }
     }
 
@@ -73,7 +78,7 @@ impl BoardModel {
     pub const fn cpu_clocks_mhz(self) -> (u32, &'static [u32]) {
         match self {
             Self::Ibm5170 => (6, &[6, 8]),
-            Self::Bare | Self::Generic386Isa => (0, &[]),
+            Self::Bare | Self::Generic386Isa | Self::Generic486Isa => (0, &[]),
         }
     }
 
@@ -95,7 +100,7 @@ impl BoardModel {
                 crate::FirmwareEntry::XUB_R638_AT,
                 crate::FirmwareEntry::XUB_R638_XTP_ATA1F0,
             ],
-            Self::Generic386Isa => &[crate::firmware::SEABIOS_1_17_0_ISA],
+            Self::Generic386Isa | Self::Generic486Isa => &[crate::firmware::SEABIOS_1_17_0_ISA],
             Self::Bare => &[],
         }
     }
@@ -105,6 +110,7 @@ impl BoardModel {
         match self {
             Self::Ibm5170 => Some(MachineClass::At),
             Self::Generic386Isa => Some(MachineClass::At386),
+            Self::Generic486Isa => Some(MachineClass::At486),
             Self::Bare => None,
         }
     }
@@ -183,7 +189,7 @@ impl BoardModel {
                 vec![PortWindow::single(0x80)],
             ),
         ];
-        if self == Self::Generic386Isa {
+        if self.is_generic_isa() {
             if let DeviceKind::Rtc(cfg) = &mut devices[6].kind {
                 cfg.ram = crate::CmosRam::Bytes128;
             }
@@ -211,10 +217,17 @@ impl BoardModel {
         devices
     }
 
-    /// Processor selected by this board's physical bus.
+    /// Shared 32-bit ISA memory and firmware services. Intel486 DX Programmer's
+    /// Reference Manual, §10.1 Initialization; see machine-files.md §Generic 486 ISA board.
+    pub const fn is_generic_isa(self) -> bool {
+        matches!(self, Self::Generic386Isa | Self::Generic486Isa)
+    }
+
+    /// Default processor for Rust drafts; 486 machine files require an explicit variant.
     pub const fn cpu_chip(self) -> crate::CpuChip {
         match self {
             Self::Generic386Isa => crate::CpuChip::I80386,
+            Self::Generic486Isa => crate::CpuChip::I80486Dx,
             Self::Ibm5170 | Self::Bare => crate::CpuChip::I80286,
         }
     }

@@ -143,3 +143,75 @@ respectively, before executing the ROM. Restore mutated files with plain copies
 and touch them, then rerun the offline hash-checking build before the final
 passing tests. No emulator or device implementation changed; these are negative
 integration-test checks rather than device-fix before/after claims.
+
+## 486 extension
+
+The separate project-owned `vendor/i486-pm-test/` ROM keeps the existing 386
+fixture and transcript unchanged. It shares the 128 KiB shadow/high-copy
+layout and offline build pattern, but needs only a flat ring-0 USE32 segment
+for the 486-specific checks. One image detects either DX variant through
+EFLAGS.ID; the host selects the CPU explicitly. The build script pins the
+image SHA-256 `981f23f80d98f19ec02528eb8da5f1e67442cad7481f7320b445ceb9f001aff8`.
+
+The exact common transcript is:
+
+```text
+i486-pm-test
+reset signature ok
+reset cr0=60000010 ok
+bswap32 ok
+xadd register memory ok
+cmpxchg success failure ok
+cr0 wp am readback ok
+eflags ac readback ok
+```
+
+The early DX then prints `eflags id fixed; cpuid absent`. The CPUID DX prints:
+
+```text
+eflags id toggle; cpuid present
+cpuid 0 GenuineIntel max=1 ok
+cpuid 1 eax=0410 edx=0001 ok
+```
+
+Both end with:
+
+```text
+invd wbinvd invlpg ok
+failures 0000
+```
+
+The guest compares reset EDX against 0403h or 0410h according to the detected
+ID policy, and CR0 against 60000010h before setting PE. BSWAP must reverse
+12345678h to 78563412h. XADD checks both the sum and old destination in
+register and memory forms. CMPXCHG checks successful replacement, failed
+comparison's accumulator load and ZF, and the register form. WP/AM and AC
+are set and read back at CPL 0, then restored; no supervisor write-protection
+or CPL-3 #AC behavior is implied. CPUID compares all four registers for both
+leaves, including zero leaf-1 EBX/ECX. Cache instructions must execute without
+fault at CPL 0 with paging disabled.
+
+The golden compares Deadline whole runs with chunks of 1 and 17 and PerClock
+chunks of 257, including the transcript, retired count and virtual clock.
+It requires zero delivery events. The 50,000-step cap bounds failures.
+Intel486 DX Programmer's Reference Manual §4, §10 and Chapter 26 and Embedded
+Intel486 Processor Family Developer's Manual Appendix D define these checks.
+Paging, #AC delivery, cache contents and CR0.NE-driven FERR routing remain
+outside this ROM's scope.
+
+**MEASURED at CPU pin `274d48a8` (2026-11-24):** the early DX halts at
+1,694 retired instructions; the CPUID DX at 2,119. Both report zero failures
+and zero deliveries. Repeated runs and the complete scheduler/chunk matrix
+agree. The 386 ROM still halts at 8,120 retired instructions; no existing
+expected transcript or retired count was adjusted for the CPU repin.
+
+**MEASURED regression mutations:** replacing only the adapter's 486 reset
+image with `i386_reset` fails the CPU reset test, the all-source board reset
+test and all three 486 ROM tests. The ROM reports both reset checks as `FAIL`
+and `failures 0002`. Changing the BSWAP oracle to expect 78563413h (while
+rebuilding with a temporary matching image hash) fails all three ROM tests
+at the transcript assertion with `bswap32 FAIL` and `failures 0001`.
+Both mutations were restored by plain copies followed by `touch`; the final
+runs rebuild the restored sources. Removing the two 486 schema spellings
+fails all twelve new machine-file tests. Disabling the integrated-FPU
+validation fails its board validation regression.

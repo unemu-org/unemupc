@@ -384,7 +384,7 @@ pub fn ram_regions_for_board(
     images: &[LoadImage],
 ) -> Vec<RamRegion> {
     let mut ram = ram_regions(conventional, extended, mmio, images);
-    if board == BoardModel::Generic386Isa {
+    if board.is_generic_isa() {
         ram.push(RamRegion::new(0xC0000, 0x40000));
         ram.sort_by_key(|r| r.base);
     }
@@ -397,7 +397,7 @@ pub fn ram_regions_for_board(
 pub const fn extended_kib(board: BoardModel) -> IntegerDomain {
     IntegerDomain {
         max: match board {
-            BoardModel::Generic386Isa => GENERIC386_MAX_EXTENDED_KIB,
+            BoardModel::Generic386Isa | BoardModel::Generic486Isa => GENERIC386_MAX_EXTENDED_KIB,
             _ => IBM5170_MAX_EXTENDED_KIB,
         },
         ..EXTENDED_KIB

@@ -136,7 +136,7 @@ fn reserved_cpu_names_explain_the_missing_model() {
             "80386sx",
             "needs an 80386SX CPU model for firmware machines",
         ),
-        ("80486", "needs an 80486 CPU model for firmware machines"),
+        ("80486", "select 80486dx or 80486dx-cpuid explicitly"),
         ("pentium", "needs a Pentium CPU model for firmware machines"),
         (
             "pentium-ii",

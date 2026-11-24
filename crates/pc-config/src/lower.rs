@@ -1474,6 +1474,7 @@ fn lower_tracked_mode<R: ImageReader>(
     let board = match board {
         v1::BoardModel::Ibm5170 => BoardModel::Ibm5170,
         v1::BoardModel::Generic386Isa => BoardModel::Generic386Isa,
+        v1::BoardModel::Generic486Isa => BoardModel::Generic486Isa,
     };
     let mut devices = board.motherboard_devices();
     if let Some(settings) = &document.board {
@@ -1509,7 +1510,7 @@ fn lower_tracked_mode<R: ImageReader>(
         }
         if let Some(rtc) = &settings.rtc {
             let mut cfg = context.rtc(rtc)?;
-            if board == BoardModel::Generic386Isa {
+            if board.is_generic_isa() {
                 cfg.ram = assembly::CmosRam::Bytes128;
             }
             if let Some(device) = devices.iter_mut().find(|d| d.id == DeviceId::Rtc) {
@@ -1604,6 +1605,14 @@ fn lower_tracked_mode<R: ImageReader>(
         clock.retired_per_pit_clock = rate.steps.get();
         clock.retired_per_pit_clock_denominator = rate.pit_clocks.get();
     }
+    if board == BoardModel::Generic486Isa
+        && document.cpu.as_ref().and_then(|cpu| cpu.model).is_none()
+    {
+        return Err(context.error(
+            "cpu.model",
+            "generic-486-isa requires an explicit 80486dx or 80486dx-cpuid model",
+        ));
+    }
     let chip = match document.cpu.as_ref().and_then(|cpu| cpu.model).unwrap_or(
         if board == BoardModel::Generic386Isa {
             v1::CpuModel::I80386
@@ -1613,6 +1622,8 @@ fn lower_tracked_mode<R: ImageReader>(
     ) {
         v1::CpuModel::I80286 => CpuChip::I80286,
         v1::CpuModel::I80386 => CpuChip::I80386,
+        v1::CpuModel::I80486Dx => CpuChip::I80486Dx,
+        v1::CpuModel::I80486DxCpuid => CpuChip::I80486DxCpuid,
     };
     let display_switch = match document
         .board
@@ -1630,8 +1641,10 @@ fn lower_tracked_mode<R: ImageReader>(
         cpu: CpuConfig {
             chip,
             fpu: match document.cpu.as_ref().and_then(|cpu| cpu.fpu) {
+                None if board == BoardModel::Generic486Isa => assembly::FpuChip::Integrated,
                 None | Some(v1::FpuModel::None) => assembly::FpuChip::None,
                 Some(v1::FpuModel::I80287) => assembly::FpuChip::I80287,
+                Some(v1::FpuModel::Integrated) => assembly::FpuChip::Integrated,
             },
             reset: ResetSpec::reset_vector(),
             segments: SegmentSeed::flat(0xF000),

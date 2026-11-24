@@ -217,6 +217,32 @@ impl X86JitCpu {
         Self::new_machine_bare(1 << 32, cs, ip, segments, false, false, CpuModel::I80386)
     }
 
+    /// Build an Intel486 DX with its on-chip FPU and explicit CPUID policy.
+    /// Intel486 DX Programmer's Reference Manual, §10.1 Initialization:
+    /// both variants reset with CR0.CD/NW/ET set. External FERR routing is
+    /// unavailable in the core, so retain internal numeric-error delivery.
+    /// See `backlog/docs/design/machine-files.md` §Generic 486 ISA board.
+    pub fn new_i486_bare(
+        cs: u16,
+        ip: u16,
+        segments: RealSegments,
+        cpuid: bool,
+    ) -> Result<Self, CpuError> {
+        Self::new_machine_bare(
+            1 << 32,
+            cs,
+            ip,
+            segments,
+            true,
+            false,
+            if cpuid {
+                CpuModel::I80486DxCpuid
+            } else {
+                CpuModel::I80486Dx
+            },
+        )
+    }
+
     fn new_machine_bare(
         space_bytes: u64,
         cs: u16,
@@ -231,7 +257,10 @@ impl X86JitCpu {
         } else {
             FpuModel::None
         };
-        let mut vm = if model == CpuModel::I80386 {
+        let mut vm = if matches!(
+            model,
+            CpuModel::I80386 | CpuModel::I80486Dx | CpuModel::I80486DxCpuid
+        ) {
             Vm::sparse(VmConfig::reserved(space_bytes))
                 .map_err(|e| CpuError::Memory(format!("{e:?}")))?
         } else {
@@ -258,7 +287,12 @@ impl X86JitCpu {
                     what: format!("numeric error route: {e:?}"),
                 })?;
         }
-        cpu.cpu.legacy.cr0 = if model == CpuModel::I80386 {
+        cpu.cpu.legacy.cr0 = if matches!(model, CpuModel::I80486Dx | CpuModel::I80486DxCpuid) {
+            let reset = CpuState::i486_reset(model);
+            cpu.cpu.machine_flags_mask = reset.machine_flags_mask;
+            cpu.cpu.gpr[2] = reset.gpr[2];
+            reset.legacy.cr0
+        } else if model == CpuModel::I80386 {
             0x10
         } else {
             0xFFF0
@@ -862,11 +896,17 @@ impl Cpu for X86JitCpu {
         self.cpu
             .reset_execution_state(ResetOptions::default().with_x87_init(true));
         let a20_enabled = self.cpu.a20_enabled();
-        if self.vm.cpu_model() == Some(CpuModel::I80386) {
+        if let Some(model @ (CpuModel::I80386 | CpuModel::I80486Dx | CpuModel::I80486DxCpuid)) =
+            self.vm.cpu_model()
+        {
             let fpu = self.cpu.cpu.fpu_model;
             let route = self.cpu.cpu.numeric_error_route;
             let error = self.cpu.cpu.external_numeric_error;
-            self.cpu.cpu = CpuState::i386_reset(fpu);
+            self.cpu.cpu = if model == CpuModel::I80386 {
+                CpuState::i386_reset(fpu)
+            } else {
+                CpuState::i486_reset(model)
+            };
             self.cpu.cpu.numeric_error_route = route;
             self.cpu.cpu.external_numeric_error = error;
             // The reset image enables A20, but a CPU reset retains the board line.
@@ -3042,5 +3082,31 @@ mod i386_tests {
             cpu.run_steps(1, StepRunOptions::default()).unwrap().stop,
             CpuStepStop::Exit(CpuStop::Halt)
         );
+    }
+}
+
+#[cfg(test)]
+mod i486_tests {
+    use super::*;
+
+    #[test]
+    fn i486_reset_uses_model_signature_control_bits_and_internal_fpu_route() {
+        for (cpuid, signature) in [(false, 0x0403), (true, 0x0410)] {
+            let mut cpu =
+                X86JitCpu::new_i486_bare(0, 0x1000, RealSegments::default(), cpuid).unwrap();
+            assert!(cpu.memory_backing_stats().sparse);
+            for a20 in [false, true] {
+                cpu.cpu.cpu.legacy.cr0 = 1;
+                cpu.cpu.set_a20_enabled(a20);
+                cpu.reset().unwrap();
+                assert_eq!(cpu.cpu.cpu.legacy.cr0, 0x6000_0010);
+                assert_eq!(cpu.cpu.cpu.gpr[2], signature);
+                assert_eq!(cpu.cpu.cpu.fpu_model, FpuModel::Present);
+                assert_eq!(cpu.cpu.numeric_error_route(), NumericErrorRoute::Internal);
+                assert_eq!(cpu.cpu.cpu.legacy.segments[0].base, 0xFFFF0000);
+                assert_eq!(cpu.cpu.cpu.rip, 0xFFF0);
+                assert_eq!(cpu.cpu.a20_enabled(), a20);
+            }
+        }
     }
 }
