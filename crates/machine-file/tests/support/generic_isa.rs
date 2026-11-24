@@ -1318,3 +1318,306 @@ pub fn seabios_freedos_jemmex_v86(chip: CpuChip) {
         assembled.machine.cpu().diagnostic_state()
     );
 }
+
+fn dos32a_fixture(path: &std::path::Path, hash: &str, required: bool) -> Option<Vec<u8>> {
+    if !path.is_file() {
+        assert!(
+            !required,
+            "required DOS/32A fixture is missing: {}",
+            path.display()
+        );
+        eprintln!(
+            "skipping *_seabios_freedos_dos32a_*: missing {}; run vendor/dos32a/fetch.sh and vendor/dos-extender-test/build.sh",
+            path.display()
+        );
+        return None;
+    }
+    let bytes = std::fs::read(path).unwrap();
+    assert_eq!(assembly::test_support::fixture_sha256(&bytes), hash);
+    Some(bytes)
+}
+
+#[test]
+#[should_panic(expected = "required DOS/32A fixture is missing")]
+fn dos32a_missing_required_fixture_fails() {
+    let temp = machine_file::test_support::TempDir::new("dos32a-required");
+    dos32a_fixture(&temp.path().join("missing.zip"), "unused", true);
+}
+
+#[test]
+fn dos32a_missing_optional_fixture_skips() {
+    let temp = machine_file::test_support::TempDir::new("dos32a-optional");
+    assert!(dos32a_fixture(&temp.path().join("missing.zip"), "unused", false).is_none());
+}
+
+#[test]
+#[should_panic(expected = "assertion `left == right` failed")]
+fn dos32a_corrupt_fixture_fails() {
+    let temp = machine_file::test_support::TempDir::new("dos32a-corrupt");
+    let path = temp.path().join("corrupt.zip");
+    std::fs::write(&path, b"corrupt archive").unwrap();
+    dos32a_fixture(
+        &path,
+        "1cb89287703b3dad7ae279c18ae53ce4699fd33d685ddb7e7f46879d2fd953c1",
+        false,
+    );
+}
+
+/// DOS/32A 9.1.2, LOADER.ASM (LE objects) and KERNEL/MODE.ASM (VCPI);
+/// Intel 80386 Programmer's Reference Manual, §10.1 CR0 and Chapter 15 V86.
+/// See protected-mode-gaps.md §DOS extender qualification.
+/// The boot image is derived from a hash-checked base and remains read-only.
+pub fn seabios_freedos_dos32a(chip: CpuChip, vcpi: bool) {
+    use std::process::Command;
+    let Some(mut config) = freedos_config(chip, false) else {
+        return;
+    };
+    let required = std::env::var_os("UNEMUPC_REQUIRE_FIXTURES").is_some();
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let archive = root.join("vendor/dos32a/dos32a.zip");
+    if dos32a_fixture(
+        &archive,
+        "1cb89287703b3dad7ae279c18ae53ce4699fd33d685ddb7e7f46879d2fd953c1",
+        required,
+    )
+    .is_none()
+    {
+        return;
+    }
+    let Some(program) = dos32a_fixture(
+        &root.join("vendor/dos-extender-test/dpmitest.exe"),
+        "91a5b15f1a47e7d5651663e36b66e56190d79b7fd553d775e60b9dd60113a105",
+        required,
+    ) else {
+        return;
+    };
+    let temp = machine_file::test_support::TempDir::new("freedos-dos32a");
+    let executable = Command::new("unzip")
+        .arg("-p")
+        .arg(&archive)
+        .arg("BIN/DOS32A.EXE")
+        .output()
+        .unwrap();
+    assert!(executable.status.success());
+    std::fs::write(temp.path().join("DOS32A.EXE"), executable.stdout).unwrap();
+    std::fs::write(temp.path().join("DPMITEST.EXE"), program).unwrap();
+    let mut files = vec!["DOS32A.EXE", "DPMITEST.EXE", "AUTOEXEC.BAT"];
+    if vcpi {
+        let source = root.join("vendor/freedos/floppy-1.4/freedos-1.4-floppy-src.tar");
+        if !jemm_source_available(&source, required) {
+            eprintln!("skipping *_seabios_freedos_dos32a_vcpi_cpu_boundary: JemmEx source fixture is missing");
+            return;
+        }
+        assert_eq!(
+            assembly::test_support::fixture_sha256(&std::fs::read(&source).unwrap()),
+            "dfa7006e742cb9676a0a6401ce64214089923f055f4a7ba8f36960115b5362b6"
+        );
+        let package = Command::new("tar")
+            .args(["-xOf"])
+            .arg(source)
+            .arg("freedos-1.4-floppy-src/packages/base/jemm.zip")
+            .output()
+            .unwrap();
+        assert!(package.status.success());
+        assert_eq!(
+            assembly::test_support::fixture_sha256(&package.stdout),
+            "c571724c2025cc493ba3b194ec68d29a2a9913a5e9b844828d3cdb4c21548994"
+        );
+        let zip = temp.path().join("jemm.zip");
+        std::fs::write(&zip, package.stdout).unwrap();
+        let executable = Command::new("unzip")
+            .arg("-p")
+            .arg(zip)
+            .arg("BIN/JEMMEX.EXE")
+            .output()
+            .unwrap();
+        assert!(executable.status.success());
+        std::fs::write(temp.path().join("JEMMEX.EXE"), executable.stdout).unwrap();
+        files.push("JEMMEX.EXE");
+    }
+    let autoexec = format!("@ECHO OFF\r\n{}DOS32A DPMITEST.EXE\r\nIF ERRORLEVEL 1 ECHO DOS32-ERROR\r\nECHO DOS32-RETURNED\r\nVER\r\nECHO DOS32-VER-DONE\r\n", if vcpi { "JEMMEX LOAD NOEMS NORAM NOVMW\r\n" } else { "" });
+    std::fs::write(temp.path().join("AUTOEXEC.BAT"), autoexec).unwrap();
+    let assembly::ImageSource::Inline(base) = &config.drives[0].image else {
+        panic!("expected inline boot fixture")
+    };
+    assert_eq!(
+        assembly::test_support::fixture_sha256(base),
+        "b7b088333f7f30584d768941fecea8288b63f2d61e13ec6c9472439eda66e51f"
+    );
+    let image = temp.path().join("boot.img");
+    std::fs::write(&image, base).unwrap();
+    for name in files {
+        assert!(Command::new("mcopy")
+            .env("SOURCE_DATE_EPOCH", "315532800")
+            .env("TZ", "UTC")
+            .env("MTOOLS_SKIP_CHECK", "1")
+            .env("LC_ALL", "C.UTF-8")
+            .arg("-i")
+            .arg(&image)
+            .arg(temp.path().join(name))
+            .arg(format!("::{name}"))
+            .status()
+            .unwrap()
+            .success());
+    }
+    let image = std::fs::read(image).unwrap();
+    assert_eq!(
+        assembly::test_support::fixture_sha256(&image),
+        if vcpi {
+            "e5018f57f57db4c8a8dcdcc9e1c2770d21d4970267646ec71bce33c32c853dbd"
+        } else {
+            "be15dc9ad686ee5c33d21165e6ee837a1c6875b0acf5cae0935b7e2faaf7bc7c"
+        }
+    );
+    use sha2::Digest;
+    config.drives[0].expected_sha256 = Some(sha2::Sha256::digest(&image).into());
+    config.drives[0].image = assembly::ImageSource::Inline(image);
+    config.drives[0].write = assembly::WriteMode::ReadOnly;
+    let policy = assembly::ObservationPolicy {
+        routes: vec![assembly::ObservationRequest {
+            device: DeviceId::Vga,
+            output: assembly::OutputKind::TextScanout,
+            byte_limit: 0,
+        }],
+        ..Default::default()
+    };
+    let mut assembled = machine_file::assemble_with_observation(&config, &policy).unwrap();
+    assembled.machine.enable_delivery_log().unwrap();
+    let started = std::time::Instant::now();
+    let mut saw_v86 = false;
+    let mut saw_v86_delivery = false;
+    for cap in (100_000..=budget(chip, 5_000_000)).step_by(100_000) {
+        let result = assembled.machine.run_bounded(Some(cap));
+        let state = assembled.machine.cpu().diagnostic_state();
+        let system = state.system.unwrap();
+        saw_v86 |= system.virtual_8086;
+        let deliveries = assembled.machine.recent_deliveries().unwrap();
+        saw_v86_delivery |= deliveries.entries.iter().any(|entry| {
+            matches!(entry, machine::DeliveryEntry::Deliveries { last, .. }
+                if last.virtual_8086_before && !last.virtual_8086_after
+                    && last.cpl_before == 3 && last.cpl_after == 0)
+        });
+        if let Err(machine::MachineError::Cpu(error)) = result {
+            let text = freedos_text(&assembled);
+            let report = assembled.machine.cpu().stop_report(&error).unwrap();
+            let is_386 = chip == CpuChip::I80386;
+            let expected_ip = if is_386 { 0x030D } else { 0x0327 };
+            let expected_cs = if vcpi { 0x21AE } else { 0x2171 };
+            let expected_bytes: &[u8] = if is_386 {
+                &[0xD9, 0x7E, 0x02]
+            } else {
+                &[0xDB, 0xE1]
+            };
+            let expected_retired = match (chip, vcpi) {
+                (CpuChip::I80386, false) => 10_765_842,
+                (CpuChip::I80386, true) => 11_147_577,
+                (CpuChip::I80486Dx, false) => 13_332_394,
+                (CpuChip::I80486Dx, true) => 13_714_260,
+                (CpuChip::I80486DxCpuid, false) => 13_332_400,
+                (CpuChip::I80486DxCpuid, true) => 13_714_275,
+                _ => unreachable!(),
+            };
+            let Some(machine::DeliveryEntry::Deliveries { last, .. }) = deliveries.entries.last()
+            else {
+                panic!("DOS/32A must retain its final DOS delivery");
+            };
+            eprintln!("CPU FINDINGS: {} DOS32A vcpi={vcpi}: {error}; retired={}; wall={:?}; text SHA-256={}; deliveries={}; last={last}\n{text}\n{report}\n{state}", chip.name(), assembled.machine.cpu().retired(), started.elapsed(), text_sha256(&text), deliveries.total);
+            assert!(
+                matches!(error, cpu::CpuError::UnsupportedInstruction { addr, cs, ref bytes }
+                if addr == expected_ip && cs == expected_cs && bytes == expected_bytes)
+            );
+            assert_eq!((report.cs, report.ip), (expected_cs, expected_ip));
+            assert_eq!(
+                report.code_linear,
+                u32::from(expected_cs) * 16 + expected_ip as u32
+            );
+            assert_eq!(assembled.machine.cpu().retired(), expected_retired);
+            assert_eq!(
+                system.msw,
+                match (is_386, vcpi) {
+                    (true, false) => 0x0000,
+                    (true, true) => 0x0001,
+                    (false, false) => 0x0010,
+                    (false, true) => 0x0011,
+                }
+            );
+            assert!(state.a20);
+            assert_eq!(system.virtual_8086, vcpi);
+            assert_eq!(system.protected(), vcpi);
+            assert_eq!(system.cpl, if vcpi { 3 } else { 0 });
+            assert_eq!(saw_v86, vcpi);
+            assert_eq!(saw_v86_delivery, vcpi);
+            assert_eq!(
+                deliveries.total,
+                if is_386 {
+                    if vcpi {
+                        3174
+                    } else {
+                        2445
+                    }
+                } else if vcpi {
+                    3158
+                } else {
+                    2429
+                }
+            );
+            assert_eq!(last.kind, cpu::DeliveryKind::Software);
+            assert_eq!(last.error_code, None);
+            assert_eq!(
+                (last.vector, last.cs, last.ip, last.linear),
+                (0x2A, 0x05E3, 0x0280, 0x60B0)
+            );
+            assert_eq!(
+                last.retired,
+                if is_386 {
+                    if vcpi {
+                        11_147_477
+                    } else {
+                        10_765_778
+                    }
+                } else if vcpi {
+                    if chip == CpuChip::I80486Dx {
+                        13_714_134
+                    } else {
+                        13_714_143
+                    }
+                } else {
+                    13_332_304
+                }
+            );
+            assert_eq!(
+                (last.virtual_8086_before, last.virtual_8086_after),
+                (vcpi, false)
+            );
+            assert_eq!(
+                (last.cpl_before, last.cpl_after),
+                (if vcpi { 3 } else { 0 }, 0)
+            );
+            assert_eq!(
+                text_sha256(&text),
+                if vcpi {
+                    "5159d6897f105da89e02580b82e18681de91bfa0b2d1b6e8c97949b6f4f1eaa3"
+                } else {
+                    "b63027eb7663ae41eead37d69a0d4ceeb7cc41e1df5bfc5b07def2cea15d24e9"
+                }
+            );
+            assert!(text.contains("DOS/32A -- DOS Extender version 9.1.2"));
+            assert_eq!(text.contains("JemmEx loaded"), vcpi);
+            assert!(!text.contains("DOS32-PM32-BEGIN"));
+            assert!(!text.contains("DOS32-RETURNED"));
+            assert!(!text.contains("DOS32-VER-DONE"));
+            assert!(!text.contains("A:\\>"));
+            return;
+        }
+        result.unwrap();
+        assert!(
+            !freedos_text(&assembled).contains("DOS32-VER-DONE"),
+            "DOS/32A advanced beyond the pinned CPU boundary; remeasure the end-to-end golden"
+        );
+    }
+    panic!(
+        "DOS32A budget exhausted\n{}\n{}",
+        freedos_text(&assembled),
+        assembled.machine.cpu().diagnostic_state()
+    );
+}

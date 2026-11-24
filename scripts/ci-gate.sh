@@ -70,6 +70,10 @@ case "$step" in
             bash vendor/freedos/fetch.sh
             echo "== fixtures: vendor/freedos/fetch-jemm.sh"
             bash vendor/freedos/fetch-jemm.sh
+            echo "== fixtures: vendor/dos32a/fetch.sh"
+            bash vendor/dos32a/fetch.sh
+            echo "== fixtures: vendor/dos-extender-test/build.sh"
+            bash vendor/dos-extender-test/build.sh
             echo "== fixtures: vendor/test386/fetch.sh"
             bash vendor/test386/fetch.sh
             echo "== fixtures: vendor/hdd/build.sh"

@@ -58,3 +58,13 @@ fn generic386_seabios_storage_configuration() {
 fn generic386_seabios_freedos_jemmex_v86() {
     generic_isa::seabios_freedos_jemmex_v86(assembly::CpuChip::I80386);
 }
+
+#[test]
+fn generic386_seabios_freedos_dos32a_raw_cpu_boundary() {
+    generic_isa::seabios_freedos_dos32a(assembly::CpuChip::I80386, false);
+}
+
+#[test]
+fn generic386_seabios_freedos_dos32a_vcpi_cpu_boundary() {
+    generic_isa::seabios_freedos_dos32a(assembly::CpuChip::I80386, true);
+}

@@ -1,5 +1,90 @@
 # 386 protected-mode gaps
 
+## DOS extender qualification
+
+**MEASURED, 2026-11-24**, x86jit
+`0bc16f55e557f3a4dac12a35335b175d41a42a54`: phase B exit remains
+**blocked before the 32-bit client starts**. All three CPUs boot FreeDOS
+kernel 2044 / FreeCOM 0.86 through the pinned SeaBIOS/SeaVGABIOS fixtures
+and invoke the unmodified open **DOS/32A 9.1.2a** loader. The raw variant
+has no memory manager; the VCPI variant first loads **JemmEx 5.85** with
+`LOAD NOEMS NORAM NOVMW`. The six normal tests are named
+`*_seabios_freedos_dos32a_{raw,vcpi}_cpu_boundary`, in the generic386 and
+generic486 test binaries, using one shared helper.
+
+The [loader archive and licence](../../../vendor/dos32a/README.md) and
+[NASM-built LE client](../../../vendor/dos-extender-test/README.md) have
+pinned hashes. The client is intended to print its live CR0, allocate and
+checksum 1 MiB above 1 MiB through DPMI, print FFFE0000, then exit through
+DOS. AUTOEXEC checks ERRORLEVEL, runs VER, and prints return markers.
+**These client operations, protected entry by the extender, paging during
+client execution, and return to DOS have not been observed.** Their source
+and format have been inspected and assembled; runtime correctness remains
+unqualified until the CPU boundaries below are removed upstream.
+
+Each golden hashes the full decoded 80×25 VGA text, and asserts the exact
+CPU refusal, CS:IP, linear address, bytes, retired count, PE/VM/CPL and final
+delivery. It also asserts that no client/return marker appeared. The screen
+contains `DOS/32A -- DOS Extender version 9.1.2`; VCPI also contains
+`JemmEx loaded`. No final `A:\>` prompt is reached. Raw text SHA-256 is
+`b63027eb7663ae41eead37d69a0d4ceeb7cc41e1df5bfc5b07def2cea15d24e9`;
+VCPI text SHA-256 is
+`5159d6897f105da89e02580b82e18681de91bfa0b2d1b6e8c97949b6f4f1eaa3`.
+
+### CPU FINDINGS
+
+| CPU | Host path | Exact stop CS:IP / linear | Bytes / instruction | Mode / CPL / MSW | Retired |
+| --- | --- | --- | --- | --- | ---: |
+| 80386DX | raw | 2171:030D / 00021A1D | D9 7E 02 / FNSTCW [BP+2] | real / 0 / 0000 | 10,765,842 |
+| 80386DX | JemmEx | 21AE:030D / 00021DED | D9 7E 02 / FNSTCW [BP+2] | V86 / 3 / 0001 | 11,147,577 |
+| early 80486DX | raw | 2171:0327 / 00021A37 | DB E1 / FDISI (FNDISI) | real / 0 / 0010 | 13,332,394 |
+| early 80486DX | JemmEx | 21AE:0327 / 00021E07 | DB E1 / FDISI (FNDISI) | V86 / 3 / 0011 | 13,714,260 |
+| CPUID 80486DX | raw | 2171:0327 / 00021A37 | DB E1 / FDISI (FNDISI) | real / 0 / 0010 | 13,332,400 |
+| CPUID 80486DX | JemmEx | 21AE:0327 / 00021E07 | DB E1 / FDISI (FNDISI) | V86 / 3 / 0011 | 13,714,275 |
+
+Every stop is `CpuError::UnsupportedInstruction`, A20 on. The pinned CPU
+policy is no FPU on the 386 and an integrated FPU on both 486 models.
+**READ:** the archive's `DOS32A/TEXT/KERNEL/DETECT.ASM`, `fpu_detect`,
+performs FNINIT then FNSTCW, checks AH=03h, clears the legacy control-word
+bit 7, executes FLDCW then FDISI. The 386 stops at FNSTCW; both 486s reach
+FDISI. These are loader CPU/FPU probes, before its LE loader executes the
+client. No vendor byte patch or CPU workaround is applied.
+
+The final delivery in every run is software **INT 2Ah**, saved
+**05E3:0280**, linear **000060B0**, no error code. Raw is CPL 0→0 / VM 0→0;
+JemmEx is CPL 3→0 / VM 1→0. The final-delivery retired counts and total
+observed deliveries are:
+
+| CPU | Raw last / total | JemmEx last / total |
+| --- | ---: | ---: |
+| 80386DX | 10,765,778 / 2,445 | 11,147,477 / 3,174 |
+| early 80486DX | 13,332,304 / 2,429 | 13,714,134 / 3,158 |
+| CPUID 80486DX | 13,332,304 / 2,429 | 13,714,143 / 3,158 |
+
+The JemmEx runs observe live VM=1 and PE=1, and retain monitor V86→ring-0
+deliveries. This establishes the monitor's protected state; the raw loader
+is still in real mode at the refusal. Earlier PE samples during SeaBIOS
+boot are not evidence of DOS/32A protected entry. The diagnostic interface
+exposes MSW, not full CR0, so **CR0.PG is not measured here**. JemmEx's
+paged-monitor implementation is read evidence only; no claim of paging
+while the client runs is possible before the client starts.
+
+The run cap is the shared clock-scaled equivalent of 5,000,000 retired
+instruction steps at rate 1; polls are every 100,000 virtual instruction
+units. Initial test-profile wall times were **3.38–3.66 s** on the 386
+(two goldens concurrently) and **6.01–6.40 s** on the 486 (four concurrently).
+Host timings do not enter guest execution or assertions. Retired counts
+and screen hashes agree on repeat runs.
+
+The temporary floppy is a copy of base SHA-256
+`b7b088333f7f30584d768941fecea8288b63f2d61e13ec6c9472439eda66e51f`,
+with files added by mcopy at the fixed FAT epoch. It is mounted read-only;
+the original bytes and hash remain unchanged. Derived SHA-256 pins are
+`be15dc9ad686ee5c33d21165e6ee837a1c6875b0acf5cae0935b7e2faaf7bc7c`
+(raw) and
+`e5018f57f57db4c8a8dcdcc9e1c2770d21d4970267646ec71bce33c32c853dbd`
+(JemmEx). No shipped machine or device behavior changes.
+
 ## test386 full-machine validation (2026-11-24)
 
 **MEASURED**, CPU pin `0bc16f55e557f3a4dac12a35335b175d41a42a54`, upstream

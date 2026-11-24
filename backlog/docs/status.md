@@ -1,5 +1,25 @@
 # Status
 
+## DOS extender phase B exit (2026-11-24)
+
+**MEASURED at x86jit `0bc16f55`: phase B exit is not achieved.** All three
+CPUs boot FreeDOS and invoke the pinned open DOS/32A 9.1.2a loader, both
+raw and after JemmEx 5.85 installation. The 386 stops in the loader's
+FPU detection at FNSTCW [BP+2] (`D9 7E 02`); both 486 variants stop at
+FDISI (`DB E1`). Raw stops are real mode / CPL 0; JemmEx stops are V86 /
+CPL 3 with PE=1 and monitor delivery evidence. The 32-bit LE client has
+not started, so protected entry by the extender, paging while it runs,
+its 1 MiB DPMI checksum, and return to DOS remain unqualified.
+
+Six deterministic goldens pin the honest CPU refusals, full decoded VGA
+text hashes, exact retired counts (10,765,842–13,714,275) and final delivery
+records. A project-owned NASM LE client, pinned loader fetch/cache check,
+licence acknowledgment, required-fixture failures and visible optional
+skips are ready for upstream CPU fixes. No machine/device changes or
+vendor patches are included. See
+[CPU findings, budgets and timings](design/protected-mode-gaps.md#dos-extender-qualification)
+and [client contract](../../vendor/dos-extender-test/README.md).
+
 ## Nominal CPU clocks and turbo (2026-11-24)
 
 `cpu.clock_mhz` accepts numeric MHz with exact integer-kHz resolution and
