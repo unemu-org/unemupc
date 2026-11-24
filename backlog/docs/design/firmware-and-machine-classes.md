@@ -543,9 +543,12 @@ All three probes are normal tests and run in a few seconds each.
 The old REP NOP stop at `F000:A72C` on `deae5bac` is passed at this pin.
 F3 90 and F2 90 execute as NOP on every model, so SeaBIOS `cpu_relax`
 needs no CPU option and no board workaround is applied.
-No new CPU boundary was observed. The fixture remains Listed; guest OS boot,
-TSS I/O bitmap and paging remain separate work. The counts above precede
-the SeaVGABIOS qualification described below.
+No new CPU boundary was observed in that historical diskless probe. The fixture
+remains Listed. Guest DOS boot, TSS I/O bitmap, paging and V86 are now covered
+separately; the counts above precede the SeaVGABIOS qualification described below.
+At x86jit `0bc16f55`, shared generic-386/486 tests load JemmEx 5.85 from the
+cached FreeDOS 1.4 source set and run DIR with live VM=1 and monitor deliveries.
+See [V86 coverage and remaining limits](protected-mode-gaps.md#v86-monitor-and-cpu-state-audit-2026-11-24).
 
 **Build target and decision (READ).** `CONFIG_QEMU` is the only target with
 ISA fallbacks: ATA at 1F0h/170h without PCI (`ata.c:1020–1030`), RAM size

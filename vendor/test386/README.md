@@ -43,16 +43,19 @@ at FFFF0000h–FFFFFFFFh. Tests fill E0000h–EFFFFh with FFh to satisfy the
 board's 128 KiB decode. Tests use the explicit unlisted-fixture assembly option,
 leaving shipped firmware catalogue and scan policy intact. No SeaBIOS runs.
 
-At CPU pin `d8bf798ed05520b6b06bbb787a71f3906a0c65d9`, all three models
-produce POST `00 01 02 03 04 05 06 08 09 20 21` and zero ASCII bytes. They
-retire 796,780 instructions, then refuse `IRETD` (`CF`, USE32) at 00D0:2CA0
-with typed `InvalidLegacyContext(Virtual8086Unsupported)`. Combined PE/PG
-entry, protected stacks and ring transitions now run; POST 21 attempts V86.
-The later dedicated page-fault tests (POST 11) and FFh completion remain
-unreached. No source is patched to bypass that boundary. A separate
-project-owned paging ROM checks aliases, permissions and #PF independently.
-The 1,000,000 virtual-time-unit bound remains; measured test-profile times are
-0.049–0.058 seconds. The retained bare scheduler rig also captures POST at 80h.
+At CPU pin `0bc16f55e557f3a4dac12a35335b175d41a42a54`, all three models
+produce POST `00 01 02 03 04 05 06 08 09 20 21 22 0b 0c 0d 0e 0f 10 11`
+and zero ASCII bytes, retiring 1,409,775 instructions. POST 21's V86 tests
+complete. The first page-fault test at POST 11 enters the expected #PF(0)
+handler for `MOV EAX,[0049F000h]` at 00D0:9F76, but the handler expects
+PDE.A=0 for a present PDE / absent PTE. The CPU's documented paging policy
+leaves PDE.A=1 (00003023h at physical 1004h); the diagnostic therefore reaches
+its error HLT at 00D0:FE89. This is a CPU-policy/test-expectation mismatch,
+not a board failure or FFh completion. No source is patched to bypass it.
+The ROM128-only task-switch and 16-bit V86-gate tests remain excluded by the
+unchanged build configuration. The bound is 5,000,000 virtual-time units;
+initial concurrent test-profile times were 0.83–0.87 seconds. The retained
+bare scheduler rig also captures POST at 80h.
 
 See [measured coverage and CPU findings](../../backlog/docs/design/protected-mode-gaps.md)
 and `crates/pc-harness/tests/test386_golden.rs` for the pinned stop contract.

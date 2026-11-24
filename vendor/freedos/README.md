@@ -144,3 +144,53 @@ archive before copying any tools. Missing inputs fail; it never silently
 falls back to the network. Without the variable, the original source build
 runs first, followed by the tools build. All three outputs retain the same
 FAT timestamp rules and fixed per-volume serials.
+
+## V86 monitor qualification from FreeDOS 1.4
+
+`bash vendor/freedos/fetch-jemm.sh` fetches the published [FreeDOS 1.4 floppy
+source archive](https://github.com/unemu-org/software/releases/download/freedos-1.4-floppy/freedos-1.4-floppy-src.tar)
+to `floppy-1.4/freedos-1.4-floppy-src.tar`. The fixtures CI lane calls it before
+the goldens. It verifies **22,835,200 bytes** and SHA-256
+`dfa7006e742cb9676a0a6401ce64214089923f055f4a7ba8f36960115b5362b6`,
+including cached copies; a matching cache needs no network. A size or hash
+mismatch fails instead of replacing the cached input.
+
+The archive contains the official
+`packages/base/jemm.zip`: **Jemm 5.85**, 2025-01-10, **Artistic-1.0**
+(`APPINFO/JEMM.LSM`, `DOC/JEMM/Readme.txt` §9 and `Artistic.txt`).
+`src/JEMM32.ASM` in the source package identifies the inherited EMS/DMA/opcode
+emulation parts as Artistic and the remaining 32-bit source as public domain.
+The package SHA-256 is `c571724c2025cc493ba3b194ec68d29a2a9913a5e9b844828d3cdb4c21548994`;
+its source is included as `SOURCE/JEMM/SOURCES.ZIP`. JEMMEX includes its own
+XMS manager; JEMM386 needs a separate XMS manager. This package is in the
+1.4 source fixture, separate from the minimal boot/tool floppy and the six
+utility archives pinned by this directory's `fetch.sh`.
+
+The shared `*_seabios_freedos_jemmex_v86` tests extract **JEMMEX.EXE** offline
+from that package. They hash-check the existing kernel-2044/FreeCOM-0.86 boot
+fixture, copy it into a temporary directory, and add JEMMEX and this AUTOEXEC:
+
+```dos
+@ECHO OFF
+JEMMEX LOAD NOEMS NORAM NOVMW
+ECHO V86-AFTER-LOAD
+DIR
+ECHO V86-DIR-DONE
+```
+
+The copy is mounted read-only and removed after the test; vendor images and
+fetch pins stay untouched. `LOAD` is the documented command-line installation
+path (Readme §3); it places DOS in V86. NOEMS/NORAM select the minimal monitor
+configuration, and NOVMW disables the unrelated VMware probe. NOVME is already
+the package default; no later-CPU extension is requested. The tests use `tar`,
+`unzip` and `mcopy` from the devShell and never download missing inputs.
+A missing source archive fails when
+`UNEMUPC_REQUIRE_FIXTURES` is set (including the required goldens lane).
+Otherwise the tests print their name pattern and the missing-input reason
+before skipping. They also query the controller's write-protect status to
+verify that the derived floppy is mounted read-only.
+
+**MEASURED at x86jit `0bc16f55`:** JemmEx loads and DOS lists the directory
+on 386 and both 486 variants, with live VM=1 and V86→ring-0 delivery evidence.
+See [exact transcript/count pins and limits](../../backlog/docs/design/protected-mode-gaps.md#v86-monitor-and-cpu-state-audit-2026-11-24).
+This is not qualification of EMS/VCPI applications or every Jemm option.

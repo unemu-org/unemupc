@@ -23,7 +23,7 @@ fn budget(chip: CpuChip, previous_steps: u64) -> u64 {
 
 fn shipped(chip: CpuChip) -> Option<assembly::MachineConfig> {
     assert!(
-        include_str!("../../../../Cargo.lock").contains("d8bf798ed05520b6b06bbb787a71f3906a0c65d9")
+        include_str!("../../../../Cargo.lock").contains("0bc16f55e557f3a4dac12a35335b175d41a42a54")
     );
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     if ["bios-1.17.0-isa.bin", "build/vgabios-1.17.0-stdvga.bin"]
@@ -1113,4 +1113,208 @@ pub fn seabios_freedos_reaches_prompt(chip: CpuChip, ide: bool) {
         }
     }
     panic!("DIR C: budget exhausted\n{}", freedos_text(&assembled));
+}
+
+fn jemm_source_available(source: &std::path::Path, required: bool) -> bool {
+    if source.is_file() {
+        return true;
+    }
+    assert!(!required, "required FreeDOS 1.4 source archive for JemmEx is missing; run vendor/freedos/fetch-jemm.sh");
+    eprintln!("skipping *_seabios_freedos_jemmex_v86: FreeDOS 1.4 source archive is missing; run vendor/freedos/fetch-jemm.sh");
+    false
+}
+
+#[test]
+#[should_panic(expected = "required FreeDOS 1.4 source archive for JemmEx is missing")]
+fn jemmex_v86_missing_required_source_fails() {
+    let temp = machine_file::test_support::TempDir::new("jemm-missing-required");
+    jemm_source_available(&temp.path().join("missing.tar"), true);
+}
+
+#[test]
+fn jemmex_v86_missing_optional_source_skips() {
+    let temp = machine_file::test_support::TempDir::new("jemm-missing-optional");
+    assert!(!jemm_source_available(
+        &temp.path().join("missing.tar"),
+        false
+    ));
+}
+
+/// Intel 80386 Programmer's Reference Manual, Chapter 15 Virtual 8086 Mode;
+/// Jemm 5.85 Readme, sections 3 (LOAD) and 4.3 (IOPL Sensitive Instructions).
+/// NEC uPD765A datasheet, Sense Drive Status command, ST3 write-protect bit.
+/// Derive a private boot image from open fixtures; never alter their base bytes.
+pub fn seabios_freedos_jemmex_v86(chip: CpuChip) {
+    use std::process::Command;
+    let Some(mut config) = freedos_config(chip, false) else {
+        return;
+    };
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let source = root.join("vendor/freedos/floppy-1.4/freedos-1.4-floppy-src.tar");
+    if !jemm_source_available(
+        &source,
+        std::env::var_os("UNEMUPC_REQUIRE_FIXTURES").is_some(),
+    ) {
+        return;
+    }
+    assert_eq!(
+        assembly::test_support::fixture_sha256(&std::fs::read(&source).unwrap()),
+        "dfa7006e742cb9676a0a6401ce64214089923f055f4a7ba8f36960115b5362b6"
+    );
+    let temp = machine_file::test_support::TempDir::new("freedos-v86");
+    let package = Command::new("tar")
+        .args(["-xOf"])
+        .arg(source)
+        .arg("freedos-1.4-floppy-src/packages/base/jemm.zip")
+        .output()
+        .unwrap();
+    assert!(
+        package.status.success(),
+        "cannot extract pinned Jemm package"
+    );
+    assert_eq!(
+        assembly::test_support::fixture_sha256(&package.stdout),
+        "c571724c2025cc493ba3b194ec68d29a2a9913a5e9b844828d3cdb4c21548994"
+    );
+    let zip = temp.path().join("jemm.zip");
+    std::fs::write(&zip, package.stdout).unwrap();
+    let executable = Command::new("unzip")
+        .arg("-p")
+        .arg(zip)
+        .arg("BIN/JEMMEX.EXE")
+        .output()
+        .unwrap();
+    assert!(executable.status.success());
+    std::fs::write(temp.path().join("JEMMEX.EXE"), executable.stdout).unwrap();
+    std::fs::write(temp.path().join("AUTOEXEC.BAT"),
+        b"@ECHO OFF\r\nJEMMEX LOAD NOEMS NORAM NOVMW\r\nECHO V86-AFTER-LOAD\r\nDIR\r\nECHO V86-DIR-DONE\r\n").unwrap();
+    let assembly::ImageSource::Inline(base) = &config.drives[0].image else {
+        panic!("expected inline boot fixture")
+    };
+    assert_eq!(
+        assembly::test_support::fixture_sha256(base),
+        "b7b088333f7f30584d768941fecea8288b63f2d61e13ec6c9472439eda66e51f"
+    );
+    let image = temp.path().join("boot.img");
+    std::fs::write(&image, base).unwrap();
+    for name in ["JEMMEX.EXE", "AUTOEXEC.BAT"] {
+        assert!(Command::new("mcopy")
+            .env("SOURCE_DATE_EPOCH", "315532800")
+            .env("TZ", "UTC")
+            .env("MTOOLS_SKIP_CHECK", "1")
+            .env("LC_ALL", "C.UTF-8")
+            .arg("-i")
+            .arg(&image)
+            .arg(temp.path().join(name))
+            .arg(format!("::{name}"))
+            .status()
+            .unwrap()
+            .success());
+    }
+    let image = std::fs::read(image).unwrap();
+    let hash = assembly::test_support::fixture_sha256(&image);
+    assert_eq!(
+        hash,
+        "90decae9e618dd30fbd62ea7f20518d0412ac78fc441c9bc154489ac5bf41986"
+    );
+    use sha2::Digest;
+    config.drives[0].expected_sha256 = Some(sha2::Sha256::digest(&image).into());
+    config.drives[0].image = assembly::ImageSource::Inline(image);
+    config.drives[0].write = assembly::WriteMode::ReadOnly;
+    let policy = assembly::ObservationPolicy {
+        routes: vec![
+            assembly::ObservationRequest {
+                device: DeviceId::Vga,
+                output: assembly::OutputKind::TextScanout,
+                byte_limit: 0,
+            },
+            assembly::ObservationRequest {
+                device: DeviceId::Uart,
+                output: assembly::OutputKind::Bytes(device::ByteStreamKind::SerialTx),
+                byte_limit: 65536,
+            },
+        ],
+        ..Default::default()
+    };
+    let mut assembled = machine_file::assemble_with_observation(&config, &policy).unwrap();
+    assembled.machine.enable_delivery_log().unwrap();
+    let started = std::time::Instant::now();
+    let mut saw_v86 = false;
+    let mut saw_v86_delivery = false;
+    for cap in (100_000..=budget(chip, 60_000_000)).step_by(100_000) {
+        let result = assembled.machine.run_bounded(Some(cap));
+        saw_v86_delivery |= assembled.machine.recent_deliveries().unwrap().entries.iter().any(|entry|
+            matches!(entry, machine::DeliveryEntry::Deliveries { last, .. } if last.virtual_8086_before && !last.virtual_8086_after && last.cpl_before == 3 && last.cpl_after == 0));
+        saw_v86 |= assembled
+            .machine
+            .cpu()
+            .diagnostic_state()
+            .system
+            .unwrap()
+            .virtual_8086;
+        if let Err(machine::MachineError::Cpu(error)) = &result {
+            eprintln!(
+                "{} JEMMEX: {result:?}; retired={}; wall={:?}\n{}\n{}\n{}",
+                chip.name(),
+                assembled.machine.cpu().retired(),
+                started.elapsed(),
+                freedos_text(&assembled),
+                assembled.machine.cpu().stop_report(error).unwrap(),
+                assembled.machine.cpu().diagnostic_state()
+            );
+        }
+        result.unwrap();
+        let text = freedos_text(&assembled);
+        if text.contains("V86-DIR-DONE") {
+            eprintln!(
+                "{} JEMMEX: retired={}; wall={:?}; saw_v86={saw_v86}; text SHA-256={}\n{text}",
+                chip.name(),
+                assembled.machine.cpu().retired(),
+                started.elapsed(),
+                text_sha256(&text)
+            );
+            assert!(
+                saw_v86,
+                "DOS commands must execute with VM set after loading JemmEx"
+            );
+            assert!(
+                saw_v86_delivery,
+                "the delivery log must retain the monitor's VM transition"
+            );
+            assert!(text.contains("JemmEx loaded"));
+            assert_eq!(
+                assembled.machine.cpu().retired(),
+                if chip == CpuChip::I80386 {
+                    12_368_511
+                } else {
+                    14_968_030
+                }
+            );
+            assert_eq!(
+                text_sha256(&text),
+                if chip == CpuChip::I80386 {
+                    "b83ae37f4694d8146f3ef4ca3184c84a49efc27efcb55f6f0b82dbe79731dce9"
+                } else {
+                    "ae4a2e90ee4858a754a95e73b4eebfe43301792396a07b76c746cfa2c42b1c93"
+                }
+            );
+            assert!(text.contains("V86-AFTER-LOAD"));
+            assert!(text.contains("JEMMEX"));
+            for byte in [0x04, 0x00] {
+                assembled
+                    .machine
+                    .bus_mut()
+                    .port_write(0x3F5, 1, byte)
+                    .unwrap();
+            }
+            let st3 = assembled.machine.bus_mut().port_read(0x3F5, 1).unwrap();
+            assert_ne!(st3 & 0x40, 0, "JemmEx boot medium must be write-protected");
+            return;
+        }
+    }
+    panic!(
+        "JemmEx budget exhausted\n{}\n{}",
+        freedos_text(&assembled),
+        assembled.machine.cpu().diagnostic_state()
+    );
 }

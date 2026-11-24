@@ -68,6 +68,8 @@ case "$step" in
             bash vendor/kiselev-bios/fetch.sh
             echo "== fixtures: vendor/freedos/fetch.sh"
             bash vendor/freedos/fetch.sh
+            echo "== fixtures: vendor/freedos/fetch-jemm.sh"
+            bash vendor/freedos/fetch-jemm.sh
             echo "== fixtures: vendor/test386/fetch.sh"
             bash vendor/test386/fetch.sh
             echo "== fixtures: vendor/hdd/build.sh"
@@ -80,6 +82,8 @@ case "$step" in
             bash vendor/at-pm-test/build.sh
             echo "== fixtures: vendor/i386-pm-test/build.sh"
             bash vendor/i386-pm-test/build.sh
+            echo "== fixtures: vendor/i386-v86-test/build.sh"
+            bash vendor/i386-v86-test/build.sh
             echo "== fixtures: vendor/i386-paging-test/build.sh"
             bash vendor/i386-paging-test/build.sh
             echo "== fixtures: vendor/i486-pm-test/build.sh"

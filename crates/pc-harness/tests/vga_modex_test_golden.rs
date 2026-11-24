@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 #[path = "support/fixtures.rs"]
 mod fixtures;
 
-const CPU_REV: &str = "d8bf798ed05520b6b06bbb787a71f3906a0c65d9";
+const CPU_REV: &str = "0bc16f55e557f3a4dac12a35335b175d41a42a54";
 const IMAGE: &str = "vga-modex-test/vga-modex-test-1200.img";
 const PAS_IMAGE: &str = "vga-modex-test/vga-pas-test-1200.img";
 const OPEN_BIOS: &str = "unemu-at-bios/bios-unemu-at.bin";

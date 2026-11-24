@@ -79,6 +79,7 @@ fn segment(selector: u16, attributes: u16) -> SegmentView {
 fn protected_system() -> SystemState {
     SystemState {
         msw: 0xFFF1,
+        virtual_8086: false,
         cpl: 0,
         a20: true,
         cs: segment(0x08, 0x9B),

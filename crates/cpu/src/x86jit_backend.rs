@@ -494,6 +494,7 @@ impl X86JitCpu {
         };
         let system = machine.then(|| crate::stop_report::SystemState {
             msw: legacy.cr0 as u16,
+            virtual_8086: state.rflags_system & (1 << 17) != 0,
             cpl: legacy.cpl,
             a20: self.cpu.a20_enabled(),
             cs: view(state.cs, legacy.segments[0]),
@@ -588,6 +589,8 @@ impl X86JitCpu {
             error_code: record.error_code,
             cpl_before: record.cpl_before,
             cpl_after: record.cpl_after,
+            virtual_8086_before: record.virtual_8086_before,
+            virtual_8086_after: record.virtual_8086_after,
             bytes: std::array::from_fn(|index| {
                 self.peek_linear(code_byte_address(
                     record.saved_linear,
@@ -650,6 +653,7 @@ impl X86JitCpu {
         };
         let system = machine.then(|| crate::diagnostic::SystemRegisters {
             msw: legacy.cr0 as u16,
+            virtual_8086: state.rflags_system & (1 << 17) != 0,
             cpl: legacy.cpl,
             gdtr: TableView {
                 base: legacy.gdtr.base,
@@ -3040,6 +3044,169 @@ mod tests {
 #[cfg(test)]
 mod i386_tests {
     use super::*;
+
+    fn v86_guest(model: CpuModel) -> X86JitCpu {
+        let mut cpu = X86JitCpu::new_machine_bare(
+            1 << 32,
+            0x1000,
+            0,
+            RealSegments::flat(0x8000),
+            model != CpuModel::I80386,
+            false,
+            model,
+        )
+        .unwrap();
+        cpu.map_ram(0, 0x100000).unwrap();
+        let state = &mut cpu.cpu.cpu;
+        state.legacy.cr0 |= 1;
+        state.legacy.cpl = 3;
+        state.rflags_system |= 1 << 17;
+        state.legacy.segments =
+            [state.cs, state.ds, state.es, state.ss, state.fs, state.gs].map(|selector| {
+                x86jit_core::legacy::SegmentCache {
+                    base: u32::from(selector) << 4,
+                    limit: 0xFFFF,
+                    attributes: 0x93,
+                    ..Default::default()
+                }
+            });
+        state.legacy.segments[0].attributes = 0x9B;
+        cpu.write_mem(0x10000, &[0x90, 0xCF]).unwrap();
+        cpu
+    }
+
+    #[test]
+    fn v86_register_restores_preserve_canonical_caches() {
+        for model in [
+            CpuModel::I80386,
+            CpuModel::I80486Dx,
+            CpuModel::I80486DxCpuid,
+        ] {
+            let mut cpu = v86_guest(model);
+            let caches = cpu.cpu.cpu.legacy.segments;
+            for reg in [CpuReg::Rax, CpuReg::Rsp, CpuReg::Rip] {
+                let value = cpu.reg(reg);
+                cpu.set_reg(reg, value);
+            }
+            assert_eq!(cpu.cpu.cpu.legacy.segments, caches);
+            assert_eq!(
+                cpu.run_steps(1, StepRunOptions::default()).unwrap().steps,
+                1
+            );
+            assert_eq!(cpu.cpu.cpu.legacy.cpl, 3);
+            assert_ne!(cpu.cpu.cpu.rflags_system & (1 << 17), 0);
+        }
+    }
+
+    #[test]
+    fn v86_diagnostics_and_stop_report_use_paragraph_segments() {
+        let cpu = v86_guest(CpuModel::I80386);
+        assert!(cpu
+            .diagnostic_state()
+            .to_string()
+            .contains("mode     virtual-8086, cpl 3"));
+        let report = cpu
+            .stop_report(&CpuError::UnsupportedSystem {
+                operation: "diagnostic probe".into(),
+                cs: 0x1000,
+                ip: 1,
+            })
+            .unwrap();
+        assert!(report.to_string().contains("mode     virtual-8086, cpl 3"));
+        assert!(
+            report.descriptors.is_empty(),
+            "V86 return selectors do not name descriptors"
+        );
+        assert_eq!(report.stack.len(), 3, "V86 IRET has only IP, CS and FLAGS");
+    }
+
+    #[test]
+    fn v86_far_transfer_stop_reports_skip_descriptor_lookup() {
+        let mut cpu = v86_guest(CpuModel::I80386);
+        cpu.write_mem(0x10000, &[0xEA, 0, 0, 0x34, 0x12]).unwrap();
+        let report = cpu
+            .stop_report(&CpuError::UnsupportedSystem {
+                operation: "diagnostic probe".into(),
+                cs: 0x1000,
+                ip: 0,
+            })
+            .unwrap();
+        assert!(report.descriptors.is_empty());
+    }
+
+    #[test]
+    fn v86_interrupt_return_stop_report_has_only_three_slots() {
+        let cpu = v86_guest(CpuModel::I80386);
+        let report = cpu
+            .stop_report(&CpuError::UnsupportedSystem {
+                operation: "diagnostic probe".into(),
+                cs: 0x1000,
+                ip: 1,
+            })
+            .unwrap();
+        assert_eq!(report.stack.len(), 3);
+    }
+
+    #[test]
+    fn v86_delivery_adapter_preserves_vm_markers_and_pushfd_flags() {
+        let mut cpu = v86_guest(CpuModel::I80386);
+        cpu.write_mem(0x10000, &[0xCC]).unwrap();
+        cpu.write_mem(0x808, &[0xFF, 0xFF, 0, 0, 0, 0x9B, 0xCF, 0])
+            .unwrap();
+        cpu.write_mem(0x810, &[0xFF, 0xFF, 0, 0, 0, 0x93, 0xCF, 0])
+            .unwrap();
+        cpu.write_mem(0x1018, &[0, 0x20, 8, 0, 0, 0xEE, 0, 0])
+            .unwrap();
+        cpu.write_mem(0x2000, &[0x90]).unwrap();
+        cpu.write_mem(0x5004, &0x9000u32.to_le_bytes()).unwrap();
+        cpu.write_mem(0x5008, &0x10u16.to_le_bytes()).unwrap();
+        let legacy = &mut cpu.cpu.cpu.legacy;
+        legacy.gdtr.base = 0x800;
+        legacy.gdtr.limit = 0x17;
+        legacy.idtr.base = 0x1000;
+        legacy.idtr.limit = 0x7FF;
+        legacy.tr.selector = 0x18;
+        legacy.tr.cache.base = 0x5000;
+        legacy.tr.cache.limit = 0x67;
+        legacy.tr.cache.attributes = 0x8B;
+        legacy.tr.cache.unusable = 0;
+        cpu.enable_delivery_log(8).unwrap();
+        cpu.run_steps(1, StepRunOptions::default()).unwrap();
+        let mut records = Vec::new();
+        cpu.peek_deliveries(&mut records).unwrap();
+        assert_eq!(records.len(), 1);
+        let event = records[0];
+        assert_eq!(
+            (event.virtual_8086_before, event.virtual_8086_after),
+            (true, false)
+        );
+        assert_eq!((event.cpl_before, event.cpl_after), (3, 0));
+        assert_eq!(event.regs.unwrap().flags & (1 << 17), 0);
+        assert!(event.to_string().contains("vm 1->0"));
+    }
+
+    #[test]
+    fn v86_reset_discards_vm_and_caches_on_all_models() {
+        for model in [
+            CpuModel::I80386,
+            CpuModel::I80486Dx,
+            CpuModel::I80486DxCpuid,
+        ] {
+            let mut cpu = v86_guest(model);
+            cpu.map_ram(0xFFFFF000, 0x1000).unwrap();
+            cpu.write_mem(0xFFFFFFF0, &[0x90]).unwrap();
+            cpu.reset().unwrap();
+            let state = cpu.diagnostic_state();
+            assert!(!state.system.unwrap().virtual_8086);
+            assert!(!state.system.unwrap().protected());
+            assert_eq!(state.system.unwrap().cpl, 0);
+            assert_eq!(state.code_linear, 0xFFFFFFF0);
+            assert_eq!(
+                cpu.run_steps(1, StepRunOptions::default()).unwrap().steps,
+                1
+            );
+        }
+    }
 
     #[test]
     fn i386_sparse_backing_reserves_the_physical_span_without_mapping_memory() {

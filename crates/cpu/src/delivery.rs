@@ -161,6 +161,9 @@ pub struct Delivery {
     pub cpl_before: u8,
     /// The privilege level of the handler; 0 outside protected mode.
     pub cpl_after: u8,
+    /// EFLAGS.VM before delivery and in the entered handler.
+    pub virtual_8086_before: bool,
+    pub virtual_8086_after: bool,
     /// The bytes at the saved CS:IP, read when the machine read the log, at
     /// the end of the run slice; the offset wraps at the end of a 16-bit
     /// segment as the 80286's IP does.
@@ -298,7 +301,16 @@ impl fmt::Display for Delivery {
             Some(code) => write!(f, "{code:04x}")?,
             None => f.write_str("-")?,
         }
-        write!(f, " cpl {}->{} bytes", self.cpl_before, self.cpl_after)?;
+        write!(f, " cpl {}->{}", self.cpl_before, self.cpl_after)?;
+        if self.virtual_8086_before || self.virtual_8086_after {
+            write!(
+                f,
+                " vm {}->{}",
+                u8::from(self.virtual_8086_before),
+                u8::from(self.virtual_8086_after)
+            )?;
+        }
+        f.write_str(" bytes")?;
         for byte in self.bytes {
             match byte {
                 Peek::Value(value) => write!(f, " {value:02x}")?,
@@ -344,6 +356,8 @@ mod tests {
             error_code: None,
             cpl_before: 0,
             cpl_after: 0,
+            virtual_8086_before: false,
+            virtual_8086_after: false,
             bytes: [Peek::Value(0); DELIVERY_BYTES],
             regs: None,
         }
@@ -366,6 +380,19 @@ mod tests {
             gs: None,
             flags: 0x0246,
         }
+    }
+
+    #[test]
+    fn v86_delivery_line_keeps_vm_separate_from_the_pushfd_image() {
+        let mut record = delivery(DeliveryKind::Fault, 13);
+        record.virtual_8086_before = true;
+        record.cpl_before = 3;
+        record.regs = Some(registers());
+        assert_eq!(record.regs.unwrap().flags & (1 << 17), 0);
+        assert!(record.to_string().contains("cpl 3->0 vm 1->0 bytes"));
+        record.virtual_8086_before = false;
+        record.virtual_8086_after = true;
+        assert!(record.to_string().contains("vm 0->1"));
     }
 
     /// A record with registers appends them after its bytes: the 80286's

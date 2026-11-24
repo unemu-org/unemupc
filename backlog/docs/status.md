@@ -95,21 +95,44 @@ The serial-only counts in the older board entries below are historical.
 
 ## test386 full-machine validation (2026-11-24)
 
-**MEASURED**, x86jit `d8bf798ed05520b6b06bbb787a71f3906a0c65d9`: test386
-boots without a BIOS on `generic-386-isa` and both `generic-486-isa` variants.
-All report POST **`00 01 02 03 04 05 06 08 09 20 21`**, zero bytes on port
-402h, and **796,780** retired instructions. Paging entry, protected stacks
-and ring transitions now execute. The first V86 `IRETD` (`CF`) at
-00D0:2CA0 receives `InvalidLegacyContext(Virtual8086Unsupported)`.
-This CPU limitation is the honest golden stop, not FFh completion; dedicated
-upstream page-fault tests later in execution remain unreached. Normal tests
-assert the instruction, return frame, exact progress, text and count.
-See [coverage and CPU findings](design/protected-mode-gaps.md#test386-full-machine-validation-2026-11-24)
-and [fixture configuration](../../vendor/test386/README.md).
+**MEASURED**, x86jit `0bc16f55e557f3a4dac12a35335b175d41a42a54`: all three
+CPUs pass test386's V86 section and produce POST **`00 01 02 03 04 05 06 08
+09 20 21 22 0b 0c 0d 0e 0f 10 11`**, zero ASCII bytes, and **1,409,775**
+retired instructions. POST 11's first page fault is correct, but the upstream
+handler rejects PDE.A=1 on a present PDE / absent PTE walk. This matches the
+CPU's documented deterministic paging policy. The golden pins the error HLT
+at 00D0:FE89, not FFh completion. No board defect or CPU patch is involved.
+See [coverage and CPU findings](design/protected-mode-gaps.md#test386-full-machine-validation-2026-11-24).
+
+## Virtual-8086 DOS monitor on generic ISA boards (2026-11-24)
+
+**MEASURED at `0bc16f55`:** the 80386DX and both 80486DX variants boot the
+pinned FreeDOS kernel/FreeCOM fixture, load FreeDOS 1.4 **JemmEx
+5.85** (Artistic-1.0 / public domain), then execute `DIR` in V86. Exact VGA transcripts
+and retired counts are pinned: **12,368,511** on 386, **14,968,030** on either
+486. The test observes live VM=1 and monitor deliveries back to ring 0.
+JEMMEX and AUTOEXEC are added only to a temporary copy of the hash-checked
+read-only base fixture; no downloads or vendor binary changes are needed.
+The fixture lane fetches the published size/SHA-256-pinned FreeDOS 1.4 source
+archive through `vendor/freedos/fetch-jemm.sh`; matching cached inputs need no
+network. Missing archives fail required-fixture runs, and optional runs print
+a named skip. The controller confirms that the derived floppy is write-protected;
+read-only media preserves the counts above. CI also builds the project-owned V86 ROM,
+which qualifies IRETD entry, reflected INT/IRET, sensitive CLI, bitmap-allowed
+OUT and denied IN, and ring-0 return in **867** retired instructions on each
+model. Its exact transcript and five VM transitions agree across schedulers.
+
+Diagnostic state and stop reports name V86 explicitly, paragraph far transfers
+do not look up descriptors, and delivery logs retain VM before/after even
+though PUSHFD-format flags omit it. Partial GPR/IP restores preserve the six
+canonical caches; reset tests clear VM/PE and execute the reset vector on all
+three models. Whole-CPU snapshots remain deferred. V86 16-bit interrupt/trap
+gates, VME, 486 #AC and CR0.NE-driven external numeric routing remain limited.
+See [monitor and state audit](design/protected-mode-gaps.md#v86-monitor-and-cpu-state-audit-2026-11-24).
 
 ## Two-level paging on generic ISA boards (2026-11-24)
 
-**MEASURED at the same CPU pin:** the project-owned
+**MEASURED at `d8bf798e`, revalidated at `0bc16f55`:** the project-owned
 [paging ROM](design/i386-pm-test.md#two-level-paging-rom) checks identity and
 alias mappings, PDE/PTE accessed and dirty bits, recoverable #PF with CR2,
 CPL-3 PDE/PTE U/S and R/W restrictions, equal CR3 reload and a new directory.
@@ -117,7 +140,7 @@ Both 486 models also pass INVLPG after a PTE change and CR0.WP supervisor
 write faults on read-only user and supervisor mappings. Exact port-402h
 transcripts and retired counts are pinned on all three models, including
 small bounded run chunks. The CPU requires page tables in RAM and returns
-a typed refusal for table storage in device/ROM regions; V86 remains absent.
+a typed refusal for table storage in device/ROM regions. V86 coverage is recorded above.
 
 Host writes, partial register restores and RAM-preserving CPU resets now call
 `invalidate_paging`; EMS restores use the host-write path. Whole-machine

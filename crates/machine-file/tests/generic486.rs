@@ -151,3 +151,13 @@ fn generic486_dx_seabios_storage_configuration() {
 fn generic486_cpuid_seabios_storage_configuration() {
     generic_isa::seabios_storage_configuration(assembly::CpuChip::I80486DxCpuid);
 }
+
+#[test]
+fn generic486_dx_seabios_freedos_jemmex_v86() {
+    generic_isa::seabios_freedos_jemmex_v86(assembly::CpuChip::I80486Dx);
+}
+
+#[test]
+fn generic486_cpuid_seabios_freedos_jemmex_v86() {
+    generic_isa::seabios_freedos_jemmex_v86(assembly::CpuChip::I80486DxCpuid);
+}

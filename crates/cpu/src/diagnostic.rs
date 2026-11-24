@@ -65,6 +65,8 @@ impl<T: Copy> Peek<T> {
 pub struct SystemRegisters {
     /// Machine status word (the low 16 bits of CR0); bit 0 is PE.
     pub msw: u16,
+    /// EFLAGS.VM: paragraph segments at CPL 3 (Intel 80386 PRM, Chapter 15).
+    pub virtual_8086: bool,
     /// Current privilege level.
     pub cpl: u8,
     /// Global descriptor table register.
@@ -251,7 +253,9 @@ impl fmt::Display for CpuDiagnostic {
             Some(system) => writeln!(
                 f,
                 "mode     {}, cpl {}, msw {:04x} (pe {}), a20 {}",
-                if system.protected() {
+                if system.virtual_8086 {
+                    "virtual-8086"
+                } else if system.protected() {
                     "protected"
                 } else {
                     "real"

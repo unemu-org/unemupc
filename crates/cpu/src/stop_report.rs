@@ -68,6 +68,8 @@ pub struct TableView {
 pub struct SystemState {
     /// Machine status word (the low 16 bits of CR0); bit 0 is PE.
     pub msw: u16,
+    /// EFLAGS.VM: paragraph segments at CPL 3 (Intel 80386 PRM, Chapter 15).
+    pub virtual_8086: bool,
     /// Current privilege level.
     pub cpl: u8,
     /// Whether the board's A20 gate passes address bit 20.
@@ -565,6 +567,7 @@ impl CpuStopReport {
         .map(|decoded| decoded.text);
         let form = decode_transfer(&fetched, registers);
         let protected = system.is_some_and(|system| system.protected());
+        let paragraph = system.is_some_and(|system| system.virtual_8086);
         let mut pointer = None;
         let mut stack = Vec::new();
         let mut descriptors = Vec::new();
@@ -575,7 +578,7 @@ impl CpuStopReport {
             }
         };
         match form {
-            Some(TransferForm::FarDirect { selector, .. }) if protected => {
+            Some(TransferForm::FarDirect { selector, .. }) if protected && !paragraph => {
                 name("target", selector, &mut descriptors);
             }
             Some(TransferForm::FarIndirect {
@@ -585,7 +588,7 @@ impl CpuStopReport {
                 let linear = in_segment(base, offset);
                 let value = word_at(linear).zip(word_at(in_segment(base, offset.wrapping_add(2))));
                 pointer = Some(PointerRead { linear, value });
-                if let (true, Some((_, selector))) = (protected, value) {
+                if let (true, Some((_, selector))) = (protected && !paragraph, value) {
                     name("target", selector, &mut descriptors);
                 }
             }
@@ -602,7 +605,12 @@ impl CpuStopReport {
                     ("outer sp", 4u16.wrapping_add(release)),
                     ("outer ss", 6u16.wrapping_add(release)),
                 ];
-                stack = return_frame(&labels, sp, stack_base, &read);
+                stack = return_frame(
+                    if paragraph { &labels[..2] } else { &labels },
+                    sp,
+                    stack_base,
+                    &read,
+                );
             }
             Some(TransferForm::InterruptReturn) => {
                 let labels: [(&str, u16); 5] = [
@@ -612,11 +620,16 @@ impl CpuStopReport {
                     ("outer sp", 6),
                     ("outer ss", 8),
                 ];
-                stack = return_frame(&labels, sp, stack_base, &read);
+                stack = return_frame(
+                    if paragraph { &labels[..3] } else { &labels },
+                    sp,
+                    stack_base,
+                    &read,
+                );
             }
             _ => {}
         }
-        if protected && !stack.is_empty() {
+        if protected && !paragraph && !stack.is_empty() {
             let word = |label| {
                 stack
                     .iter()
@@ -825,7 +838,9 @@ impl fmt::Display for CpuStopReport {
                 writeln!(
                     f,
                     "mode     {}, cpl {}, msw {:04x}, a20 {}",
-                    if system.protected() {
+                    if system.virtual_8086 {
+                        "virtual-8086"
+                    } else if system.protected() {
                         "protected"
                     } else {
                         "real"

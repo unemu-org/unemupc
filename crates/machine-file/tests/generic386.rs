@@ -53,3 +53,8 @@ fn generic386_seabios_freedos_lists_readonly_ide_marker() {
 fn generic386_seabios_storage_configuration() {
     generic_isa::seabios_storage_configuration(assembly::CpuChip::I80386);
 }
+
+#[test]
+fn generic386_seabios_freedos_jemmex_v86() {
+    generic_isa::seabios_freedos_jemmex_v86(assembly::CpuChip::I80386);
+}

@@ -12,7 +12,7 @@ mod speed;
 
 fn main() {
     assert!(
-        include_str!("../../../Cargo.lock").contains("d8bf798ed05520b6b06bbb787a71f3906a0c65d9")
+        include_str!("../../../Cargo.lock").contains("0bc16f55e557f3a4dac12a35335b175d41a42a54")
     );
     for board in [
         BoardModel::Ibm5170,

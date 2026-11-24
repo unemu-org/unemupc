@@ -2,65 +2,154 @@
 
 ## test386 full-machine validation (2026-11-24)
 
-**MEASURED**, CPU pin `d8bf798ed05520b6b06bbb787a71f3906a0c65d9`, upstream
+**MEASURED**, CPU pin `0bc16f55e557f3a4dac12a35335b175d41a42a54`, upstream
 test386 commit `cfd052d1e64d5375dea5a681c1eadeed64ceda2c`:
 `test386_golden` boots the unchanged 64 KiB diagnostic at F0000h on
 `generic-386-isa` and both `generic-486-isa` CPU variants. E0000h is padded
-with FFh to fill the board's 128 KiB decode. The high reset copy reaches the
-ROM's far jump. Explicit unlisted-fixture assembly leaves catalogue validation
-intact. No BIOS or service shim runs. Configuration remains POST 80h, ASCII
-402h, `CPU_FAMILY=3`, `TEST_UNDEF=0`; see the
-[fixture recipe](../../../vendor/test386/README.md).
+with FFh to fill the board's 128 KiB decode. No BIOS or service shim runs.
+Configuration remains POST 80h, ASCII 402h, `CPU_FAMILY=3`, `TEST_UNDEF=0`,
+`ROM128=0`; see the [fixture recipe](../../../vendor/test386/README.md).
 
-All three CPUs produce POST **`00 01 02 03 04 05 06 08 09 20 21`** and
-**zero debug-console bytes**. They retire **796,780** instructions, then stop
-at **00D0:2CA0**, linear **000F2CA0h**, byte **CF** (`IRETD`, USE32), with
-`InvalidLegacyContext(Virtual8086Unsupported)`. Test-profile wall times were
-0.049–0.058 s, with a 1,000,000 virtual-time-unit cap. The golden asserts the exact
-POST stream, empty text, retired count, refusal, instruction and nine-dword
-return frame. A synthetic reset ROM separately checks both output routes.
-No FFh completion or later paging-test pass is claimed.
+All three CPUs produce POST **`00 01 02 03 04 05 06 08 09 20 21 22 0b 0c 0d
+0e 0f 10 11`** and **zero debug-console bytes**. They retire **1,409,775**
+instructions, then halt in the diagnostic's error routine at **00D0:FE89**
+(next IP FE8Ah, linear FFE8Ah). Initial test-profile wall times were
+0.83–0.87 s with three tests running concurrently; the golden has a
+5,000,000 virtual-time-unit cap. The exact progress, final #PF, table bytes,
+retired count and error HLT are asserted. FFh completion is **not** reached.
 
 | POST | Coverage at this pin |
 | --- | --- |
 | 00–06 | Real-mode setup, jumps/loops, multiply/divide, segment moves, strings/REP, calls and full-pointer loads complete. |
-| 08 | Combined PE/PG write and protected entry now execute with RAM page tables. |
+| 08 | Combined PE/PG write and protected entry execute with RAM page tables. |
 | 09 | Protected pushes/pops with both stack address sizes complete. |
-| 20 | User/ring transitions, privileged-instruction faults, interrupt gates and call gates complete before the next checkpoint. |
-| 21 | First virtual-8086 IRETD is refused. |
-| 10, 11 and later | Later arithmetic, dedicated page-fault tests and completion remain unreached; POST numbers are not execution order. |
+| 20 | User/ring transitions, privileged-instruction faults, interrupt gates and call gates complete. |
+| 21 | V86 entry/exit, IOPL-sensitive faults, TSS bitmap denial and allowance, and interrupt checks complete. The ROM128-only 16-bit-gate test is excluded by the unchanged fixture configuration. |
+| 22 | The checkpoint and common task setup execute; extended task-switch tests are ROM128-only and are not claimed here. |
+| 0b–10 | Protected segment moves, sign/zero extension, 16/32-bit LEA, segment-override memory accesses and protected string/REP tests complete. |
+| 11 | The first not-present page test reaches its #PF handler; the handler rejects PDE.A=1. |
+| 12 onward, FF | Unreached. POST numbers are not execution order. |
 
 ### CPU FINDINGS
 
-**MEASURED:** the next stop belongs to the CPU's explicit virtual-8086
-limitation, not a board/device defect. No CPU source was changed.
-**READ:** `test386.asm/src/test386.asm:916–922` starts POST 21's virtual-8086
-section; `src/protected_rings_p.asm:142–181` (`switchToRing3V86_0`) builds its
-frame and executes IRETD. The exact instruction is `CF` at 00D0:2CA0;
-following bytes are `66 8C C8 66 83 E0 03`.
+**MEASURED: one CPU-policy/diagnostic-expectation mismatch, no board defect.**
+POST 11 starts at `src/test386.asm:1297–1328`. The first table row at
+`src/tests/paging_p.asm:189` is PDE flags 03h, PTE flags 02h, expected #PF(0),
+read at CPL 0. ESI=9DD6h selects that row. The access at **00D0:9F76**
+(linear F9F76h) is **`A1 00 F0 49 00`**, `MOV EAX,[0049F000h]` in USE32
+(`paging_p.asm:367`). It faults at retired **1,409,748**, with error code 0
+and CR2=0049F000h, as expected. The final delivery record asserts this event.
 
-Expected hardware behavior: consume the nine-dword frame and enter V86 at
-F000:5630, CPL 3, EFLAGS=00020246h, SS:ESP=1000:00007FFFh,
-ES=3040h, DS=2010h, FS=5060h, GS=7080h. Actual behavior: typed refusal
-before changing the frame or entering V86. This is outside paging step 5's
-public CPU scope and is an honest integration boundary, not an architectural
-pass. The fixture above is the reproducer.
-
-Common stopped registers: EAX=00000118h, EBX=0, ECX=00005622h,
-EDX=00005630h, ESI=000000D0h, EDI=0, EBP=0001FFFCh,
-ESP=0000FFD7h, EIP=00002CA0h, FLAGS=0002h, CPL=0, A20 enabled.
-CS=00D0h (base 000F0000h, limit 0000FFFFh, attributes 409Bh),
-DS=0020h (base 00005000h, limit 6Fh), ES=null,
-SS=0118h (base 00010000h, limit 0007FFFFh, attributes 4093h).
-GDTR=00000600h:031Fh, IDTR=00000400h:0177h,
-LDTR=0008h (base A00h, limit 5F7h), TR=0030h (base 5000h, limit 67h).
-The 386's MSW is 0001h; both 486 variants retain MSW=0011h.
-Physical RAM at 0001FFD7h contains these dwords:
+The handler at `paging_p.asm:434–458` expects **PDE.A=0** even though PDE.P=1
+and the PTE is absent. Actual PDE at physical 1004h is **00003023h**;
+PTE at 327Ch remains **0009F002h**. A single-instruction probe measured:
 
 ```text
-00005630 0000F000 00020246 00007FFF 00001000
-00003040 00002010 00005060 00007080
+retired 1409751  00d0:a040  EAX=00000044 EBX=00000000  #PF error matches
+retired 1409757  00d0:a059  EAX=00000000 EBX=00000000  reading CR2
+retired 1409768  00d0:a06c  EAX=00003023 EBX=00000000  TEST EAX,20h
+retired 1409769  00d0:a071  EAX=00003023 EBX=00000000  JNZ error
+retired 1409770  00d0:fe7f  EAX=00003023 EBX=00000000  error routine
 ```
+
+The decisive bytes are **`A9 20 00 00 00 0F 85 08 5E 00 00`** at A06Ch.
+**READ:** x86jit's pinned `backlog/docs/design/paging.md` §3.3 explicitly
+sets PDE.A before reading the PTE; an absent PTE may leave PDE.A set. Its
+§2 H9 cites Intel SDM Vol. 3A §§5.10.2.3/5.10.3.1 permitting upper-level
+accessed entries without a complete lower translation. The same deterministic
+choice applies to the 386, whose failed-walk intermediate state is less fully
+specified. This is an upstream test expectation conflicting with a documented
+CPU policy, **not evidence of an incorrect architectural #PF or a new V86
+regression**. No CPU change or ROM patch is made to bypass the check.
+
+Final registers on every model: EAX=000000D0h, EBX=0, ECX=4Ah, EDX=0,
+ESI=9DD6h, EDI=3000h, EBP=4000h, ESP=FFEFh, EIP=FE8Ah, FLAGS=0046h,
+CPL=0, A20 enabled. CS=00D0h (base F0000h, limit FFFFh, attributes 409Bh),
+DS=0044h (base 0, limit FFFFFFFFh, attributes 80F3h), ES=0110h (base 1000h,
+limit 3FFFh), SS=0118h (base 10000h, limit 7FFFFh, attributes 4093h).
+GDTR=600h:031Fh, IDTR=400h:0177h, LDTR=0008h (base A00h, limit 5F7h),
+TR=0030h (base 5000h, limit 67h). MSW is 0001h on 386, 0011h on 486.
+Reproduce with the three `test386_*_golden` tests and the unchanged pinned ROM.
+
+## V86 monitor and CPU-state audit (2026-11-24)
+
+**MEASURED:** shared machine-file goldens `*_seabios_freedos_jemmex_v86`
+boot FreeDOS kernel 2044 / FreeCOM 0.86 through the listed SeaBIOS firmware,
+load **JemmEx 5.85** with `LOAD NOEMS NORAM NOVMW`, then run `DIR` and print
+`V86-DIR-DONE`. They observe live VM=1 and V86→ring-0 deliveries, checking
+both VM markers separately from the PUSHFD-format flags image (which clears VM).
+The VGA transcript SHA-256 and retired count are exact:
+
+| CPU | Retired instructions | VGA text SHA-256 |
+| --- | ---: | --- |
+| 80386DX | 12,368,511 | `b83ae37f4694d8146f3ef4ca3184c84a49efc27efcb55f6f0b82dbe79731dce9` |
+| 80486DX / CPUID DX | 14,968,030 | `ae4a2e90ee4858a754a95e73b4eebfe43301792396a07b76c746cfa2c42b1c93` |
+
+The transcript includes `JemmEx loaded`, `V86-AFTER-LOAD`, directory entries
+for KERNEL.SYS (45,868), COMMAND.COM (87,772), JEMMEX.EXE (32,597),
+AUTOEXEC.BAT (87), 166,324 total file bytes, and 1,290,240 bytes free.
+Both 486 transcripts also reach `A:\>` at the polling boundary. Initial
+concurrent debug-profile wall times: 386 4.45 s, 486 8.05–8.06 s.
+This qualifies that monitor configuration and DOS directory command, not
+EMS/VCPI clients, all manager options, or general Windows compatibility.
+
+The test extracts the hash-pinned Jemm package from the hash-checked FreeDOS
+1.4 source set (Artistic-1.0 / public domain; see vendor/freedos/README.md),
+adds JEMMEX and AUTOEXEC only to a temporary copy of the hash-checked boot
+floppy, and mounts it read-only. The controller's ST3 write-protect bit is
+checked after the DOS command completes. Counts and transcript hashes above
+are unchanged with read-only media. The fixture lane runs
+`vendor/freedos/fetch-jemm.sh` to fetch the published size/SHA-256-pinned source
+archive; matching cached copies need no network. Tests never download: missing
+inputs fail with `UNEMUPC_REQUIRE_FIXTURES=1`, otherwise they print a named skip.
+
+The required clean-CI golden is the project-owned
+[`i386-v86-test` ROM](../../../vendor/i386-v86-test/README.md), built offline
+by the fixture lane. It enters V86 with IRETD, reflects INT 40h through an IVT
+handler which returns with real-mode IRET, traps CLI at IOPL 0, allows OUT
+402h through the TSS bitmap at IOPL 3 and 0, denies IN 80h, and returns to
+ring 0. It checks the monitor's nulled data segments and reflection/fault
+counts. All three models retire **867** instructions and produce exactly:
+
+```text
+i386-v86-test
+v86 real code ok
+reflected int ok
+v86 resumed ok
+iopl gp(0) ok
+bitmap allow deny ok
+ring0 return ok
+failures 0000
+```
+
+Both scheduling engines and bounded chunks of 17/257 virtual-time units agree
+on the count, clock and five VM=1→0 deliveries. The golden requires this ROM
+under `UNEMUPC_REQUIRE_FIXTURES=1`, alongside the JemmEx DOS-monitor goldens.
+
+**READ:** CPU-state serialization/checkpoint APIs do not exist in unemupc;
+device snapshots do not serialize CpuState. The public partial register
+restore API exposes GPRs and IP only, preserving all six canonical V86
+caches, VM, PE and CPL. Isolation tests cover those restores and reset from
+VM=1 on all three CPU models. Reset clears VM/PE, restores CPL 0 and reset
+caches, and executes the high reset fetch. No new state-construction or
+repair API is introduced. x86jit validates VM=1 entry rather than repairing
+inconsistent images: PE=1, CPL=3, reset_fetch=0 and six paragraph caches with
+limit FFFFh, CS attributes 009Bh and data attributes 0093h are required.
+
+Diagnostics and CPU-stop reports identify `virtual-8086` explicitly. V86 far
+transfers/returns do not inspect GDT/LDT descriptors, and V86 IRET displays
+only IP/CS/FLAGS. Protected IDT use remains valid. Delivery rendering retains
+VM before/after, and folding cannot combine different VM transitions.
+
+**READ, limits at this CPU pin:** 32-bit TSS entry and 386 interrupt/trap/task
+gates are supported; V86 delivery through 16-bit interrupt/trap gates is
+refused. VME/CR4/VIF/VIP are absent. Both 486 entries retain the AM+AC typed
+refusal and pending CR0.NE external FERR routing. The 386's external numeric
+routing is supported by the CPU but not independently exercised by this guest.
+
+The repin advances test386 because V86 entry and execution are now public.
+The PDE.A policy predates this repin. Other goldens change only their revision
+guards unless rerun evidence requires an individually explained expectation.
 
 ## Paging restore audit
 
@@ -132,6 +221,7 @@ identification without changing the existing 386 ROM.
 | Gap | Current boundary |
 | --- | --- |
 | Paging | Public on all three 386/486 models at `d8bf798e`: RAM tables, two-level 4 KiB pages, CR2/#PF, A/D, CPL-3 U/S and R/W, CR3 reload, 486 INVLPG and WP. The project-owned paging ROM qualifies these; device/ROM page tables remain a typed refusal. |
+| V86 | Public at `0bc16f55`; JemmEx LOAD/DIR and test386 POST 21 pass. V86 16-bit interrupt/trap gates remain refused; no VME. |
 | Alignment check | CR0.AM and EFLAGS.AC can be read back at CPL 0. CPL-3 #AC is refused; no alignment-delivery test is claimed. |
 | Numeric errors | External routing returns `UnsupportedModel` for both 486 entries until CR0.NE-driven FERR#/IGNNE# routing exists (xj-31k.4, x86jit). Internal routing is provisional. The board must not select the AT IRQ13/F0h error latch. |
 | Cache test registers | TR3–TR5 are refused with typed CPU errors. TR6/TR7 semantics are outside the new ROM's coverage. |
@@ -666,7 +756,7 @@ Required fault coverage, distinguished from an enum containing a vector:
 | TR, cached TSS descriptor, LTR/STR; TSS privilege stacks | `state.rs:296`, `lift/mod.rs:2221`, `interp/control.rs:614`; P2's LTR/STR unsupported | [§7.1, Task State Segment](https://pdos.csail.mit.edu/6.828/2018/readings/i386/s07_01.htm), [§7.3, Task Register](https://pdos.csail.mit.edu/6.828/2018/readings/i386/s07_03.htm): TR cache, descriptor validation/busy bit, SS0–SS2/ESP0–ESP2 for inward transitions |
 | Dynamic CPL/IOPL and TSS I/O permission bitmap | `state.rs:607` implements fixed CPL 3 flag restore; `lift/mod.rs:4227` only provides real-mode CLI/STI | [§8.3.1–§8.3.2, Protection and I/O](https://pdos.csail.mit.edu/6.828/2018/readings/i386/s08_03.htm): check permission before any port side effect; POPF/IRET IF and IOPL changes are privilege-sensitive |
 | Hardware task switch, task gates, backlink, busy/NT/TS behavior | `state.rs:428`, `interp/mod.rs:4350`: NT is stored/rejected for the user-context IRET, not used for a task return | [§7.5–§7.6, Task Switching / Task Linking](https://pdos.csail.mit.edu/6.828/2018/readings/i386/s07_05.htm), §9.6.2. Conditional scope; no evidence that the initial raw extender path needs task switching |
-| V86 execution and transitions | `lift/mod.rs:87`, `state.rs:428`: a stored VM flag does not select V86 semantics | [§15.3, Entering and Leaving V86 Mode](https://pdos.csail.mit.edu/6.828/2018/readings/i386/s15_03.htm), §15.4–§15.5. Needed for qualifying V86 memory-manager paths, not implied by running raw DOS/32A |
+| V86 execution and transitions | Historical gap closed at `0bc16f55`: test386 POST 21 and JemmEx LOAD/DIR on all three models; see current coverage above. 16-bit gates, VME and 486 #AC remain limited | [§15.3, Entering and Leaving V86 Mode](https://pdos.csail.mit.edu/6.828/2018/readings/i386/s15_03.htm), §15.4–§15.5. Needed for qualifying V86 memory-manager paths, not implied by running raw DOS/32A |
 
 Do not equate loading TR with implementing a hardware task scheduler.
 TSS privilege stacks and port permissions can be needed with software

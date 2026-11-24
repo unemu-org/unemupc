@@ -13,10 +13,11 @@ use device::ByteStreamKind;
 #[path = "support/fixtures.rs"]
 mod fixtures;
 
-const CPU_REV: &str = "d8bf798ed05520b6b06bbb787a71f3906a0c65d9";
-const CAP: u64 = 1_000_000;
+const CPU_REV: &str = "0bc16f55e557f3a4dac12a35335b175d41a42a54";
+const CAP: u64 = 5_000_000;
 const GOLDEN_POST: &[u8] = &[
-    0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x08, 0x09, 0x20, 0x21,
+    0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x08, 0x09, 0x20, 0x21, 0x22, 0x0B, 0x0C, 0x0D, 0x0E,
+    0x0F, 0x10, 0x11,
 ];
 
 fn board(rom: Vec<u8>, chip: CpuChip) -> MachineConfig {
@@ -98,6 +99,7 @@ fn run(chip: CpuChip) {
         },
     )
     .unwrap();
+    assembled.machine.enable_delivery_log().unwrap();
     let started = std::time::Instant::now();
     let outcome = assembled.machine.run_bounded(Some(CAP));
     let wall = started.elapsed();
@@ -113,6 +115,7 @@ fn run(chip: CpuChip) {
     )
     .unwrap();
     let retired = assembled.machine.cpu().retired();
+
     eprintln!(
         "{}: {outcome:?}; retired={retired}; wall={wall:?}; POST={post:02x?}\n{text}",
         chip.name()
@@ -138,47 +141,40 @@ fn run(chip: CpuChip) {
         post, GOLDEN_POST,
         "test386 progress changed; review and advance the golden"
     );
-    assert_eq!(text, "", "printing follows the virtual-8086 tests");
-    assert_eq!(
-        retired, 796_780,
-        "retired count changed: review newly reached test386 sections and advance the golden"
-    );
-    assert!(
-        matches!(&outcome,
-        Err(machine::MachineError::Cpu(cpu::CpuError::UnsupportedSystem {
-            operation, cs: 0xD0, ip: 0x2CA0
-        })) if operation == "InvalidLegacyContext(Virtual8086Unsupported)"),
-        "expected the virtual-8086 boundary; review further progress: {outcome:?}"
-    );
+    assert_eq!(text, "", "printing follows the paging tests");
+    assert_eq!(retired, 1_409_775);
+    assert_eq!(outcome.unwrap(), machine::RunOutcome::Halted);
     let state = assembled.machine.cpu().diagnostic_state();
-    assert_eq!(state.code_linear, 0xF2CA0);
-    assert_eq!(
-        state.code[..1]
-            .iter()
-            .map(|byte| byte.value().unwrap())
-            .collect::<Vec<_>>(),
-        [0xCF]
-    );
+    assert_eq!(state.code_linear, 0xFFE8A);
+    assert_eq!(state.before_code.value(), Some(0xF4));
     let system = state.system.unwrap();
     assert!(system.protected());
+    assert!(!system.virtual_8086);
     assert_eq!(system.cpl, 0);
-    assert_eq!(assembled.machine.cpu().reg(CpuReg::Rax), 0x118);
-    let mut frame = [0; 36];
-    assembled
-        .machine
-        .cpu()
-        .read_mem(0x1FFD7, &mut frame)
-        .unwrap();
-    let words: Vec<_> = frame
-        .as_chunks::<4>()
-        .0
-        .iter()
-        .map(|bytes| u32::from_le_bytes(*bytes))
-        .collect();
+    assert_eq!(assembled.machine.cpu().reg(CpuReg::Rip), 0xFE8A);
+    assert_eq!(assembled.machine.cpu().reg(CpuReg::Rsi), 0x9DD6);
+    for (address, expected) in [(0x1004, 0x3023u32), (0x327C, 0x9F002)] {
+        let mut bytes = [0; 4];
+        assembled
+            .machine
+            .cpu()
+            .read_mem(address, &mut bytes)
+            .unwrap();
+        assert_eq!(u32::from_le_bytes(bytes), expected);
+    }
+    let recent = assembled.machine.recent_deliveries().unwrap();
+    let machine::DeliveryEntry::Deliveries { last: fault, .. } = recent.entries.last().unwrap()
+    else {
+        panic!("expected the final page-fault record");
+    };
     assert_eq!(
-        words,
-        [0x5630, 0xF000, 0x20246, 0x7FFF, 0x1000, 0x3040, 0x2010, 0x5060, 0x7080]
+        (fault.vector, fault.error_code, fault.cs, fault.ip),
+        (14, Some(0), 0xD0, 0x9F76)
     );
+    assert_eq!(fault.retired, 1_409_748);
+    assert_eq!(fault.regs.unwrap().edx, 0);
+    assert!(!fault.virtual_8086_before);
+    eprintln!("last delivery: {fault}");
 }
 
 #[test]

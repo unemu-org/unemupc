@@ -16,7 +16,7 @@
 //! were at its delivery.
 //!
 //! Both rings fold consecutive identical deliveries (the same kind, vector,
-//! saved CS:IP and error code) into one entry with a count and the retired
+//! saved CS:IP, error code and VM transition) into one entry with a count and the retired
 //! range, so a guest looping on one fault takes one entry and the entries
 //! before the loop stay. The registers of the interrupted code, which the
 //! CPU records with every delivery here, do not break a fold: a folded
@@ -61,11 +61,11 @@ pub enum DeliveryEntry {
 
 impl DeliveryEntry {
     /// Whether `record` repeats this entry's delivery: the same kind,
-    /// vector, saved CS:IP and error code, whatever the registers.
+    /// vector, saved CS:IP, error code and VM transition, whatever the registers.
     fn repeats(&self, record: &Delivery) -> bool {
         matches!(self, Self::Deliveries { last, .. }
-            if (last.kind, last.vector, last.cs, last.ip, last.error_code)
-                == (record.kind, record.vector, record.cs, record.ip, record.error_code))
+            if (last.kind, last.vector, last.cs, last.ip, last.error_code, last.virtual_8086_before, last.virtual_8086_after)
+                == (record.kind, record.vector, record.cs, record.ip, record.error_code, record.virtual_8086_before, record.virtual_8086_after))
     }
 
     /// The deliveries the entry stands for; 0 for dropped ones.
@@ -428,6 +428,8 @@ mod tests {
             error_code: None,
             cpl_before: 0,
             cpl_after: 0,
+            virtual_8086_before: false,
+            virtual_8086_after: false,
             bytes: [Peek::Value(0x90); cpu::delivery::DELIVERY_BYTES],
             regs: None,
         }
@@ -648,6 +650,19 @@ mod tests {
         }
         let counts: Vec<u64> = ring.entries().map(DeliveryEntry::count).collect();
         assert_eq!(counts, [2, 1]);
+    }
+
+    #[test]
+    fn v86_mode_differences_break_delivery_folds() {
+        let mut ring = DeliveryRing::new(8);
+        for (before, after) in [(false, false), (true, false), (true, false), (false, true)] {
+            let mut fault = record(10, DeliveryKind::Fault, 0x0D, 0x20);
+            fault.virtual_8086_before = before;
+            fault.virtual_8086_after = after;
+            ring.push(&fault);
+        }
+        let counts: Vec<u64> = ring.entries().map(DeliveryEntry::count).collect();
+        assert_eq!(counts, [1, 2, 1]);
     }
 
     /// IRQ inputs come from the vector bases, their low three bits ignored;
