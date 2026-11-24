@@ -49,14 +49,23 @@ if [ "$(git -C "$SRC_DIR" rev-parse HEAD)" != "$COMMIT" ]; then
 	git -C "$SRC_DIR" checkout --quiet "$COMMIT"
 fi
 
-# Default configuration builds a 64 KiB image whose reset vector at offset 0xFFF0
-# far-jumps to the POST entry, exactly the layout the runner loads at 0xF0000.
-nasm -i"$SRC_DIR/src/" -f bin "$SRC_DIR/src/test386.asm" -w-all -o "$OUT"
+# Shadow only the configuration include; never edit the cached upstream tree.
+# Both generic ISA boards already decode these diagnostic ports.
+build_dir="$(mktemp -d)"
+trap 'rm -rf "$build_dir"' EXIT
+sed -e 's/^POST_PORT equ 0x190$/POST_PORT equ 0x80/' \
+    -e 's/^OUT_PORT equ 0$/OUT_PORT equ 0x402/' \
+    "$SRC_DIR/src/configuration.asm" > "$build_dir/configuration.asm"
+nasm -i"$build_dir/" -i"$SRC_DIR/src/" -f bin "$SRC_DIR/src/test386.asm" \
+    -w-all -o "$build_dir/test386.bin"
+# Replace a local fixture symlink rather than modifying another checkout's image.
+rm -f "$OUT"
+cp "$build_dir/test386.bin" "$OUT"
 
 SIZE="$(wc -c < "$OUT" | tr -d '[:space:]')"
 if [ "$SIZE" -ne 65536 ]; then
 	echo "unexpected test386.bin size: $SIZE bytes (expected 65536)" >&2
 	exit 1
 fi
-check_sha256 "$OUT" "40cbbe1be2235cb0e43e28d8ae57dd6a4d3200ad6870d3b2ba31330e6760e7b8"
+check_sha256 "$OUT" "9cb8dddc091a73a8b7b94e7529671318a957dc645fc152be8dcbd5bb734d057c"
 echo "built $OUT ($SIZE bytes) from $COMMIT"

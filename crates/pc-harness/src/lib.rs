@@ -369,9 +369,8 @@ pub const VGA_TEXT_PROGRAM: &[u8] = &[
     0xF4,                   // hlt
 ];
 
-/// Step safety cap for test386 (§6). The pinned diagnostic reaches its unsupported
-/// instruction after 159 completed steps; 1,024 leaves 865 steps of margin while
-/// still bounding a regression that spins instead of reporting that stop.
+/// Step safety cap for the legacy bare test386 rig (§6). It keeps the short
+/// scheduler comparison bounded; full-board validation uses a separate budget.
 pub const TEST386_MAX_RETIRED: u64 = 1_024;
 
 /// Why the test386 smoke run stopped (§3.1). Captured on **every** exit path so
@@ -449,7 +448,7 @@ pub fn finish_persistence(
 /// and why execution stopped.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Test386Run {
-    /// Checkpoint bytes the guest wrote to the POST port `0x190`, in order.
+    /// Checkpoint bytes the guest wrote to the POST port `0x80`, in order.
     pub post: Vec<u8>,
     /// Why the run ended (for the report; assertions pin only the variant).
     pub stop: StopReason,
@@ -462,7 +461,7 @@ pub struct Test386Run {
 /// The whole 1 MiB is RAM; the 64 KiB `blob` is loaded at `0xF0000` and execution
 /// starts at the reset vector `F000:FFF0`, whose far jump enters the diagnostic's
 /// POST sequence. The machine decodes just two devices — the POST checkpoint port
-/// at `0x190` and a COM1 UART (in case a build variant enables serial) — behind a
+/// at `0x80` and a COM1 UART (in case a build variant enables serial) — behind a
 /// [`chipset::NoInterruptController`]: the diagnostic runs with interrupts
 /// disabled and needs no interrupt source. The step cap bounds execution.
 ///

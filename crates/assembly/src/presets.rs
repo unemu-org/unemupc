@@ -31,7 +31,6 @@ use chipset::{
     SLAVE_PIC_DATA,
 };
 use devices::mda;
-use devices::post_port::POST_PORT;
 use devices::vga_text::{
     CGA_MODE_CONTROL_PORT, CGA_STATUS_PORT, CRTC_DATA_PORT, CRTC_INDEX_PORT, TEXT_BUFFER_BASE,
     TEXT_BUFFER_LEN,
@@ -435,7 +434,7 @@ pub fn at_vga_text(blob: Vec<u8>) -> MachineConfig {
 /// The test386 diagnostic machine: the whole 1 MiB is RAM, the 64 KiB `image` is
 /// loaded at `0xF0000`, and execution starts at the reset vector `F000:FFF0`.
 ///
-/// Just two devices — the POST checkpoint port at `0x190` and a COM1 UART — and no
+/// Just two devices — the POST checkpoint port at `0x80` and a COM1 UART — and no
 /// interrupt controller: the diagnostic runs `cli`, so any wired IRQ could never
 /// be delivered and would keep the run from terminating.
 pub fn test386(image: Vec<u8>) -> MachineConfig {
@@ -461,7 +460,7 @@ pub fn test386(image: Vec<u8>) -> MachineConfig {
             ram: vec![RamRegion::new(0, MIB)],
             mmio: Vec::new(),
         },
-        devices: vec![post(POST_PORT), uart()],
+        devices: vec![post(0x80), uart()],
         drives: Vec::new(),
         images: vec![LoadImage {
             base: u64::from(TEST386_LOAD_SEG) << 4,

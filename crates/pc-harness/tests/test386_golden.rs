@@ -1,98 +1,254 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! test386 real-mode boot smoke test (spike) (§3.1, §5, §10).
-//!
-//! Boots the third-party [test386](../../../vendor/test386/README.md) diagnostic
-//! ROM from RAM and records how far it gets. This is a plumbing smoke test of the
-//! reset → real-mode-execution → POST-capture path, **not** CPU validation: the
-//! image is a 386 diagnostic and this core is 16-bit real mode only, so it is
-//! expected to stop early. The value is the *honest stop point*, captured on every
-//! exit path (including the error path) through the POST-port tracing seam.
-//!
-//! ## Observed result (this CPU revision)
-//!
-//! The image far-jumps from the reset vector into the POST sequence and runs the
-//! real-mode init: it writes `POST 0` (`0x00`) to port `0x190`, builds the
-//! real-mode IDT, loads SS/DS/ES, writes `POST 1` (`0x01`), then enters the
-//! conditional-jump test. **POST stream: `[0x00, 0x01]`.**
-//!
-//! It stops inside **POST 1** (the conditional-jump test, `tests/jcc_m.asm`'s
-//! `testJcc` macro) on the first instruction that macro uses to seed the flags
-//! without the stack:
-//!
-//! ```text
-//! F000:0083  B4 01   mov ah, 0x1
-//! F000:0085  9E      sahf        <- stops here: SAHF is not lifted
-//! F000:0086  73 24   jnc ...
-//! ```
-//!
-//! i.e. **`SAHF` (opcode `0x9E`) at linear `0xF0085`** surfaces as
-//! `Exit::UnknownInstruction`. (The run reports the faulting address `0x85` and
-//! leaves RIP at the enclosing block start `0x83`; addresses are offsets within
-//! `CS = 0xF000`.) So `SAHF`/`LAHF` is the next real-mode instruction a seam would
-//! need to lift to push test386 past POST 1 into POST 2's 32-bit `mul`/`div`.
-//!
-//! An earlier run against a stale CPU pin stopped one instruction into the image,
-//! on the reset vector's far jump — that pin predated the far-`JMP` / segment-load
-//! lift. With the current pin the far jump, `mov Sreg`, and the `0x67`-prefixed
-//! IDT stores all execute, so the guest now genuinely reaches POST 1.
-//!
-//! The assertions pin the observed byte stream and the stop *kind*
-//! (`Unsupported`), never an address — NASM output shifts stop addresses with the
-//! toolchain, so the faulting address lives only in the diagnostic `detail` string
-//! and this comment.
-//!
-//! ## Pinned inputs
-//!
-//! - test386 image: `barotto/test386.asm` @
-//!   `cfd052d1e64d5375dea5a681c1eadeed64ceda2c` (built by `vendor/test386/fetch.sh`).
-//! - CPU: recorded against `x86jit-core` rev
-//!   `3ff42a5265ee8f40913615d65823b16dffbc4f49`; it still passes at the rev now
-//!   pinned in `Cargo.lock`.
-//!   The stop point is only meaningful against a known CPU revision; re-baseline
-//!   the golden if `SAHF` (or a nearer instruction) gains real-mode support.
+//! Third-party 386 validation ROM on the generic ISA boards. Intel 80386
+//! Programmer's Reference Manual §10 Initialization and §6 Protection.
+//! See `backlog/docs/design/protected-mode-gaps.md` for measured coverage.
 
-use pc_harness::{run_test386, StopReason};
+use assembly::{
+    AssemblyOptions, BoardModel, CpuChip, DeviceId, FpuChip, MachineConfig, ObservationPolicy,
+    ObservationRequest, OutputKind, RamRegion,
+};
+use cpu::{Cpu, CpuReg};
+use device::ByteStreamKind;
+
 #[path = "support/fixtures.rs"]
 mod fixtures;
 
-/// The observed POST checkpoint stream: `POST 0` then `POST 1`, before execution
-/// stops on the unlifted `SAHF` in the POST 1 conditional-jump test. Golden the
-/// exact stream.
-const GOLDEN_POST: &[u8] = &[0x00, 0x01];
+const CPU_REV: &str = "5a17667764080c2fe7a33d446584a3e175b7923d";
+const CAP: u64 = 1_000_000;
+const GOLDEN_POST: &[u8] = &[0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x08];
 
-#[test]
-fn test386_smoke_stop_point_matches_golden() {
-    let Some(blob) = fixtures::fixture("test386/test386.bin") else {
+fn board(rom: Vec<u8>, chip: CpuChip) -> MachineConfig {
+    // The board owns a 128 KiB decode; place the 64 KiB ROM in its upper half.
+    let mut bios = vec![0xFF; 65536];
+    bios.extend_from_slice(&rom);
+    let mut config = assembly::bios(bios, None);
+    let uart = config
+        .devices
+        .iter()
+        .find(|device| device.id == DeviceId::Uart)
+        .unwrap()
+        .clone();
+    config.images[0].base = 0xE0000;
+    config.board = if chip == CpuChip::I80386 {
+        BoardModel::Generic386Isa
+    } else {
+        BoardModel::Generic486Isa
+    };
+    config.clock = config.board.default_clock();
+    config.cpu.chip = chip;
+    config.cpu.fpu = if chip == CpuChip::I80386 {
+        FpuChip::None
+    } else {
+        FpuChip::Integrated
+    };
+    config.devices = config.board.motherboard_devices();
+    config.devices.push(uart);
+    config.drives.clear();
+    config.memory.address_space_bytes = 0x1000000;
+    config.memory.mmio.clear();
+    config.memory.ram = vec![
+        RamRegion::new(0, 0xA0000),
+        RamRegion::new(0xC0000, 0x40000),
+        RamRegion::new(0x100000, 15 << 20),
+    ];
+    config
+}
+
+fn observation_policy() -> ObservationPolicy {
+    ObservationPolicy {
+        routes: vec![
+            ObservationRequest {
+                device: DeviceId::Post,
+                output: OutputKind::Bytes(ByteStreamKind::PostCheckpoints),
+                byte_limit: 4096,
+            },
+            ObservationRequest {
+                device: DeviceId::DebugConsole,
+                output: OutputKind::Bytes(ByteStreamKind::DebugConsole),
+                byte_limit: 65536,
+            },
+        ],
+        ..Default::default()
+    }
+}
+
+fn run(chip: CpuChip) {
+    assert!(
+        include_str!("../../../Cargo.lock").contains(CPU_REV),
+        "CPU pin changed: rerun test386 and review the golden stop"
+    );
+    let Some(rom) = fixtures::fixture("test386/test386.bin") else {
         return;
     };
+    assert_eq!(rom.len(), 65536);
+    let hash = fixtures::parse_pin(
+        include_str!("../../../vendor/test386/fetch.sh"),
+        "check_sha256 \"$OUT\" \"",
+    )
+    .unwrap();
+    assert_eq!(assembly::test_support::fixture_sha256(&rom), hash);
+    let policy = observation_policy();
+    let mut assembled = assembly::assemble_with_observation_and_options(
+        &board(rom, chip),
+        &policy,
+        AssemblyOptions {
+            allow_unlisted_firmware: true,
+        },
+    )
+    .unwrap();
+    let started = std::time::Instant::now();
+    let outcome = assembled.machine.run_bounded(Some(CAP));
+    let wall = started.elapsed();
+    let post = assembled
+        .observation
+        .drain_bytes(DeviceId::Post, ByteStreamKind::PostCheckpoints)
+        .unwrap();
+    let text = String::from_utf8(
+        assembled
+            .observation
+            .drain_bytes(DeviceId::DebugConsole, ByteStreamKind::DebugConsole)
+            .unwrap(),
+    )
+    .unwrap();
+    let retired = assembled.machine.cpu().retired();
+    eprintln!(
+        "{}: {outcome:?}; retired={retired}; wall={wall:?}; POST={post:02x?}\n{text}",
+        chip.name()
+    );
+    if let Err(machine::MachineError::Cpu(error)) = &outcome {
+        eprintln!("{}", assembled.machine.cpu().stop_report(error).unwrap());
+    }
+    eprintln!("{}", assembled.machine.cpu().diagnostic_state());
+    for reg in [
+        CpuReg::Rax,
+        CpuReg::Rbx,
+        CpuReg::Rcx,
+        CpuReg::Rdx,
+        CpuReg::Rsi,
+        CpuReg::Rdi,
+        CpuReg::Rsp,
+        CpuReg::Rbp,
+        CpuReg::Rip,
+    ] {
+        eprintln!("{reg:?}={:08x}", assembled.machine.cpu().reg(reg));
+    }
     assert_eq!(
-        blob.len(),
-        65536,
-        "test386 default config is a 64 KiB image"
+        post, GOLDEN_POST,
+        "test386 progress changed; review and advance the golden"
     );
-
-    let run = run_test386(&blob);
-
-    // End-to-end proof of the plumbing: reset → far jump → real-mode exec → POST
-    // capture. The stream must reach at least POST 1 (`0x01`).
-    assert!(
-        run.post.contains(&0x01),
-        "expected the POST stream to reach at least 0x01, got {:02x?}",
-        run.post
-    );
-
-    // The observed POST byte stream on this CPU revision. Pinned exactly.
+    assert_eq!(text, "", "print routines follow the paging boundary");
     assert_eq!(
-        run.post, GOLDEN_POST,
-        "POST checkpoint stream drifted from the recorded golden"
+        retired, 793_775,
+        "retired count changed: review newly reached test386 sections and advance the golden"
     );
-
-    // Assert the stop KIND only — the address is toolchain-dependent and lives in
-    // the detail string for the report, never in an assertion.
     assert!(
-        matches!(run.stop, StopReason::Unsupported { .. }),
-        "expected an unsupported-instruction stop (SAHF in the POST 1 \
-         conditional-jump test), got {:?}",
-        run.stop
+        matches!(&outcome,
+        Err(machine::MachineError::Cpu(cpu::CpuError::UnsupportedSystem {
+            operation, cs: 0xF000, ip: 0x267C
+        })) if operation == "LegacyExecution"),
+        "expected the PG=1 refusal; when paging lands, advance test386: {outcome:?}"
+    );
+    let state = assembled.machine.cpu().diagnostic_state();
+    assert_eq!(state.code_linear, 0xF267C);
+    assert_eq!(
+        state.code[..3]
+            .iter()
+            .map(|byte| byte.value().unwrap())
+            .collect::<Vec<_>>(),
+        [0x0F, 0x22, 0xC0]
+    );
+    let system = state.system.unwrap();
+    assert!(
+        !system.protected(),
+        "the refused PE|PG write must not take effect"
+    );
+    assert_eq!(system.cpl, 0);
+    assert_eq!(
+        assembled.machine.cpu().reg(CpuReg::Rax),
+        if chip == CpuChip::I80386 {
+            0x80000001
+        } else {
+            0xE0000011
+        }
+    );
+}
+
+#[test]
+fn test386_i386_golden() {
+    run(CpuChip::I80386);
+}
+#[test]
+fn test386_i486_dx_golden() {
+    run(CpuChip::I80486Dx);
+}
+#[test]
+fn test386_i486_cpuid_golden() {
+    run(CpuChip::I80486DxCpuid);
+}
+
+#[test]
+fn test386_board_captures_post_and_ascii_from_reset() {
+    let mut rom = vec![0xFF; 65536];
+    let program = [
+        0xB0, 0x42, 0xE6, 0x80, 0xBA, 0x02, 0x04, 0xB0, b'O', 0xEE, 0xB0, b'K', 0xEE, 0xB0, b'\n',
+        0xEE, 0xF4,
+    ];
+    rom[..program.len()].copy_from_slice(&program);
+    rom[0xFFF0..0xFFF5].copy_from_slice(&[0xEA, 0, 0, 0, 0xF0]);
+    for chip in [CpuChip::I80386, CpuChip::I80486Dx, CpuChip::I80486DxCpuid] {
+        let mut assembled = assembly::assemble_with_observation_and_options(
+            &board(rom.clone(), chip),
+            &observation_policy(),
+            AssemblyOptions {
+                allow_unlisted_firmware: true,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            assembled.machine.run_bounded(Some(100)).unwrap(),
+            machine::RunOutcome::Halted
+        );
+        assert_eq!(
+            assembled
+                .observation
+                .drain_bytes(DeviceId::Post, ByteStreamKind::PostCheckpoints)
+                .unwrap(),
+            [0x42]
+        );
+        assert_eq!(
+            assembled
+                .observation
+                .drain_bytes(DeviceId::DebugConsole, ByteStreamKind::DebugConsole)
+                .unwrap(),
+            b"OK\n"
+        );
+    }
+}
+
+#[test]
+fn test386_legacy_scheduler_rig_captures_configured_post() {
+    let mut rom = vec![0xFF; 65536];
+    rom[..5].copy_from_slice(&[0xB0, 0x42, 0xE6, 0x80, 0xF4]);
+    rom[0xFFF0..0xFFF5].copy_from_slice(&[0xEA, 0, 0, 0, 0xF0]);
+    let policy = ObservationPolicy {
+        routes: vec![ObservationRequest {
+            device: DeviceId::Post,
+            output: OutputKind::Bytes(ByteStreamKind::PostCheckpoints),
+            byte_limit: 16,
+        }],
+        ..Default::default()
+    };
+    let mut assembled =
+        assembly::assemble_with_observation(&assembly::test386(rom), &policy).unwrap();
+    assert_eq!(
+        assembled.machine.run_bounded(Some(100)).unwrap(),
+        machine::RunOutcome::Halted
+    );
+    assert_eq!(
+        assembled
+            .observation
+            .drain_bytes(DeviceId::Post, ByteStreamKind::PostCheckpoints)
+            .unwrap(),
+        [0x42]
     );
 }

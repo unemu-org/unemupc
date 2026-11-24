@@ -1,5 +1,84 @@
 # 386 protected-mode gaps
 
+## test386 full-machine validation (2026-11-24)
+
+**MEASURED**, CPU pin `5a17667764080c2fe7a33d446584a3e175b7923d`, upstream
+test386 commit `cfd052d1e64d5375dea5a681c1eadeed64ceda2c`:
+`test386_golden` boots the 64 KiB diagnostic at F0000h on `generic-386-isa`
+(80386DX) and `generic-486-isa` (early DX and CPUID DX). The image is padded
+with FFh below F0000h to fill the board's existing 128 KiB decode at E0000h;
+the high reset copy reaches the ROM's far jump. Explicit fixture assembly
+permits this uncatalogued image without weakening shipped-machine validation.
+There is no SeaBIOS or firmware service shim in this run.
+
+Configuration: POST port 80h, direct ASCII port 402h, undefined-behavior tests
+disabled, 64 KiB layout, otherwise upstream defaults. The same 386 image runs
+on both 486 models; no 486-only AC/CPUID qualification is claimed. See
+[fixture recipe and provenance](../../../vendor/test386/README.md).
+
+All three CPUs produce exactly `00 01 02 03 04 05 06 08`, retire **793,775**
+instructions, and stop with `CpuError::UnsupportedSystem`, operation
+`LegacyExecution`, at **F000:267C**, linear **000F267Ch**, bytes **0F 22 C0**
+(`MOV CR0,EAX`). Mode is real, CPL 0, A20 enabled. The refused write would
+set PE and PG together; it has not taken effect. Execution is bounded at
+1,000,000 retired instructions. Each run takes about 0.03–0.06 seconds in the
+normal test profile, so these are normal tests. No FFh completion is claimed.
+
+**MEASURED output text:** empty (zero bytes) on all models. **READ:** the
+printing code is called after the protected tests, at `print_init.asm` and
+`test386.asm:1684–1692`; `print_p.asm` implements direct `OUT_PORT` output.
+There are no earlier stable text lines to assert. A synthetic reset ROM in the
+same test binary proves that both board configurations capture POST and
+`OK\n` at the configured ports, so empty text is not an absent output route.
+
+| POST | Coverage at this pin |
+| --- | --- |
+| 00 | Real-mode IDT and segment/stack initialization completed. |
+| 01 | Conditional jumps and LOOP/LOOPZ/LOOPNZ completed. |
+| 02 | Quick 32-bit multiply/divide completed. |
+| 03 | Real-mode segment-register moves, including FS/GS, completed. |
+| 04 | Real-mode string operations and REP tests completed. |
+| 05 | Real-mode near/far calls completed. |
+| 06 | Real-mode full-pointer loads completed. |
+| 08 | GDT/IDT and page-table setup reached the combined PE/PG write; transition refused. |
+| 09 onward | Protected stacks, rings, tasking, paging checks, later arithmetic and completion unexecuted. |
+
+**READ:** `test386.asm:619–627` (`switchToProtMode`) loads IDTR/GDTR, writes
+CR3, reads CR0, ORs `80000001h` and writes CR0. NASM's configured listing
+places the write at offset 267Ch. Although the dedicated page-fault tests
+start at POST 11h, the ROM requires paging already at POST 08h, before
+`toProt32`. This ROM therefore does **not** qualify protected-mode execution
+at the current pin. The separate project-owned unpaged ROM below supplies
+that evidence. Paging cannot be disabled with an upstream configuration
+switch, and no test code is patched to bypass it.
+
+### CPU FINDINGS
+
+**MEASURED:** no unexpected CPU failure before the documented paging
+refusal, and no board/device defect. The common stop is the planned public
+paging boundary, not a new opcode failure. A reproducer for advancing it is
+the pinned/configured ROM above, or this CPL-0 real-mode control-register
+sequence with valid GDT/IDT and identity page tables:
+
+```asm
+mov cr3, esi             ; ESI=00001000h
+mov eax, cr0
+or eax, 80000001h
+mov cr0, eax             ; 0F 22 C0: typed LegacyExecution today
+```
+
+At the refused instruction, common registers are EBX=ECX=EBP=0,
+EDX=00006000h, ESI=00001000h, EDI=00004000h, ESP=0000FFF9h;
+CS=F000h, DS=0040h, ES=0100h, SS=1000h, GDTR=00000600h:031Fh,
+IDTR=00000400h:0177h, LDTR=TR=0. The 386 has EAX=80000001h,
+MSW=0000h and FLAGS=0082h; both 486 variants have EAX=E0000011h,
+MSW=0010h and FLAGS=0086h, retaining their reset CR0 cache/ET bits.
+Architecturally the write should enable protected paging and continue to
+`toProt32`; at this pin it is deliberately refused atomically. No CPU change
+was made here. When paging becomes public, the exact POST, retired count,
+instruction bytes and typed-stop assertions must fail and be advanced after
+reviewing the newly reached tests.
+
 ## Current unpaged machine qualification (2026-11-24)
 
 **MEASURED**, CPU pin `b7c10b6fdda8f84d3eda9c5d7751fcda1c5893ed`:

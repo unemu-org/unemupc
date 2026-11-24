@@ -1,5 +1,23 @@
 # Status
 
+## test386 full-machine validation (2026-11-24)
+
+**MEASURED**, x86jit `5a17667764080c2fe7a33d446584a3e175b7923d`: the pinned
+third-party test386 ROM boots without SeaBIOS on `generic-386-isa` and both
+`generic-486-isa` CPU variants. All report POST `00 01 02 03 04 05 06 08`
+and stop after 793,775 retired instructions at F000:267C (`0F 22 C0`,
+MOV CR0,EAX), with the expected typed `LegacyExecution` paging refusal.
+The same 386-defined-behavior configuration uses POST 80h and ASCII 402h;
+text output is empty because printing is later. No unexpected failure was
+observed; the 486 stop differs only in retained CR0/FLAGS values.
+
+The ROM enables PE and PG together at POST 08h, so its protected-mode and
+paging sections remain unexecuted. This run qualifies its preceding real-mode
+sections; it does not imply full test386 completion. Normal integration tests
+pin the exact progress and refusal, and a synthetic reset ROM checks both
+output routes. See [coverage and CPU findings](design/protected-mode-gaps.md#test386-full-machine-validation-2026-11-24)
+and [fixture configuration](../../vendor/test386/README.md).
+
 ## Generic 486 ISA board (2026-11-24)
 
 `generic-486-isa` accepts explicit `80486dx` (early DX) or `80486dx-cpuid`,
@@ -5421,16 +5439,9 @@ wall-time comparison and historical CPU sample shares.
   the BIOS machine assembly (task-20) composes them. BIOS fact-check (task-19)
   confirmed the Xi8088 config: master+slave cascade (no 0xA0 collision), 32 KiB ROM
   at 0xF8000, built-in µPD765 floppy INT 13h, 6845 CGA. Workspace: **205 tests**.
-- **test386.asm boots as a smoke test** (`task-7`, spike): the third-party 386
-  CPU-test ROM boots from RAM at `0xF0000` (reset `F000:FFF0`), reaches **POST
-  `[0x00, 0x01]`**, and stops at `SAHF` (`0x9E`) in the conditional-jump test — the
-  next unlifted real-mode op. This surfaced (and fixed) a **stale x86jit pin**: the
-  emulator was 13 commits behind `pc-emulator`, before the far-jmp/seg-load lift;
-  bumped to `3ff42a5` (also brings in-guest `#UD`/`#GP` + `RegionKind::Rom`), no
-  regression. New `PostPort` (0x190 capture), `Machine::run_bounded` + a retired
-  cap, and `run_test386` (captures POST on every exit path). `vendor/test386`
-  builds the image from a pinned commit (GPL-3.0, gitignored). To push further:
-  lift `SAHF`/`LAHF`, then POST 3 needs FS/GS, POST 8 needs protected mode.
+- **Historical test386 286 spike:** originally stopped at SAHF in POST 01h.
+  Superseded by the 386/486 full-machine validation above; the old two-byte
+  POST prefix is no longer the golden contract.
 - **M4 integration — the full AT interrupt/graphics wiring** (`task-5`): the M4
   devices are now wired into the machine. Keyboard scancodes raise **IRQ1** through
   the master PIC and a guest handler reads them; guest stores into the `0xB8000`

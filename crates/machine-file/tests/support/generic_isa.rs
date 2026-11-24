@@ -10,7 +10,7 @@ use std::path::PathBuf;
 
 fn shipped(chip: CpuChip) -> Option<assembly::MachineConfig> {
     assert!(
-        include_str!("../../../../Cargo.lock").contains("274d48a8ab9dabdfd598c3c3116cf72363ffa049")
+        include_str!("../../../../Cargo.lock").contains("5a17667764080c2fe7a33d446584a3e175b7923d")
     );
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     if !root.join("vendor/seabios/bios-1.17.0-isa.bin").exists() {
