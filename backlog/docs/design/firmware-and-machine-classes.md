@@ -544,7 +544,8 @@ The old REP NOP stop at `F000:A72C` on `deae5bac` is passed at this pin.
 F3 90 and F2 90 execute as NOP on every model, so SeaBIOS `cpu_relax`
 needs no CPU option and no board workaround is applied.
 No new CPU boundary was observed. The fixture remains Listed; guest OS boot,
-TSS I/O bitmap, paging and SeaVGABIOS remain separate work.
+TSS I/O bitmap and paging remain separate work. The counts above precede
+the SeaVGABIOS qualification described below.
 
 **Build target and decision (READ).** `CONFIG_QEMU` is the only target with
 ISA fallbacks: ATA at 1F0h/170h without PCI (`ata.c:1020–1030`), RAM size
@@ -577,7 +578,28 @@ fw_cfg-compatible selector/data port at 510h/511h, without DMA
 zero defaults and key 0Eh = 0 (no boot menu); files are `vgaroms/*`,
 `genroms/*`, `etc/sercon-port` and `bootorder`, derived from the machine
 description. ROM catalogue placement must distinguish firmware-loaded ROMs
-from pre-mapped ROMs. Serial-console goldens come first; VGA follows.
+from pre-mapped ROMs. This distinction is implemented for video ROMs: both
+generic ISA boards use the normal `firmware.option_roms` source at C0000h,
+with catalogue `seavgabios-1.17.0-unemu1-stdvga`. Assembly freezes its resolved
+bytes as `vgaroms/vga-c0000.bin` and leaves C0000h empty for SeaBIOS to deploy.
+Normal pins, ROM header/checksum, board/CPU/card requirements and catalogue
+membership still apply; only the existing run-only escape relaxes membership.
+No arbitrary extension-ROM delivery is added.
+
+SeaVGABIOS builds from the same pinned fork export with a separate hashed
+`vgaconfig`: standard IBM VGA, no PCI ROM header or VBE. Its 32 KiB image has
+SHA-256 `1adc6c0fa72b93c5d0659575c992b1bf6f64fd451c444b2a735e22f0a3d6e925`
+and LGPL-3.0-only provenance. The normal probes exercise diskless POST, mode 3
+with plane-2 font loading, AH=0Eh text and mode 13h through the actual INT 10h
+handler on 386 and both 486 variants. They assert decoded content and indexed
+frame hashes; see machine-files.md §SeaVGABIOS delivery and mode-set
+qualification. No VGA register additions were needed.
+
+The source notice `No VGA found` describes the PCI search before the fw_cfg
+search, even on success. SeaVGABIOS initialization diagnostics use COM1,
+because its weak system-BIOS port-debug variable is discarded by the VGA
+linker; see vendor/seabios/README.md. The system BIOS stays byte-identical;
+neither diagnostic issue is hidden by emulator aliases or source patches.
 QEMU `isapc` works because it supplies fw_cfg (`pc.c:892`) and sends
 `vgaroms/vgabios.bin` through it (`vga-isa.c:88`, `loader.c:1232–1240`),
 not because SeaBIOS scans a plain ISA ROM window (READ).
@@ -787,8 +809,8 @@ DX and 0410h for the CPUID model. The latter reports GenuineIntel, leaf 0
 maximum 1, and leaf 1 EAX=0410h, EDX=1 (FPU). These signatures are the CPU
 core's representative stepping choices, not a claim about every physical DX.
 
-**MEASURED at `274d48a8` (2026-11-24):** both DX variants finish diskless
-POST at 5,885,053 retired instructions and reach keyboard reset/resume at
+**MEASURED before SeaVGABIOS, at `274d48a8` (2026-11-24):** both DX
+variants finish diskless POST at 5,885,053 retired instructions and reach keyboard reset/resume at
 5,887,802. INT 15h AH=88h/E801h/E820h checks pass at 16 MiB (5,768,863)
 and 4 MiB (5,768,833). Both print `No apic - only the main cpu is present.`
 and `No bootable device.`; neither prints a vendor/model identification line.

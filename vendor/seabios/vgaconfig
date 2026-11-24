@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# SeaVGABIOS rel-1.17.0 fragment; olddefconfig supplies the pinned defaults.
+
+# Standard VGA uses only the IBM register interface, without Bochs DISPI.
+CONFIG_QEMU=y
+CONFIG_VGA_STANDARD_VGA=y
+# Firmware is delivered by fw_cfg on an ISA board, without a PCI device.
+# CONFIG_VGA_PCI is not set
+# The board has standard VGA memory and registers, without VBE extensions.
+# CONFIG_VGA_VBE is not set
+# SeaVGABIOS does not retain the system BIOS's VARFSEG debug-port variable.
+# Its supported serial debug path exposes initialization diagnostics on COM1.
+CONFIG_DEBUG_SERIAL=y
+CONFIG_DEBUG_SERIAL_PORT=0x3f8
+# CONFIG_DEBUG_IO is not set
+CONFIG_DEBUG_LEVEL=1

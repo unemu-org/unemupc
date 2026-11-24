@@ -1097,7 +1097,8 @@ impl<R: ImageReader> Context<'_, R> {
             | OptionRomBadChecksum { image_index, .. } => {
                 self.images.get(*image_index).cloned().into_iter().collect()
             }
-            OptionRomMisaligned { image_index, .. }
+            SeaBiosVideoRomBase { image_index, .. }
+            | OptionRomMisaligned { image_index, .. }
             | OptionRomOutsideScanWindow { image_index, .. } => self
                 .images
                 .get(*image_index)

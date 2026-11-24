@@ -1,4 +1,4 @@
-# SeaBIOS 1.17.0 ISA firmware fixture
+# SeaBIOS and SeaVGABIOS 1.17.0 ISA firmware fixtures
 
 [`fetch.sh`](fetch.sh) builds `bios-1.17.0-isa.bin` from
 [unemu-org/seabios](https://github.com/unemu-org/seabios), pinned at commit
@@ -9,14 +9,15 @@ Its initial code fix (`d98685dd`) replaces `__swab32`'s inline `bswapl` with
 C that compiles for `-march=i386`. BSWAP requires a 486, and upstream reaches
 it through fw_cfg, ATA and block commands. Fixes are submitted upstream
 (`upc-o0j.23`); there are no source patches applied by this build recipe.
-Only this README, the build script and our [`config`](config) are committed.
+Only this README, the build script and our [`config`](config) and
+[`vgaconfig`](vgaconfig) fragments are committed.
 The clone (`src/`), temporary exports (`build/`) and ROM are gitignored.
 
 The catalogue identifies this image as `seabios-1.17.0-unemu1-isa`, separating
 its bytes and provenance from the original upstream fixture. The output
 filename and version suffix stay unchanged. The board is `generic-386-isa`
 (`machines/generic-386-seabios.toml`); existing 286 machines do not use it.
-CI builds it in the fixtures lane. Execution qualification is recorded below.
+CI builds both ROMs in the fixtures lane. Execution qualification is recorded below.
 
 ## Execution boundary (historical, CPU pin `deae5bac`)
 
@@ -164,12 +165,70 @@ and other QEMU platform features that this ISA build disables. Its hash is
 recorded as comparison provenance in the firmware design document's Sources,
 not as the expected output of this recipe.
 
+## Standard VGA ROM
+
+The same command also builds `build/vgabios-1.17.0-stdvga.bin` from the same
+pinned source archive, in a separate temporary export. The stable output lives
+under the already ignored `build/` directory; no ROM binary is committed.
+The catalogue ID is `seavgabios-1.17.0-unemu1-stdvga`, with role video BIOS
+and fits for `generic-386-isa` and `generic-486-isa`. The system BIOS config
+and its pinned output bytes are unchanged.
+
+**READ:** `vgasrc/Kconfig` directly offers `CONFIG_VGA_STANDARD_VGA` for the
+original IBM 256 KiB VGA. `vgasrc/vgahw.h` dispatches it to `stdvga_*`.
+`CONFIG_VGA_PCI=n` removes the PCI data pointer from the option-ROM header;
+`CONFIG_VGA_VBE=n` avoids unsupported extensions. The Bochs variant is
+unnecessary: `bochsvga_setup` would probe ports 1CEh/1CFh and fall back to
+standard VGA when its DISPI ID readback fails. The chosen variant does not
+probe those ports. The existing extra INT 10h stack remains enabled.
+
+| Input / output | SHA-256 |
+|---|---|
+| Our `vgaconfig` fragment | `370f78d9c30db41bd155d7b360fbf5cd0d6e26e390e19c106c14d32dbf5b5d40` |
+| `build/vgabios-1.17.0-stdvga.bin` | `1adc6c0fa72b93c5d0659575c992b1bf6f64fd451c444b2a735e22f0a3d6e925` |
+
+**MEASURED on 2026-11-24:** two independent builds in different temporary
+exports produced identical images (`cmp`) with the hashes above, using the
+same GCC 15.2.0 / binutils 2.46 firmware toolchain as the system BIOS. Both
+builds also passed the unchanged system BIOS hash. A review of the linked
+16-bit disassembly found no post-386 instructions: in particular no BSWAP,
+WBINVD/INVD/INVLPG, CPUID, timestamp/MSR, XADD/CMPXCHG, CMOV or SIMD
+instructions. This is an instruction audit, not exhaustive execution coverage.
+The previously noted system-BIOS WBINVD in an unreachable PCI path is not
+part of this VGA ROM.
+
+The expected image size is 32,768 bytes. Its version is fixed at
+`1.17.0-unemupc-stdvga`; its 55AAh header, 40h length byte and checksum
+are checked by normal firmware loading. `fetch.sh` checks the config, source,
+output size, version and output hash before installing the image. It leaves
+`build/vgabios.disasm`, made with `i686-elf-objdump -d -M i8086` on the
+linked `vgarom.o`, for a symbol-aware 16-bit minimum-CPU audit.
+
+**READ:** two diagnostic details matter when interpreting the probes.
+`src/optionroms.c:429–483` prints `No VGA found, scan for other display`
+after the PCI search and **before** loading `vgaroms/` files. This notice
+persists on a successful non-PCI machine; it does not mean fw_cfg deployment
+failed. Removing it requires a separate fork change, since the system BIOS
+bytes are pinned here. Tests instead require option-ROM execution, an
+installed VGA INT 10h handler, the VGA initialization diagnostics and the
+font-rendered POST screen.
+
+SeaVGABIOS's port-debug path also cannot use the system BIOS's
+`DebugOutputPort VARFSEG`: the VGA linker discards that weak section
+(`src/types.h:70`, `vgasrc/vgalayout.lds.S`). **MEASURED:** the initial
+port-debug build loaded the port from CS:0000h, the ROM signature, and emitted
+no banner at 402h. `vgaconfig` therefore selects the supported serial-debug
+path on COM1 instead. The system BIOS still logs at 402h and mirrors its
+console to COM1; SeaVGABIOS initialization lines appear on COM1. No emulator
+port alias or firmware-source patch hides either diagnostic issue.
+
 ## Provenance and licence
 
 Upstream is [SeaBIOS](https://github.com/coreboot/seabios), with project-level
 licence **LGPL-3.0-only**. **READ at the pinned revision:**
 `docs/Download.md:1–2` permits distribution under GNU LGPLv3;
-`src/post.c:1–6`, `src/sercon.c:1–5`, `src/hw/ata.c:1–6` and
+`src/post.c:1–6`, `src/sercon.c:1–5`, `src/hw/ata.c:1–6`,
+`vgasrc/vgainit.c:1–7`, `vgasrc/stdvga.c:1–7` and
 `Makefile:1–5` likewise name GNU LGPLv3 without an "or later" grant.
 `COPYING.LESSER:1–16` contains LGPL version 3 and incorporates GPLv3.
 Its later-version provision (`COPYING.LESSER:151–156`) requires the library

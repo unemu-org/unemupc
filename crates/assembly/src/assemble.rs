@@ -848,6 +848,9 @@ pub fn build_cpu_with_mapping_trace(
         }
     }
     for image in &config.images {
+        if crate::fw_cfg::video_rom_file(config, image) {
+            continue;
+        }
         let bytes = load_image_bytes(&image.source)?;
         match image.kind {
             ImageKind::Rom if config.board.is_generic_isa() => {

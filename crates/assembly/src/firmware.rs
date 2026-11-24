@@ -489,6 +489,34 @@ pub const SEABIOS_1_17_0_ISA: FirmwareEntry = FirmwareEntry {
     superseded_by: None,
 };
 
+/// SeaVGABIOS standard VGA ISA build from the same fork as the system BIOS.
+/// IBM VGA/XGA Technical Reference, Video BIOS; see firmware design §3.6.
+pub const SEAVGABIOS_1_17_0_STDVGA: FirmwareEntry = FirmwareEntry {
+    id: "seavgabios-1.17.0-unemu1-stdvga",
+    kind: FirmwareKind::VideoBios,
+    sha256: "1adc6c0fa72b93c5d0659575c992b1bf6f64fd451c444b2a735e22f0a3d6e925",
+    size: 32768,
+    base: FirmwareBase::Suggested(0xC0000),
+    scan_window: None,
+    video_scan_window: None,
+    rom_offset: 0,
+    provides: &[],
+    capabilities: &[],
+    requires: &[FirmwarePart::VgaRegisters],
+    cpu_min: FirmwareCpu::I80386,
+    boards: &["generic-386-isa", "generic-486-isa"],
+    distribution: FirmwareDistribution::Open {
+        fetch: "vendor/seabios/fetch.sh",
+        license: "LGPL-3.0-only",
+        provenance: "unemu-org/seabios 7da2116237ed8916970795b0d8cae5bf6e277d0a, standard VGA ISA configuration",
+        source_archive_sha256: None,
+    },
+    parts: &[],
+    status: FirmwareStatus::Listed,
+    cmos_layout: None,
+    superseded_by: None,
+};
+
 /// Unmodified Xi 8088 build pinned by `vendor/kiselev-bios/fetch.sh`.
 /// The catalogue promises the tested 286 machine, rather than upstream's wider
 /// CPU support. See `vendor/kiselev-bios/README.md`, Image size and mapping.
@@ -821,6 +849,12 @@ pub fn validate_option_roms_with_catalogue(
         let entry = matched_entry(image, catalogue);
         let video_rom =
             video_address || entry.is_some_and(|entry| entry.kind == FirmwareKind::VideoBios);
+        if config.board.is_generic_isa() && video_rom && image.base != 0xC0000 {
+            return Err(ConfigError::SeaBiosVideoRomBase {
+                image_index,
+                base: image.base,
+            });
+        }
         // Only reviewed BIOS bytes establish the separate video scan. A file
         // must be identified before this check; the old extension fallback
         // remains available for unlisted experimental system firmware.
@@ -840,7 +874,10 @@ pub fn validate_option_roms_with_catalogue(
                 firmware: entry.id,
             });
         }
-        let (start, end) = if video_rom {
+        let (start, end) = if crate::fw_cfg::video_rom_file(config, image) {
+            // This is the board's firmware deployment window, not an ISA scan.
+            (0xC0000, 0xC8000)
+        } else if video_rom {
             let known_bios = matched_entry(bios, catalogue);
             known_bios.and_then(|bios| bios.video_scan_window).ok_or(
                 ConfigError::FirmwareDoesNotScanVideoRoms {

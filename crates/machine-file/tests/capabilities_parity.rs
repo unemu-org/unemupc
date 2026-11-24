@@ -41,12 +41,18 @@ impl ImageReader for Images {
 }
 
 fn synthetic(document: &mut v1::MachineFile) {
+    let firmware_loaded_video = document.board.as_ref().is_some_and(|board| {
+        matches!(
+            board.model,
+            Some(v1::BoardModel::Generic386Isa | v1::BoardModel::Generic486Isa)
+        )
+    });
     if let Some(firmware) = &mut document.firmware {
         // Only an identified system BIOS establishes the C0000h video-ROM
         // scan. Move video ROMs to an extension address that no repository
         // machine uses, so their hardware is still fingerprinted.
         for rom in firmware.option_roms.iter_mut().flatten() {
-            if rom.base == Some(0xC0000) {
+            if rom.base == Some(0xC0000) && !firmware_loaded_video {
                 rom.base = Some(0xE0000);
             }
         }
@@ -192,8 +198,8 @@ fn repository_machine_file_parity() {
         ("machines/at-games.toml".into(), "803c59aaa00a7b9c78a66a52ea37193d7bde6e5bb63a4077322e5f3e52e02c74".into()),
         // The open AT BIOS's mono display switch.
         ("machines/at-ide.toml".into(), "e42872c37de7d3674033a09efaf304ff1e47f95392af3baa9f2ed2553ab8a60d".into()),
-        ("machines/generic-386-seabios.toml".into(), "954de502cba8fc199bcea13428c7eb6ee10f7b1fea651a7abec458d4073ee285".into()),
-        ("machines/generic-486-seabios.toml".into(), "ad88a2605ad5573bf591aa15b9e7e36a4d4a6aea73d4f53147637af7aa76c862".into()),
+        ("machines/generic-386-seabios.toml".into(), "fb5592babbaa5a31093d1501e6a070dc6af8ee4634cf713f4446a8a4425a6265".into()),
+        ("machines/generic-486-seabios.toml".into(), "18df36806e3236a87a678d52be3e5e5bf8809ba4475f2280d6ad8491899eaf9d".into()),
         ("machines/presets/ibm-5170.toml".into(), "resolve:<repo>/machines/presets/ibm-5170.toml:16: firmware.bios.image: required fields are missing: firmware.bios.image (<repo>/machines/presets/ibm-5170.toml:16); inheritance chain: <repo>/machines/presets/ibm-5170.toml".into()),
     ];
     assert_eq!(observed, expected);

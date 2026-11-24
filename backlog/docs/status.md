@@ -1,5 +1,36 @@
 # Status
 
+## SeaVGABIOS on generic ISA boards (2026-11-24)
+
+Both shipped 386/486 profiles now name the Listed
+`seavgabios-1.17.0-unemu1-stdvga` ROM through `firmware.option_roms`.
+The same pinned SeaBIOS fork builds the standard VGA ISA variant, with no
+PCI header or VBE, from a second SHA-256-pinned config. Two independent
+builds matched (`cmp`): 32,768 bytes, SHA-256
+`1adc6c0fa72b93c5d0659575c992b1bf6f64fd451c444b2a735e22f0a3d6e925`.
+The system BIOS remains byte-identical. Assembly delivers the video bytes
+through immutable fw_cfg `vgaroms/vga-c0000.bin`; SeaBIOS deploys them into
+C0000h shadow. Normal firmware pins, scan/format checks and catalogue policy
+remain in force.
+
+**MEASURED for 80386DX, early 486DX and CPUID 486DX (counts unchanged at CPU pin `5a176677`):**
+diskless POST displays `No bootable device.` in mode 3 at **6,199,121**
+retired instructions. A new read-only in-memory floppy probe sets mode 3,
+prints a known string via INT 10h AH=0Eh, then sets mode 13h and draws a
+64,000-pixel pattern, halting at **6,326,518** retired instructions. Decoded
+text, all graphics pixels and three font/pixel frame hashes agree across
+all CPUs. POST and the mode probe take **1.1–1.4 s** each in release and
+remain normal tests. Existing INT 15h probes now retire **6,036,163** at
+16 MiB and **6,036,133** at 4 MiB; reset/resume reaches **6,201,870**.
+No VGA device changes or additional register coverage were needed.
+
+The pinned BIOS still emits `No VGA found, scan for other display` before
+loading fw_cfg video ROMs. VGA initialization diagnostics use COM1 because
+the VGA linker discards the system-BIOS port-debug variable. Both source
+limitations are documented in vendor/seabios/README.md; neither changes
+successful video initialization. Guest OS boot remains unqualified.
+The serial-only counts in the older board entries below are historical.
+
 ## test386 full-machine validation (2026-11-24)
 
 **MEASURED**, x86jit `5a17667764080c2fe7a33d446584a3e175b7923d`: the pinned
@@ -115,7 +146,8 @@ The former REP NOP stop at `F000:A72C` is passed by this CPU pin.
 F3 90 executes as NOP on every model, so no CPU option or board
 workaround is needed.
 The firmware remains Listed; diskless POST and memory queries do not qualify
-a guest OS. TSS I/O bitmap, paging and SeaVGABIOS remain separate work.
+a guest OS. TSS I/O bitmap and paging remain separate work. SeaVGABIOS qualification
+is recorded above.
 See [machine-file qualification](design/machine-files.md#generic-386-isa-board).
 
 

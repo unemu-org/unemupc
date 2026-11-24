@@ -290,6 +290,14 @@ pub enum ConfigError {
         /// Physical address.
         base: u64,
     },
+    /// SeaBIOS allocates the first VGA file at a fixed shadow address.
+    #[error("video ROM base {base:#X} is unsupported: SeaBIOS places it at C0000h")]
+    SeaBiosVideoRomBase {
+        /// Index in the image list.
+        image_index: usize,
+        /// Declared physical address.
+        base: u64,
+    },
     /// The complete image must fit the selected firmware's scan window.
     #[error(
         "option ROM at {base:#X} is outside the scan window {start:#X}..{end:#X} of \"{firmware}\""

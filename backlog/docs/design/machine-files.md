@@ -310,8 +310,7 @@ the byte debug console at 402h and emulator-only fw_cfg at 510h/511h.
 These motherboard devices are required, with fixed resources. fw_cfg serves
 `etc/sercon-port` as a little-endian COM1 port number from the installed
 `uart-16550` card. A COM1 card is required by that default. VGA uses the
-register-level `vga` card; SeaVGABIOS and firmware-loaded option ROMs remain
-separate work. The shared 8042/92h A20 line retains OR arbitration; either
+register-level `vga` card with the Listed SeaVGABIOS standard-VGA ROM. The shared 8042/92h A20 line retains OR arbitration; either
 source can enable A20. No selectable chipset or shadow-register model is added.
 
 Conventional RAM is 640 KiB. Extended RAM starts at 1 MiB, in 64 KiB
@@ -448,8 +447,83 @@ The current CPU executes F3 90 and F2 90 as NOP on every model, so SeaBIOS
 `cpu_relax` needs no option. x86jit plans an I80386 option for other REP
 prefixes on non-string instructions (default #UD per the 80386 PRM); the
 board does not need it for SeaBIOS. No new CPU boundary was observed.
-The fixture remains Listed; guest OS boot, TSS I/O bitmap, paging and
-SeaVGABIOS remain separate work.
+The fixture remains Listed; guest OS boot, TSS I/O bitmap and paging
+remain separate work. The counts above precede SeaVGABIOS; see below for
+the current video-qualified probes.
+
+#### SeaVGABIOS delivery and mode-set qualification
+
+Both shipped generic ISA profiles name their video ROM through the ordinary
+firmware option-ROM syntax:
+
+```toml
+[[firmware.option_roms]]
+image = "../vendor/seabios/build/vgabios-1.17.0-stdvga.bin"
+sha256 = "1adc6c0fa72b93c5d0659575c992b1bf6f64fd451c444b2a735e22f0a3d6e925"
+base = 0xC0000
+```
+
+The `image` path is relative to the machine file, and `sha256` pins the complete
+video ROM bytes. Build the files with `vendor/seabios/fetch.sh` before loading
+these shipped profiles. Alternatively, replace `image` with the catalogue name
+`seavgabios-1.17.0-unemu1-stdvga`, keep the SHA-256 pin, and supply firmware
+discovery roots containing the ROM (for example, `--rom-dir vendor/seabios/build`).
+The name alone does not locate a file: the production frontend resolver searches
+the explicit roots by the pinned bytes. There is one content source:
+normal loading resolves bytes, verifies pins, header, checksum, catalogue and
+register-level VGA requirements. Unknown video bytes are refused unless the
+existing run-only `allow_unlisted_firmware` escape is enabled. That escape
+still checks ROM format and placement. `vga-text` cannot satisfy this ROM.
+
+On `generic-386-isa` and `generic-486-isa`, assembly puts the resolved video
+bytes into the immutable fw_cfg file `vgaroms/vga-c0000.bin`, alongside
+`etc/sercon-port`. It leaves C0000h shadow empty. SeaBIOS clears that region,
+copies the ROM there and calls its entry point. `base` therefore names the
+fixed video deployment address on these boards. Only `base = 0xC0000` is
+accepted, including with the run-only escape: SeaBIOS allocates VGA ROMs
+sequentially from C0000h and ignores addresses embedded in fw_cfg filenames
+(`src/optionroms.c`, `run_file_roms`; `src/malloc.c`, `rom_reserve` and
+`rom_confirm`). A different base would misrepresent where the ROM executes.
+The IBM 5170 continues to map its video ROM as before. This does not enable arbitrary `genroms/` delivery.
+
+**MEASURED, CPU pin `274d48a8`:** diskless POST shows SeaBIOS boot text in
+80×25 mode 3. The golden decodes `No bootable device.` and hashes indexed
+pixels rendered from text planes 0/1, the loaded plane-2 font and the DAC.
+The project-owned `seabios-int10.asm` floppy sets AX=0003h, writes
+`SeaVGABIOS INT 10h mode 3` through AH=0Eh, pauses for a bounded host capture,
+sets AX=0013h and fills all 64,000 pixels with `offset & 255`. The probe checks
+the decoded text, both pixel-frame hashes and every graphics pixel. The media
+base stays read-only, with writes separate under the existing drive policy.
+Rebuild the 512-byte sector with `nasm -f bin seabios-int10.asm -o
+seabios-int10.bin` in `crates/machine-file/tests/fixtures`.
+
+All three CPU variants produce the same hashes:
+
+| Capture | Indexed pixel-frame SHA-256 |
+|---|---|
+| Diskless POST (mode 3, loaded font) | `a9ec051a7369ed33ca6cf8cc59b285469184ec326d0c8284d6eba6cf53cee99d` |
+| Explicit INT 10h mode 3 and teletype string | `31c39840f5599a9a16471b247e72a01d2c8092d86ba0350c5a0f354f5b4fd231` |
+| INT 10h mode 13h pattern | `825d409a82c363538f60248d866bb8462c28eb7ebdb0499bbd0188c6d0740f27` |
+
+POST stops at **6,199,121 retired instructions**, text capture at
+**6,065,851**, and the mode probe halts at **6,326,518**. Measured release
+wall times were 1.14–1.32 s to POST/text and 1.25–1.40 s for the complete
+mode probe. The INT 15h probes now retire 6,036,163 (16 MiB) and 6,036,133
+(4 MiB); reset/resume reaches 6,201,870, virtual time 6,365,088. The preceding
+serial-only measurements remain historical.
+
+The existing VGA register/memory implementation needed no changes. In
+particular, SeaVGABIOS's font loader selects plane 2 through the sequencer map
+mask and graphics map while preserving text planes; the rendered-font golden
+covers the result. No new VGA register coverage is claimed. These are normal
+tests, matching the existing SeaBIOS probes' few-second release tier.
+
+The pinned system BIOS still prints `No VGA found, scan for other display`
+before trying fw_cfg video ROMs. The successful probes require the subsequent
+option-ROM execution and installed VGA handler. SeaVGABIOS's supported COM1
+debug configuration supplies its banner and initialization lines; port 402h
+retains system-BIOS diagnostics. See the two pinned-source limitations in
+[`vendor/seabios/README.md`](../../../vendor/seabios/README.md#standard-vga-rom).
 
 Headless reproduction (the CLI prints COM1; the test also captures port 402h):
 

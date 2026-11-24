@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: AGPL-3.0-or-later
-# Build the pinned unemu SeaBIOS fork with the ISA configuration; see README.md.
+# Build the pinned unemu SeaBIOS and standard-VGA ROMs; see README.md.
 # Run from the repository root: nix develop .#firmware --command bash vendor/seabios/fetch.sh
 # Requires an i686-elf GCC/binutils cross toolchain, native C compiler, Python 3,
 # GNU make, git, tar, SHA-256 and standard shell tools. ACPI is off: no IASL.
@@ -32,6 +32,8 @@ SOURCE_TREE="81259d7b00535b6a9dd531d60cd907f4d9218c67"
 SOURCE_SHA256="f909c5f540c976ac6d323a51658350710f88b2a67afa8b832998dc126c517c94"
 CONFIG_SHA256="d1958e10e395c8eb00ea9e99ab1c6fe86cf1acb9a0480d0f7a1b551fa4fe8e2a"
 OUTPUT_SHA256="ad50fdb5e12a03dd5c17eac481a4183a7793b84252319eea02b8c878667c994f"
+VGA_CONFIG_SHA256="370f78d9c30db41bd155d7b360fbf5cd0d6e26e390e19c106c14d32dbf5b5d40"
+VGA_OUTPUT_SHA256="1adc6c0fa72b93c5d0659575c992b1bf6f64fd451c444b2a735e22f0a3d6e925"
 VERSION="1.17.0"
 EXTRAVERSION="-unemupc98-isa"
 
@@ -41,6 +43,7 @@ OUT="$HERE/bios-1.17.0-isa.bin"
 CROSS_PREFIX="${CROSS_PREFIX:-i686-elf-}"
 HOSTCC="${HOSTCC:-cc}"
 check_sha256 "$HERE/config" "$CONFIG_SHA256"
+check_sha256 "$HERE/vgaconfig" "$VGA_CONFIG_SHA256"
 
 if [ ! -d "$SRC_DIR/.git" ]; then
 	git clone "$REPO" "$SRC_DIR"
@@ -83,26 +86,29 @@ MAKE_ARGS=(
 	"EXTRAVERSION=$EXTRAVERSION"
 )
 make "${MAKE_ARGS[@]}" olddefconfig
-# Fail if a dependency silently changes any requested Kconfig setting.
-while IFS= read -r setting; do
-	case "$setting" in
-		CONFIG_*=*)
-			if ! grep -Fxq -- "$setting" "$BUILD_DIR/tree/.config"; then
-				echo "Kconfig did not preserve requested setting: $setting" >&2
-				exit 1
-			fi
-			;;
-		'# CONFIG_'*' is not set')
-			# Kconfig may omit options hidden by a disabled dependency.
-			symbol="${setting#\# }"
-			symbol="${symbol% is not set}"
-			if grep -q -- "^$symbol=" "$BUILD_DIR/tree/.config"; then
-				echo "Kconfig enabled an option requested off: $symbol" >&2
-				exit 1
-			fi
-			;;
-	esac
-done < "$HERE/config"
+verify_config() {
+	# Fail if a dependency silently changes any requested Kconfig setting.
+	while IFS= read -r setting; do
+		case "$setting" in
+			CONFIG_*=*)
+				if ! grep -Fxq -- "$setting" "$1/.config"; then
+					echo "Kconfig did not preserve requested setting: $setting" >&2
+					exit 1
+				fi
+				;;
+			'# CONFIG_'*' is not set')
+				# Kconfig may omit options hidden by a disabled dependency.
+				symbol="${setting#\# }"
+				symbol="${symbol% is not set}"
+				if grep -q -- "^$symbol=" "$1/.config"; then
+					echo "Kconfig enabled an option requested off: $symbol" >&2
+					exit 1
+				fi
+				;;
+		esac
+	done < "$2"
+}
+verify_config "$BUILD_DIR/tree" "$HERE/config"
 make "${MAKE_ARGS[@]}"
 
 IMAGE="$BUILD_DIR/tree/out/bios.bin"
@@ -133,5 +139,34 @@ then
 	exit 1
 fi
 check_sha256 "$IMAGE" "$OUTPUT_SHA256"
-cp "$IMAGE" "$OUT"
+if ! cmp -s "$IMAGE" "$OUT"; then
+	cp "$IMAGE" "$OUT"
+fi
 echo "built $OUT ($SIZE bytes) from $COMMIT"
+
+# A separate export keeps the system BIOS configuration and bytes independent.
+mkdir "$BUILD_DIR/vgatree"
+tar -xf "$BUILD_DIR/source.tar" -C "$BUILD_DIR/vgatree"
+cp "$HERE/vgaconfig" "$BUILD_DIR/vgatree/.config"
+printf '%s\n' "$VERSION" > "$BUILD_DIR/vgatree/.version"
+MAKE_ARGS[1]="$BUILD_DIR/vgatree"
+MAKE_ARGS[6]="EXTRAVERSION=-unemupc-stdvga"
+make "${MAKE_ARGS[@]}" olddefconfig
+verify_config "$BUILD_DIR/vgatree" "$HERE/vgaconfig"
+make "${MAKE_ARGS[@]}" out/vgabios.bin
+VGA_IMAGE="$BUILD_DIR/vgatree/out/vgabios.bin"
+VGA_SIZE="$(wc -c < "$VGA_IMAGE" | tr -d '[:space:]')"
+if [ "$VGA_SIZE" -ne 32768 ]; then
+	echo "unexpected VGA BIOS size: $VGA_SIZE bytes (expected 32768)" >&2
+	exit 1
+fi
+if ! grep -Fxq -- '#define BUILD_VERSION "1.17.0-unemupc-stdvga"' \
+	"$BUILD_DIR/vgatree/out/autovgaversion.h"; then
+	echo "non-reproducible SeaVGABIOS version" >&2
+	exit 1
+fi
+# Keep a symbol-aware 16-bit disassembly for the minimum-CPU audit.
+"${CROSS_PREFIX}objdump" -d -M i8086 "$BUILD_DIR/vgatree/out/vgarom.o" > "$HERE/build/vgabios.disasm"
+check_sha256 "$VGA_IMAGE" "$VGA_OUTPUT_SHA256"
+cp "$VGA_IMAGE" "$HERE/build/vgabios-1.17.0-stdvga.bin"
+echo "built $HERE/build/vgabios-1.17.0-stdvga.bin ($VGA_SIZE bytes) from $COMMIT"

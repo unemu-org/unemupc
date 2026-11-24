@@ -23,6 +23,12 @@ extended_kib = 15360
 image = "../vendor/seabios/bios-1.17.0-isa.bin"
 sha256 = "ad50fdb5e12a03dd5c17eac481a4183a7793b84252319eea02b8c878667c994f"
 
+# SeaBIOS receives this video ROM through fw_cfg and copies it to C0000h.
+[[firmware.option_roms]]
+image = "../vendor/seabios/build/vgabios-1.17.0-stdvga.bin"
+sha256 = "1adc6c0fa72b93c5d0659575c992b1bf6f64fd451c444b2a735e22f0a3d6e925"
+base = 0xC0000
+
 [[card]]
 kind = "vga"
 

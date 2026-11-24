@@ -158,6 +158,7 @@ pub const MACHINE_KEYS: &[Row] = &[
 /// release that does not list an entry refuses its bytes.
 pub const CATALOGUE: &[Row] = &[
     ("seabios-1.17.0-unemu1-isa", NEXT_RELEASE),
+    ("seavgabios-1.17.0-unemu1-stdvga", NEXT_RELEASE),
     ("kiselev-xi8088-1.0.2", BASELINE),
     ("kiselev-xi8088-1.0.2-atreset", BASELINE),
     ("unemu-at-bios-1.0.2-unemu.3", BASELINE),
@@ -689,6 +690,16 @@ mod tests {
                 .map(nvram_mode),
         );
         all
+    }
+
+    #[test]
+    fn seavgabios_requires_the_next_core_release() {
+        let entry = assembly::BoardModel::Generic386Isa
+            .firmware_catalogue()
+            .iter()
+            .find(|entry| entry.id == "seavgabios-1.17.0-unemu1-stdvga")
+            .unwrap();
+        assert_eq!(firmware(entry.sha256, entry.size).unwrap(), NEXT_RELEASE);
     }
 
     #[test]

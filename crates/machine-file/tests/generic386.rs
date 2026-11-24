@@ -28,3 +28,13 @@ fn generic386_seabios_keyboard_reset_reaches_resume() {
 fn generic386_seabios_int15_memory_matches_e820() {
     generic_isa::seabios_int15_memory_matches_e820(assembly::CpuChip::I80386);
 }
+
+#[test]
+fn generic386_seabios_int10_modes_have_golden_frames() {
+    generic_isa::seabios_int10_modes_have_golden_frames(assembly::CpuChip::I80386);
+}
+
+#[test]
+fn generic386_seabios_rejects_relocated_video_rom_with_position() {
+    generic_isa::seabios_rejects_relocated_video_rom_with_position(assembly::CpuChip::I80386);
+}

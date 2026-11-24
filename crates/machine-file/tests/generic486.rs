@@ -106,3 +106,18 @@ fn generic486_machine_file_requires_explicit_cpu_and_integrated_fpu() {
         }
     }
 }
+
+#[test]
+fn generic486_dx_seabios_int10_modes_have_golden_frames() {
+    generic_isa::seabios_int10_modes_have_golden_frames(assembly::CpuChip::I80486Dx);
+}
+
+#[test]
+fn generic486_cpuid_seabios_int10_modes_have_golden_frames() {
+    generic_isa::seabios_int10_modes_have_golden_frames(assembly::CpuChip::I80486DxCpuid);
+}
+
+#[test]
+fn generic486_dx_seabios_rejects_relocated_video_rom_with_position() {
+    generic_isa::seabios_rejects_relocated_video_rom_with_position(assembly::CpuChip::I80486Dx);
+}

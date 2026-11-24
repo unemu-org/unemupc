@@ -100,7 +100,10 @@ impl BoardModel {
                 crate::FirmwareEntry::XUB_R638_AT,
                 crate::FirmwareEntry::XUB_R638_XTP_ATA1F0,
             ],
-            Self::Generic386Isa | Self::Generic486Isa => &[crate::firmware::SEABIOS_1_17_0_ISA],
+            Self::Generic386Isa | Self::Generic486Isa => &[
+                crate::firmware::SEABIOS_1_17_0_ISA,
+                crate::firmware::SEAVGABIOS_1_17_0_STDVGA,
+            ],
             Self::Bare => &[],
         }
     }

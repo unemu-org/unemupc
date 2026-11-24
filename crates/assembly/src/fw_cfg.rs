@@ -5,7 +5,19 @@
 //! SeaBIOS romfile_loadint reads etc/sercon-port as a little-endian integer.
 //! See `backlog/docs/design/machine-config.md` §Emulator-only firmware configuration.
 
-use crate::{ConfigError, DeviceId, DeviceKind, FwCfgCfg, FwCfgFile, MachineConfig};
+use crate::{
+    ConfigError, DeviceId, DeviceKind, FwCfgCfg, FwCfgFile, ImageKind, ImageSource, LoadImage,
+    MachineConfig,
+};
+
+// SeaBIOS optionroms.c vgarom_setup clears adapter shadow RAM before it
+// deploys vgaroms/ files. Keep the ordinary ROM source and validation path,
+// but let firmware perform the copy and initialization itself. Its allocator
+// starts at C0000h regardless of the filename (optionroms.c run_file_roms;
+// malloc.c rom_reserve / rom_confirm), so only that base can be represented.
+pub(crate) fn video_rom_file(machine: &MachineConfig, image: &LoadImage) -> bool {
+    machine.board.is_generic_isa() && image.kind == ImageKind::Rom && image.base == 0xC0000
+}
 
 pub(crate) fn files(
     machine: &MachineConfig,
@@ -28,6 +40,25 @@ pub(crate) fn files(
         files.push(FwCfgFile {
             name: "etc/sercon-port".into(),
             bytes: port.to_le_bytes().into(),
+        });
+    }
+    for image in machine
+        .images
+        .iter()
+        .filter(|image| video_rom_file(machine, image))
+    {
+        let bytes = match &image.source {
+            ImageSource::Inline(bytes) => bytes.as_slice(),
+            ImageSource::RomContainer { bytes, offset } => match bytes.get(*offset..) {
+                Some(bytes) => bytes,
+                None => continue,
+            },
+            // Validation also runs before the normal firmware loader resolves files.
+            _ => continue,
+        };
+        files.push(FwCfgFile {
+            name: "vgaroms/vga-c0000.bin".into(),
+            bytes: bytes.to_vec(),
         });
     }
     devices::FwCfg::validate_files(&files)
@@ -269,5 +300,43 @@ mod tests {
                 .unwrap(),
             b"QEMU"
         );
+    }
+}
+
+#[cfg(test)]
+mod video_tests {
+    use super::*;
+
+    #[test]
+    fn generic_isa_video_rom_uses_owned_fw_cfg_bytes_without_a_second_source() {
+        let mut config = crate::at_boot(vec![0xF4]);
+        config.board = crate::BoardModel::Generic386Isa;
+        let mut bytes = vec![0; 512];
+        bytes[..3].copy_from_slice(&[0x55, 0xAA, 1]);
+        config.images.push(LoadImage {
+            base: 0xC0000,
+            source: ImageSource::Inline(bytes.clone()),
+            kind: ImageKind::Rom,
+            provides: vec![],
+        });
+        let cfg = FwCfgCfg::default();
+        let files = files(&config, DeviceId::FwCfg, &cfg).unwrap();
+        assert_eq!(
+            files,
+            vec![FwCfgFile {
+                name: "vgaroms/vga-c0000.bin".into(),
+                bytes,
+            }]
+        );
+        config.images.last_mut().unwrap().source = ImageSource::Inline(vec![0xFF; 512]);
+        assert_eq!(&files[0].bytes[..3], &[0x55, 0xAA, 1]);
+        config.board = crate::BoardModel::Ibm5170;
+        assert!(super::files(&config, DeviceId::FwCfg, &cfg)
+            .unwrap()
+            .is_empty());
+        config.board = crate::BoardModel::Bare;
+        assert!(super::files(&config, DeviceId::FwCfg, &cfg)
+            .unwrap()
+            .is_empty());
     }
 }
