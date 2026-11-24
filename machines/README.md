@@ -1,18 +1,25 @@
 # Machine descriptions
 
-`generic-386-seabios.toml` describes the first 80386DX ISA board: 640 KiB
-conventional plus 15 MiB extended RAM, unmodified SeaBIOS 1.17.0 ISA,
-register-level VGA and COM1. The board supplies 128-byte CMOS, port 92h,
-fw_cfg with `etc/sercon-port`, and the 402h debug console. SeaVGABIOS is not
-included yet. Build the pinned firmware with `vendor/seabios/fetch.sh` in
-the firmware devShell, then use `unemupc machine check` on this file.
-At CPU pin `99ed385e`, reset executes and SeaBIOS emits its version banner
-on port 402h. POST then stops at protected-mode `BT EDX,21` (`0F BA E2 15`)
-at `0008:000F5067`, refused by x86jit as `LegacyInstruction`. COM1 is still
-empty, and this profile is not boot-qualified. See
-[the board description](../backlog/docs/design/machine-files.md#generic-386-isa-board)
-for RAM limits and the current 4 GiB backend backing requirement.
+`generic-386-seabios.toml` and `generic-486-seabios.toml` describe diskless
+ISA boards with the pinned unemu SeaBIOS 1.17.0 fork, SeaVGABIOS,
+register-level VGA and COM1. Both have 640 KiB conventional plus 15 MiB
+extended RAM. The board supplies 128-byte CMOS, port 92h, fw_cfg with
+`etc/sercon-port`, and the 402h debug console. Build the pinned firmware
+with `vendor/seabios/fetch.sh` in the firmware devShell. The diskless
+profiles reach `No bootable device.` and retain their existing goldens.
 
+`generic-386-freedos.toml` and `generic-486-freedos.toml` extend those
+profiles with the pinned FreeDOS 1.44 MB floppy in A:. Their `-ide.toml`
+counterparts extend the floppy profiles with the readonly `vendor/hdd/fat16.img`
+primary master (615 cylinders, 4 heads, 17 sectors per track). SeaBIOS supplies
+both floppy and ATA INT 13h services directly; no XTIDE option ROM is needed.
+Fetch media with `vendor/freedos/fetch.sh` and `vendor/hdd/build.sh`.
+All three CPU choices (80386DX, early 486DX, CPUID 486DX) reach `A:\>` and
+list the UNEMUHDD volume's 29-byte MARKER.TXT with `DIR C:`. The shipped 486
+files select `80486dx`; overriding `cpu.model` to `80486dx-cpuid` selects
+the other variant. These profiles boot from A:, while C: is a data disk;
+booting directly from C: needs a separate bootable fixture and qualification.
+See [the board description](../backlog/docs/design/machine-files.md#generic-386-isa-board).
 
 `at-freedos.toml` and its equivalent `at-freedos.yaml` describe the current
 IBM PC/AT-class FreeDOS machine:

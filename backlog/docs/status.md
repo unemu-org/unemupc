@@ -1,5 +1,30 @@
 # Status
 
+## FreeDOS on generic ISA boards (2026-11-24)
+
+**MEASURED**, CPU pin `5a17667764080c2fe7a33d446584a3e175b7923d`:
+80386DX, early 80486DX and CPUID 80486DX boot FreeDOS kernel 2044 and
+FreeCOM 0.86 through SeaBIOS to `A:\>`. The new `generic-386-freedos.toml`
+and `generic-486-freedos.toml` use the existing pinned 1.44 MB floppy;
+the `generic-386-ide.toml` and `generic-486-ide.toml` profiles add the existing
+readonly 615/4/17 FAT16 C:. SeaBIOS identifies the primary master, and
+`DIR C:` lists UNEMUHDD's 29-byte MARKER.TXT before returning to `A:\>`.
+
+All three models agree: 8,518,775 retired instructions to the floppy-only
+prompt, 8,516,488 with IDE, and 11,191,270 after DIR C:. Release probes take
+approximately 1.1–1.8 s and remain normal tests with bounded virtual budgets.
+They check decoded VGA text, serial prompt output and ATA POST diagnostics.
+CMOS 10h/14h, both drive slots, boot order and disk geometry are tested;
+existing board validation, capability choices, DMA, FDC and IDE behavior
+already suffice. No device or CPU fix was required; no CPU boundary occurred.
+The diskless profiles and their goldens remain unchanged.
+
+Direct boot from C: is a follow-up requiring a bootable hard-disk fixture;
+the existing FAT16 fixture is data-only. See
+[storage contract](design/firmware-and-machine-classes.md#isa-floppy-and-ata-boot-contract-2026-11-24)
+and [machine profiles](design/machine-files.md#freedos-floppy-and-ide-profiles).
+
+
 ## SeaVGABIOS on generic ISA boards (2026-11-24)
 
 Both shipped 386/486 profiles now name the Listed
@@ -19,7 +44,7 @@ retired instructions. A new read-only in-memory floppy probe sets mode 3,
 prints a known string via INT 10h AH=0Eh, then sets mode 13h and draws a
 64,000-pixel pattern, halting at **6,326,518** retired instructions. Decoded
 text, all graphics pixels and three font/pixel frame hashes agree across
-all CPUs. POST and the mode probe take **1.1–1.4 s** each in release and
+all CPUs. POST and the mode probe take **1.1–1.8 s** each in release and
 remain normal tests. Existing INT 15h probes now retire **6,036,163** at
 16 MiB and **6,036,133** at 4 MiB; reset/resume reaches **6,201,870**.
 No VGA device changes or additional register coverage were needed.
@@ -28,7 +53,7 @@ The pinned BIOS still emits `No VGA found, scan for other display` before
 loading fw_cfg video ROMs. VGA initialization diagnostics use COM1 because
 the VGA linker discards the system-BIOS port-debug variable. Both source
 limitations are documented in vendor/seabios/README.md; neither changes
-successful video initialization. Guest OS boot remains unqualified.
+successful video initialization. FreeDOS qualification is recorded above.
 The serial-only counts in the older board entries below are historical.
 
 ## test386 full-machine validation (2026-11-24)
@@ -116,8 +141,8 @@ retired instructions**, identically on repeated runs. Delivery records agree
 between Deadline and PerClock and across bounded run chunks. This qualifies
 unpaged execution only: paging, I/O bitmaps and a DOS extender remain pending.
 
-`seabios-1.17.0-unemu1-isa` remains **Listed**, not boot-qualified. The
-fixture now builds from the source of truth, `unemu-org/seabios`, commit
+`seabios-1.17.0-unemu1-isa` remains **Listed**; the exact FreeDOS profiles
+are qualified above. The fixture now builds from the source of truth, `unemu-org/seabios`, commit
 `7da2116237ed8916970795b0d8cae5bf6e277d0a`: upstream rel-1.17.0 plus its
 documented 80386 fix set (`README.unemu.md`). The first fix computes
 `__swab32` in C instead of using the 486-only `BSWAP`; fixes go upstream

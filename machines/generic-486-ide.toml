@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+schema = 1
+extends = "generic-486-freedos.toml"
+name = "generic-486-ide"
+description = "ISA board booting FreeDOS from A: with a readonly IDE C: through SeaBIOS"
+
+[[card]]
+kind = "ide"
+port = 0x1F0
+irq = 14
+
+[[card.drives]]
+channel = "master"
+image = "../vendor/hdd/fat16.img"
+sha256 = "e97f1eb42c1dcef1a2fbf9541135b22a955704836088c46bd280d27780e9ba2d"
+geometry = { cylinders = 615, heads = 4, sectors = 17 }
+write = "readonly"

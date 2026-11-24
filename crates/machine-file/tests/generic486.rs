@@ -121,3 +121,33 @@ fn generic486_cpuid_seabios_int10_modes_have_golden_frames() {
 fn generic486_dx_seabios_rejects_relocated_video_rom_with_position() {
     generic_isa::seabios_rejects_relocated_video_rom_with_position(assembly::CpuChip::I80486Dx);
 }
+
+#[test]
+fn generic486_dx_seabios_freedos_reaches_prompt() {
+    generic_isa::seabios_freedos_reaches_prompt(assembly::CpuChip::I80486Dx, false);
+}
+
+#[test]
+fn generic486_cpuid_seabios_freedos_reaches_prompt() {
+    generic_isa::seabios_freedos_reaches_prompt(assembly::CpuChip::I80486DxCpuid, false);
+}
+
+#[test]
+fn generic486_dx_seabios_freedos_lists_readonly_ide_marker() {
+    generic_isa::seabios_freedos_reaches_prompt(assembly::CpuChip::I80486Dx, true);
+}
+
+#[test]
+fn generic486_cpuid_seabios_freedos_lists_readonly_ide_marker() {
+    generic_isa::seabios_freedos_reaches_prompt(assembly::CpuChip::I80486DxCpuid, true);
+}
+
+#[test]
+fn generic486_dx_seabios_storage_configuration() {
+    generic_isa::seabios_storage_configuration(assembly::CpuChip::I80486Dx);
+}
+
+#[test]
+fn generic486_cpuid_seabios_storage_configuration() {
+    generic_isa::seabios_storage_configuration(assembly::CpuChip::I80486DxCpuid);
+}

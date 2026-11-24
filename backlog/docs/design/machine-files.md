@@ -447,9 +447,9 @@ The current CPU executes F3 90 and F2 90 as NOP on every model, so SeaBIOS
 `cpu_relax` needs no option. x86jit plans an I80386 option for other REP
 prefixes on non-string instructions (default #UD per the 80386 PRM); the
 board does not need it for SeaBIOS. No new CPU boundary was observed.
-The fixture remains Listed; guest OS boot, TSS I/O bitmap and paging
-remain separate work. The counts above precede SeaVGABIOS; see below for
-the current video-qualified probes.
+The fixture remains Listed; TSS I/O bitmap and paging remain separate work.
+The counts above precede SeaVGABIOS; see below for the current video probes
+and FreeDOS floppy/readonly-IDE qualification.
 
 #### SeaVGABIOS delivery and mode-set qualification
 
@@ -533,6 +533,37 @@ cargo run --offline -p unemupc -- run --machine machines/generic-386-seabios.tom
 
 The board's default rate is one retired step per PIT clock, an uncalibrated
 deterministic policy rather than an instruction-cycle model.
+
+#### FreeDOS floppy and IDE profiles
+
+`machines/generic-386-freedos.toml` extends the diskless SeaBIOS profile
+with an FDC at 3F0h (IRQ6, motherboard 8237 channel 2) and the existing
+SHA-256-pinned 1.44 MB FreeDOS A: image. `generic-386-ide.toml` adds the
+existing readonly FAT16 primary master, geometry 615/4/17, at 1F0h/3F6h,
+IRQ14. SeaBIOS provides both disk services; there is no XTIDE ROM. The
+`generic-486-freedos.toml` and `generic-486-ide.toml` profiles use the same
+storage and the early DX CPU; the shared tests also select `80486dx-cpuid`.
+The diskless profiles and their hashes remain unchanged.
+
+**READ:** both boards already permit these cards and supply the DMA controller.
+The shared CMOS derivation advertises A: as type 4 in byte 10h (`40h`),
+sets equipment bit 0 at 14h, and preserves the integrated-FPU bit on 486.
+Adding a 1.2 MB B: gives byte 10h=`42h` and equipment count bits `40h`;
+removing both floppy drives clears these fields. The QEMU layout supplies
+boot order `3Dh=21h`, `38h=00h` (floppy then hard disk), primary type 47
+geometry and no ATA translation for 615/4/17. Tests verify both derivation
+and the assembled RTC reads, card capability choices, and FDC IRQ/DMA wiring.
+
+**MEASURED**, CPU pin `5a176677`, all three models: FreeDOS kernel 2044
+and FreeCOM 0.86 reach `A:\>` at 8,518,775 retired instructions without IDE,
+or 8,516,488 with IDE. SeaBIOS identifies `ata0-0` as the 20 MiB hard disk;
+`DIR C:` lists UNEMUHDD and the 29-byte MARKER.TXT, returning to `A:\>` at
+11,191,270 retired instructions. Each normal test polls VGA text every
+100,000 virtual steps, injects two Enter keys at the date prompt, and has
+a 20,000,000-step cap. VGA text hashes, exact retired counts and serial
+prompt output are checked. Release wall time is approximately 1.1–1.8 s.
+C: remains the existing data-only fixture; direct C: boot is a follow-up.
+No CPU boundary or device change was needed.
 
 ### Generic 486 ISA board
 

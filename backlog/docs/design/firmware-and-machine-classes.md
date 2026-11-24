@@ -627,23 +627,55 @@ hostname suffix, before checking output SHA-256.
 | `vendor/seabios/bios-1.17.0-isa.bin` | Built from the fork; two independent builds matched by `cmp` (MEASURED); output SHA-256 pinned in the fixture | `seabios-1.17.0-unemu1-isa`, Listed, on `generic-386-isa`; diskless POST, INT 15h memory queries and keyboard reset/resume pass at `b7c10b6f` |
 
 The board and catalogue entry assemble and run diskless POST to the boot
-failure message; no guest OS boot is qualified yet. QEMU's prebuilt
+failure message; the FreeDOS profiles below additionally qualify floppy boot.
+QEMU's prebuilt
 `bios.bin` is not used; its MPTABLE and other platform settings deliberately
 differ. Input and output hashes are recorded in the fixture README, together
 with the 2026-11-24 two-build measurement on macOS arm64 using i686-elf GCC
 15.2.0 and binutils 2.46 from the flake-pinned nixpkgs.
+
+#### ISA floppy and ATA boot contract (2026-11-24)
+
+Source paths below are relative to the cached fork checkout at
+`vendor/seabios/src/` (rel-1.17.0, fork pin recorded in the fixture README).
+
+| Evidence | Firmware requirement | Board implementation |
+|---|---|---|
+| READ `src/hw/floppy.c:147–173`, `:90–99` | CONFIG_QEMU reads CMOS 10h; high/low nibbles describe A:/B: (4 = 1.44 MB, 2 = 1.2 MB); IRQ6 | Shared CMOS derivation and FDC wiring already cover both generic boards |
+| READ `src/hw/floppy.c:24–28`, `:197–214`, `:533–545`; `src/hw/dma.c:11–55` | 765 at 3F0h; DOR at 3F2h; FIFO at 3F5h; 8237 byte channel 2, address/count 04h/05h, page 81h, single transfer mode | Existing FDC and motherboard DMA; no device behavior change required |
+| READ `src/hw/ata.c:1019–1029` | CONFIG_QEMU with no PCI devices probes ISA primary and secondary ATA with IRQ14/15 (1F0h/3F6h, 170h/376h) | Primary IDE card at its standard resources; absent secondary channel remains open bus |
+| READ `src/hw/ata.c:768–814`; `src/block.c:80–90` | IDENTIFY supplies capacity/CHS; QEMU CMOS 39h supplies translation bits | Existing IDENTIFY and type-47 CMOS seed; 615/4/17 needs translation 0; CMOS disk-type bytes do not discover the ATA drive |
+| READ `src/boot.c:254`, `:460–495` | Without fw_cfg bootorder, CONFIG_QEMU uses CMOS 3Dh and 38h; static non-QEMU defaults are superseded | Existing `3Dh=21h`, `38h=00h` selects floppy then hard disk with floppy signature checking |
+
+`vendor/seabios/config` enables CONFIG_QEMU and disables PCI BIOS and PCI
+storage drivers while retaining ISA floppy/ATA. Both generic boards already
+allow FDC/IDE cards through validation and capability choices. Tests now
+verify CMOS 10h/14h, boot-order and ATA CMOS bytes through actual RTC ports,
+as well as both floppy slots' derived types and equipment count.
+
+**MEASURED:** `generic-386-freedos.toml` and `generic-486-freedos.toml`
+boot the existing pinned FreeDOS floppy to `A:\>`; the `-ide.toml` profiles
+also expose the existing readonly FAT16 C: through SeaBIOS's native ATA
+driver. Shared normal goldens cover 80386DX, 80486DX and 80486DX-CPUID,
+assert VGA text, serial prompt, disk identification and a completed
+`DIR C:` listing of MARKER.TXT. Counts and budgets are in
+[machine-files.md §FreeDOS floppy and IDE profiles](machine-files.md#freedos-floppy-and-ide-profiles).
+No CPU boundary was observed. Direct C: boot requires a separate bootable
+hard-disk fixture and remains a follow-up; it is not tested by these profiles.
+The catalogue remains Listed; this is qualification of these exact profiles
+and pins, not a change to the catalogue's general firmware status.
 
 **Implemented catalogue entry.** `seabios-1.17.0-unemu1-isa` is **Listed**, not
 Tested: a 131,072-byte system BIOS at E0000h, SHA-256
 `ad50fdb5e12a03dd5c17eac481a4183a7793b84252319eea02b8c878667c994f`.
 It is open firmware (LGPL-3.0-only), built by `vendor/seabios/fetch.sh`
 from the fork commit `7da2116237ed8916970795b0d8cae5bf6e277d0a`.
-The catalogue declares an 80386 minimum, AT keyboard/PICs and 128-byte CMOS. It belongs only to
-`generic-386-isa`, provides floppy/fixed-disk services and enables
+The catalogue declares an 80386 minimum, AT keyboard/PICs and 128-byte CMOS. It belongs to both
+`generic-386-isa` and `generic-486-isa`, provides floppy/fixed-disk services and enables
 `cmos-qemu-layout`. It has no pre-mapped ROM scan window. The shipped
 `machines/generic-386-seabios.toml` supplies register-level VGA and COM1;
 the board supplies fw_cfg/SERCON, port 92h and the 402h console.
-SeaVGABIOS delivery remains pending. See
+SeaVGABIOS is supplied through fw_cfg. See
 [machine-files.md §Generic 386 ISA board](machine-files.md#generic-386-isa-board)
 for RAM limits, the 4 GiB sparse reservation, numeric commitment and the POST
 execution boundary.

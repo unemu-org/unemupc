@@ -82,13 +82,23 @@ pub fn shipped_file_has_listed_pinned_firmware_and_assembles(chip: CpuChip) {
     let path = temp.path().join("catalogue.toml");
     std::fs::write(&path, input).unwrap();
     assert!(machine_file::load_for_assembly(&path, Default::default()).is_err());
-    let catalogue_named = machine_file::load_for_assembly_with_rom_dirs(
-        &path,
-        Default::default(),
-        &[root.join("build")],
-    )
-    .unwrap()
-    .config;
+    // Discovery intentionally refuses links outside its root; fixture caches
+    // may be linked, so give this test its own copy inside the search root.
+    let rom_dir = temp.path().join("roms");
+    std::fs::create_dir(&rom_dir).unwrap();
+    let video = config
+        .images
+        .iter()
+        .find(|image| image.base == 0xC0000)
+        .unwrap();
+    let assembly::ImageSource::Inline(bytes) = &video.source else {
+        panic!("fixture should be inline");
+    };
+    std::fs::write(rom_dir.join("vgabios-1.17.0-stdvga.bin"), bytes).unwrap();
+    let catalogue_named =
+        machine_file::load_for_assembly_with_rom_dirs(&path, Default::default(), &[rom_dir])
+            .unwrap()
+            .config;
     assert_eq!(catalogue_named, config);
     let mut machine = machine_file::assemble(&config).unwrap();
     let mut tail = [0; 16];
@@ -765,4 +775,262 @@ fn template(chip: CpuChip) -> String {
             &format!("model = \"{}\"", chip.name()),
         )
     }
+}
+
+fn freedos_config(chip: CpuChip, ide: bool) -> Option<assembly::MachineConfig> {
+    shipped(chip)?;
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    for name in ["freedos/freedos.img", "hdd/fat16.img"] {
+        if name.starts_with("hdd/") && !ide {
+            continue;
+        }
+        if !root.join("vendor").join(name).exists() {
+            assert!(
+                std::env::var_os("UNEMUPC_REQUIRE_FIXTURES").is_none(),
+                "required storage fixture is missing: {name}"
+            );
+            eprintln!("skipping: storage fixture is missing: {name}");
+            return None;
+        }
+    }
+    let bits = if chip == CpuChip::I80386 { 386 } else { 486 };
+    let storage = if ide { "ide" } else { "freedos" };
+    let path = root.join(format!("machines/generic-{bits}-{storage}.toml"));
+    let mut config = machine_file::load_for_assembly(path, Default::default())
+        .unwrap()
+        .config;
+    config.cpu.chip = chip;
+    Some(config)
+}
+
+/// IBM Personal Computer AT Technical Reference, System Board, CMOS RAM
+/// Information: drive-type nibbles at 10h and drive count at 14h. SeaBIOS
+/// rel-1.17.0, floppy.c floppy_setup consumes those same type nibbles.
+pub fn seabios_storage_configuration(chip: CpuChip) {
+    for ide in [false, true] {
+        let Some(mut config) = freedos_config(chip, ide) else {
+            return;
+        };
+        config.validate().unwrap();
+        let fdc = config
+            .devices
+            .iter()
+            .find(|d| d.id == DeviceId::Fdc)
+            .unwrap();
+        assert_eq!(fdc.irq, Some(6));
+        assert_eq!(
+            fdc.dma,
+            Some(assembly::DmaSpec {
+                controller: DeviceId::Dma,
+                channel: 2
+            })
+        );
+        assert!(config
+            .devices
+            .iter()
+            .any(|d| d.id == DeviceId::Dma && matches!(d.kind, DeviceKind::Dma(_))));
+        let draft = assembly::capabilities::Draft::new(config.clone());
+        let descriptor = assembly::capabilities::describe(&draft, "card[fdc-765].kind").unwrap();
+        let assembly::capabilities::Domain::Values(kinds) = descriptor.domain else {
+            panic!("expected card kinds");
+        };
+        for kind in ["fdc-765", "ide"] {
+            assert!(kinds.contains(&assembly::capabilities::Value::Name(kind.into())));
+        }
+        let fpu = if chip == CpuChip::I80386 { 0 } else { 2 };
+        let seed = assembly::derive_cmos_layout(&config).unwrap();
+        assert_eq!((seed[0x10], seed[0x14]), (0x40, 1 | fpu));
+        assert_eq!((seed[0x3D], seed[0x38]), (0x21, 0));
+        assert_eq!(
+            (seed[0x12], seed[0x19], seed[0x39]),
+            if ide { (0xF0, 47, 0) } else { (0, 0, 0) }
+        );
+        let mut machine = machine_file::assemble(&config).unwrap();
+        for index in [0x10u8, 0x14, 0x12, 0x19, 0x3D, 0x38, 0x39] {
+            machine
+                .machine
+                .bus_mut()
+                .port_write(0x70, 1, u32::from(index))
+                .unwrap();
+            assert_eq!(
+                machine.machine.bus_mut().port_read(0x71, 1).unwrap(),
+                u32::from(seed[usize::from(index)])
+            );
+        }
+        // The second slot must contribute its own type and the equipment count.
+        let mut second = config.drives[0].clone();
+        second.unit = 1;
+        second.kind = assembly::DriveKind::Floppy {
+            geometry: assembly::FloppyGeometry::HD_1_2,
+        };
+        config.drives.push(second);
+        let seed = assembly::derive_cmos_layout(&config).unwrap();
+        assert_eq!((seed[0x10], seed[0x14]), (0x42, 0x41 | fpu));
+        config
+            .drives
+            .retain(|d| !matches!(d.kind, assembly::DriveKind::Floppy { .. }));
+        let seed = assembly::derive_cmos_layout(&config).unwrap();
+        assert_eq!((seed[0x10], seed[0x14]), (0, fpu));
+    }
+}
+
+fn freedos_text(assembled: &assembly::AssembledMachine) -> String {
+    let video::Frame::Text(grid) = assembled.capture_text(DeviceId::Vga).unwrap().frame else {
+        panic!("expected VGA text");
+    };
+    let text = grid.rows_as_strings().join("\n");
+    if text.contains("A:\\>") {
+        assert_eq!((grid.cols(), grid.rows()), (80, 25));
+    }
+    text
+}
+
+fn text_sha256(text: &str) -> String {
+    use sha2::Digest;
+    format!("{:x}", sha2::Sha256::digest(text.as_bytes()))
+}
+
+/// SeaBIOS rel-1.17.0, floppy.c floppy_read and ata.c ata_scan; ATA-2,
+/// §§6.1–6.2, legacy task file. The immutable fixtures use the same media
+/// pins as the AT profiles, exercising BIOS disk services without XTIDE.
+pub fn seabios_freedos_reaches_prompt(chip: CpuChip, ide: bool) {
+    let Some(config) = freedos_config(chip, ide) else {
+        return;
+    };
+    let policy = assembly::ObservationPolicy {
+        routes: vec![
+            assembly::ObservationRequest {
+                device: DeviceId::Vga,
+                output: assembly::OutputKind::TextScanout,
+                byte_limit: 0,
+            },
+            assembly::ObservationRequest {
+                device: DeviceId::Uart,
+                output: assembly::OutputKind::Bytes(device::ByteStreamKind::SerialTx),
+                byte_limit: 65536,
+            },
+            assembly::ObservationRequest {
+                device: DeviceId::DebugConsole,
+                output: assembly::OutputKind::Bytes(device::ByteStreamKind::DebugConsole),
+                byte_limit: 65536,
+            },
+        ],
+        ..Default::default()
+    };
+    let mut assembled = machine_file::assemble_with_observation(&config, &policy).unwrap();
+    assembled.machine.enable_delivery_log().unwrap();
+    let started = std::time::Instant::now();
+    let mut entered = false;
+    let mut prompt = None;
+    for cap in (100_000..=20_000_000).step_by(100_000) {
+        let result = assembled.machine.run_bounded(Some(cap));
+        if let Err(machine::MachineError::Cpu(error)) = &result {
+            eprintln!(
+                "CPU BOUNDARY: retired={}\n{}",
+                assembled.machine.cpu().retired(),
+                freedos_text(&assembled)
+            );
+            if let Some(report) = assembled.machine.cpu().stop_report(error) {
+                eprintln!("{report}");
+            }
+            eprintln!("deliveries: {:#?}", assembled.machine.recent_deliveries());
+        }
+        result.unwrap();
+        let screen = freedos_text(&assembled);
+        if screen.contains("A:\\>") {
+            prompt = Some((cap, screen));
+            break;
+        }
+        if !entered && screen.contains("Enter new date") {
+            let keyboard = assembled.device_index[&DeviceId::Keyboard];
+            assembly::inject_scancodes(&mut assembled.machine, keyboard, &[0x1c, 0x9c, 0x1c, 0x9c]);
+            entered = true;
+        }
+    }
+    let (cap, screen) = prompt.unwrap_or_else(|| {
+        panic!(
+            "FreeDOS prompt budget exhausted\n{}",
+            freedos_text(&assembled)
+        )
+    });
+    eprintln!(
+        "{} FreeDOS ide={ide}: retired: {}; wall: {:?}; text SHA-256: {}\n{screen}",
+        chip.name(),
+        assembled.machine.cpu().retired(),
+        started.elapsed(),
+        text_sha256(&screen)
+    );
+    assert_eq!(
+        text_sha256(&screen),
+        if ide {
+            "4a873e897c0d8e8f3d49a6ae2a507f8d5af59b4b507f5a312ce0242c16c9c9de"
+        } else {
+            "23ae5be81a6c6b1c0059f930424a545d63ec92d548d3f1031b86919e1abf8ef5"
+        }
+    );
+    assert!(screen.contains("FreeDOS kernel 2044"));
+    assert!(screen.contains("FreeCom version 0.86"));
+    assert_eq!(
+        assembled.machine.cpu().retired(),
+        if ide { 8_516_488 } else { 8_518_775 }
+    );
+    let serial = assembled
+        .observation
+        .drain_bytes(DeviceId::Uart, device::ByteStreamKind::SerialTx)
+        .unwrap();
+    let debug = assembled
+        .observation
+        .drain_bytes(DeviceId::DebugConsole, device::ByteStreamKind::DebugConsole)
+        .unwrap();
+    let serial = String::from_utf8_lossy(&serial);
+    let debug = String::from_utf8_lossy(&debug);
+    eprintln!("serial:\n{serial}\ndebug:\n{debug}");
+    assert!(serial.contains("FreeDOS kernel 2044"));
+    assert!(serial.contains("A:\\>"));
+    assert!(debug.contains("Booting from Floppy..."));
+    if !ide {
+        return;
+    }
+    assert!(debug.contains("ata0-0: UNEMU ATA-2 PIO DISK ATA-0 Hard-Disk (20 MiBytes)"));
+    assert!(!debug.contains("Booting from Hard Disk..."));
+    let keyboard = assembled.device_index[&DeviceId::Keyboard];
+    assembly::inject_scancodes(
+        &mut assembled.machine,
+        keyboard,
+        &[
+            0x20, 0xa0, 0x17, 0x97, 0x13, 0x93, 0x39, 0xb9, 0x2e, 0xae, 0x2a, 0x27, 0xa7, 0xaa,
+            0x1c, 0x9c,
+        ],
+    );
+    for dir_cap in ((cap + 100_000)..=20_000_000).step_by(100_000) {
+        assembled.machine.run_bounded(Some(dir_cap)).unwrap();
+        let text = freedos_text(&assembled);
+        if text.contains("MARKER") && text.lines().any(|line| line.trim() == "A:\\>") {
+            eprintln!(
+                "{} DIR C: retired: {}; wall: {:?}; text SHA-256: {}\n{text}",
+                chip.name(),
+                assembled.machine.cpu().retired(),
+                started.elapsed(),
+                text_sha256(&text)
+            );
+            assert!(text.contains("Volume in drive C is UNEMUHDD"));
+            assert!(text
+                .lines()
+                .any(|line| line.split_whitespace().take(3).eq(["MARKER", "TXT", "29"])));
+            assert_eq!(
+                text_sha256(&text),
+                "b133385b48060a0c721bfdc1f4f572525bea81eb94303d74b25d9a5e0f24b323"
+            );
+            let serial = assembled
+                .observation
+                .drain_bytes(DeviceId::Uart, device::ByteStreamKind::SerialTx)
+                .unwrap();
+            let serial = String::from_utf8_lossy(&serial);
+            assert!(serial.contains("MARKER"));
+            assert!(serial.contains("A:\\>"));
+            assert_eq!(assembled.machine.cpu().retired(), 11_191_270);
+            return;
+        }
+    }
+    panic!("DIR C: budget exhausted\n{}", freedos_text(&assembled));
 }

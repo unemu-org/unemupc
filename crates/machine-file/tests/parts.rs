@@ -637,7 +637,11 @@ fn repository_machine_cpu_regions_cover_the_full_firmware_board_space() {
             "at-games-open.toml",
             "at-games.toml",
             "at-ide.toml",
+            "generic-386-freedos.toml",
+            "generic-386-ide.toml",
             "generic-386-seabios.toml",
+            "generic-486-freedos.toml",
+            "generic-486-ide.toml",
             "generic-486-seabios.toml",
             "presets/ibm-5170.toml",
         ]
@@ -757,10 +761,7 @@ fn repository_machine_cpu_regions_cover_the_full_firmware_board_space() {
             let loaded = machine_file::load_for_assembly(root.join(&name), options).unwrap();
             let expected = if name == Path::new("at-ide.toml") {
                 &ide
-            } else if matches!(
-                name.to_str(),
-                Some("generic-386-seabios.toml" | "generic-486-seabios.toml")
-            ) {
+            } else if loaded.config.board.is_generic_isa() {
                 &generic386
             } else {
                 &ordinary
@@ -775,7 +776,7 @@ fn repository_machine_cpu_regions_cover_the_full_firmware_board_space() {
         }
     }
     assert_eq!(
-        checked, 10,
+        checked, 14,
         "every machine file and both preset BIOS variants"
     );
 }

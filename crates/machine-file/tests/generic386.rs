@@ -38,3 +38,18 @@ fn generic386_seabios_int10_modes_have_golden_frames() {
 fn generic386_seabios_rejects_relocated_video_rom_with_position() {
     generic_isa::seabios_rejects_relocated_video_rom_with_position(assembly::CpuChip::I80386);
 }
+
+#[test]
+fn generic386_seabios_freedos_reaches_prompt() {
+    generic_isa::seabios_freedos_reaches_prompt(assembly::CpuChip::I80386, false);
+}
+
+#[test]
+fn generic386_seabios_freedos_lists_readonly_ide_marker() {
+    generic_isa::seabios_freedos_reaches_prompt(assembly::CpuChip::I80386, true);
+}
+
+#[test]
+fn generic386_seabios_storage_configuration() {
+    generic_isa::seabios_storage_configuration(assembly::CpuChip::I80386);
+}

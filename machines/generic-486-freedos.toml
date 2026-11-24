@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+schema = 1
+extends = "generic-486-seabios.toml"
+name = "generic-486-freedos"
+description = "ISA board booting FreeDOS from A: through SeaBIOS"
+
+[[card]]
+kind = "fdc-765"
+
+[[card.drives]]
+unit = 0
+type = "1.44M"
+image = "../vendor/freedos/freedos.img"
+sha256 = "b7b088333f7f30584d768941fecea8288b63f2d61e13ec6c9472439eda66e51f"
+write = "volatile"

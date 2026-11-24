@@ -47,7 +47,22 @@ fn synthetic(document: &mut v1::MachineFile) {
             Some(v1::BoardModel::Generic386Isa | v1::BoardModel::Generic486Isa)
         )
     });
+    let native_ata = firmware_loaded_video
+        && document.card.as_ref().is_some_and(|cards| {
+            cards
+                .iter()
+                .any(|card| card.kind == Some(v1::CardKind::Ide))
+        });
     if let Some(firmware) = &mut document.firmware {
+        if native_ata {
+            // Synthetic bytes cannot identify SeaBIOS's native ATA provider.
+            if let Some(bios) = &mut firmware.bios {
+                bios.provides = Some(vec![
+                    v1::FirmwareService::Floppy,
+                    v1::FirmwareService::FixedDisk,
+                ]);
+            }
+        }
         // Only an identified system BIOS establishes the C0000h video-ROM
         // scan. Move video ROMs to an extension address that no repository
         // machine uses, so their hardware is still fingerprinted.
@@ -198,7 +213,11 @@ fn repository_machine_file_parity() {
         ("machines/at-games.toml".into(), "803c59aaa00a7b9c78a66a52ea37193d7bde6e5bb63a4077322e5f3e52e02c74".into()),
         // The open AT BIOS's mono display switch.
         ("machines/at-ide.toml".into(), "e42872c37de7d3674033a09efaf304ff1e47f95392af3baa9f2ed2553ab8a60d".into()),
+        ("machines/generic-386-freedos.toml".into(), "9f1c1f819169673c59131c097b33720b71d3f3bb151fee25d42e489ee9b2338c".into()),
+        ("machines/generic-386-ide.toml".into(), "49d6dcf2620f0fceb502015e04f19257874d6dffeb207d0ac7de577c6a7263db".into()),
         ("machines/generic-386-seabios.toml".into(), "fb5592babbaa5a31093d1501e6a070dc6af8ee4634cf713f4446a8a4425a6265".into()),
+        ("machines/generic-486-freedos.toml".into(), "e71c732d666f2ecb48e4a7655554f9d3227a4db10efc3950aa23c99d7fda988d".into()),
+        ("machines/generic-486-ide.toml".into(), "565fc6eb2eca9b325cdd75bf59eadd826308be6efdb3f41dd602dd274339683b".into()),
         ("machines/generic-486-seabios.toml".into(), "18df36806e3236a87a678d52be3e5e5bf8809ba4475f2280d6ad8491899eaf9d".into()),
         ("machines/presets/ibm-5170.toml".into(), "resolve:<repo>/machines/presets/ibm-5170.toml:16: firmware.bios.image: required fields are missing: firmware.bios.image (<repo>/machines/presets/ibm-5170.toml:16); inheritance chain: <repo>/machines/presets/ibm-5170.toml".into()),
     ];
