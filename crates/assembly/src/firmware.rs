@@ -190,9 +190,9 @@ pub enum FirmwareDistribution {
 
 /// Source archive pins, one per fetch script (`SOURCE_ARCHIVE_SHA256`): the
 /// Kiselev archive holds the source of both Xi8088 builds, the XTIDE archive
-/// that of both r638 builds, and the open VGA and open AT BIOS archives each
-/// that of their one ROM. A superseded entry keeps the pin of the archive its
-/// own release's script built.
+/// that of both r638 builds, the SeaBIOS archive that of both ISA ROMs, and
+/// the open VGA and open AT BIOS archives each that of their one ROM. A
+/// superseded entry keeps the pin of the archive its own release's script built.
 const KISELEV_SOURCE_ARCHIVE: &str =
     "ced63707661747fc045d1e6e565a5cc9be73f95a9c944accedd77b19467fb5f9";
 const UNEMU_AT_BIOS_SOURCE_ARCHIVE: &str =
@@ -207,6 +207,8 @@ const VGABIOS_0_8A_UNEMU_3_SOURCE_ARCHIVE: &str =
     "2d93fcaaa87ac0f310af097ef184d94932a0c9cb255b9e8f991cee511a1cf8eb";
 const XTIDE_SOURCE_ARCHIVE: &str =
     "7bbd5de269f4e1d52ae30b52531fcda842709b9ae49166ac249f9b37187b91e8";
+const SEABIOS_SOURCE_ARCHIVE: &str =
+    "b85015a695a9b1b8080c4871335bb68c2ec9aa9c8ba69e88a122a925c580c8c0";
 
 impl std::fmt::Display for FirmwareDistribution {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -480,8 +482,8 @@ pub const SEABIOS_1_17_0_ISA: FirmwareEntry = FirmwareEntry {
     distribution: FirmwareDistribution::Open {
         fetch: "vendor/seabios/fetch.sh",
         license: "LGPL-3.0-only",
-        provenance: "unemu-org/seabios 7da2116237ed8916970795b0d8cae5bf6e277d0a (rel-1.17.0 plus 80386 byte swap), ISA configuration",
-        source_archive_sha256: None,
+        provenance: "unemu-org/seabios v1.17.0-unemu1 e38573ec2d7d43fb7802bc43ddcb3ce2bf892809 (rel-1.17.0 plus 80386 byte swap), ISA configuration",
+        source_archive_sha256: Some(SEABIOS_SOURCE_ARCHIVE),
     },
     parts: &[],
     status: FirmwareStatus::Listed,
@@ -508,8 +510,8 @@ pub const SEAVGABIOS_1_17_0_STDVGA: FirmwareEntry = FirmwareEntry {
     distribution: FirmwareDistribution::Open {
         fetch: "vendor/seabios/fetch.sh",
         license: "LGPL-3.0-only",
-        provenance: "unemu-org/seabios 7da2116237ed8916970795b0d8cae5bf6e277d0a, standard VGA ISA configuration",
-        source_archive_sha256: None,
+        provenance: "unemu-org/seabios v1.17.0-unemu1 e38573ec2d7d43fb7802bc43ddcb3ce2bf892809, standard VGA ISA configuration",
+        source_archive_sha256: Some(SEABIOS_SOURCE_ARCHIVE),
     },
     parts: &[],
     status: FirmwareStatus::Listed,
@@ -2195,7 +2197,7 @@ mod tests {
     }
 
     /// `SOURCE_ARCHIVE_SHA256` of each open fetch script.
-    fn fetch_script_source_pins() -> [(&'static str, String); 4] {
+    fn fetch_script_source_pins() -> [(&'static str, String); 5] {
         let pin = |script: &str| {
             script
                 .lines()
@@ -2207,6 +2209,10 @@ mod tests {
                 .to_owned()
         };
         [
+            (
+                "vendor/seabios/fetch.sh",
+                pin(include_str!("../../../vendor/seabios/fetch.sh")),
+            ),
             (
                 "vendor/kiselev-bios/fetch.sh",
                 pin(include_str!("../../../vendor/kiselev-bios/fetch.sh")),
@@ -2386,13 +2392,41 @@ mod tests {
     }
 
     #[test]
+    fn seabios_entries_pin_the_release_source_archive() {
+        for entry in [SEABIOS_1_17_0_ISA, SEAVGABIOS_1_17_0_STDVGA] {
+            let FirmwareDistribution::Open {
+                source_archive_sha256,
+                provenance,
+                ..
+            } = entry.distribution
+            else {
+                panic!("{} must be open firmware", entry.id);
+            };
+            assert_eq!(
+                source_archive_sha256,
+                Some("b85015a695a9b1b8080c4871335bb68c2ec9aa9c8ba69e88a122a925c580c8c0"),
+                "{}",
+                entry.id
+            );
+            assert!(provenance.contains("v1.17.0-unemu1"));
+            assert!(provenance.contains("e38573ec2d7d43fb7802bc43ddcb3ce2bf892809"));
+        }
+    }
+
+    #[test]
     fn open_entries_pin_the_source_archive_their_fetch_script_builds() {
         let catalogue = BoardModel::Ibm5170.firmware_catalogue();
         let scripts = fetch_script_source_pins();
-        assert_eq!(
-            source_archive_pin_problems(catalogue, &scripts),
-            Vec::<String>::new()
-        );
+        for board in [
+            BoardModel::Ibm5170,
+            BoardModel::Generic386Isa,
+            BoardModel::Generic486Isa,
+        ] {
+            assert_eq!(
+                source_archive_pin_problems(board.firmware_catalogue(), &scripts),
+                Vec::<String>::new()
+            );
+        }
         let open = catalogue
             .iter()
             .filter(|entry| matches!(entry.distribution, FirmwareDistribution::Open { .. }))

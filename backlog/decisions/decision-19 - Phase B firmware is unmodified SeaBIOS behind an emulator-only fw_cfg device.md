@@ -55,11 +55,15 @@ SeaBIOS there finds no pristine copy to restore on reboot.
    listed in the catalogue by hash, like the other open firmware.
    [unemu-org/seabios](https://github.com/unemu-org/seabios) is the source of
    truth: upstream rel-1.17.0 plus the fix set documented in `README.unemu.md`.
-   The initial pin is `7da2116237ed8916970795b0d8cae5bf6e277d0a`; its code
-   change replaces inline `bswapl` with 80386 instructions in `__swab32`.
+   The release pin is `v1.17.0-unemu1` at
+   `e38573ec2d7d43fb7802bc43ddcb3ce2bf892809`; its initial code change
+   replaces inline `bswapl` with 80386 instructions in `__swab32`.
    Upstream's `-march=i386` cannot constrain explicit inline assembly, and
    fw_cfg, ATA and block commands reach that helper on a real 386. Submit
    these fixes upstream (`upc-o0j.23`); keep the fork's set small and documented.
+   Both SeaBIOS catalogue entries pin the release source archive, SHA-256
+   `b85015a695a9b1b8080c4871335bb68c2ec9aa9c8ba69e88a122a925c580c8c0`,
+   including its LGPLv3-noticed rebuild recipe; the ROM bytes are unchanged.
 2. **The `generic-386-isa` board gets an fw_cfg-compatible configuration port**
    at 510h/511h (no DMA interface), modelled on QEMU's documented protocol.
    It is documented as an emulator-only device, not period hardware. It serves

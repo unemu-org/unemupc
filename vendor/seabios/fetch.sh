@@ -27,9 +27,11 @@ check_sha256() {
 }
 
 REPO="https://github.com/unemu-org/seabios"
-COMMIT="7da2116237ed8916970795b0d8cae5bf6e277d0a"
-SOURCE_TREE="81259d7b00535b6a9dd531d60cd907f4d9218c67"
-SOURCE_SHA256="f909c5f540c976ac6d323a51658350710f88b2a67afa8b832998dc126c517c94"
+TAG="v1.17.0-unemu1"
+COMMIT="e38573ec2d7d43fb7802bc43ddcb3ce2bf892809"
+SOURCE_TREE="66f06eca7df3167ba2f2aef72f2a23dc057a37c3"
+SOURCE_SHA256="7dc0759caf2ff46e68bec9f2df8222c718cd0627d6969b3ec70ab0c753a6b5d0"
+SOURCE_ARCHIVE_SHA256="b85015a695a9b1b8080c4871335bb68c2ec9aa9c8ba69e88a122a925c580c8c0"
 CONFIG_SHA256="d1958e10e395c8eb00ea9e99ab1c6fe86cf1acb9a0480d0f7a1b551fa4fe8e2a"
 OUTPUT_SHA256="ad50fdb5e12a03dd5c17eac481a4183a7793b84252319eea02b8c878667c994f"
 VGA_CONFIG_SHA256="370f78d9c30db41bd155d7b360fbf5cd0d6e26e390e19c106c14d32dbf5b5d40"
@@ -40,6 +42,8 @@ EXTRAVERSION="-unemupc98-isa"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC_DIR="$HERE/src"
 OUT="$HERE/bios-1.17.0-isa.bin"
+SOURCE_NAME="seabios-${TAG#v}"
+SOURCE_OUT="$HERE/build/$SOURCE_NAME-src.tar"
 CROSS_PREFIX="${CROSS_PREFIX:-i686-elf-}"
 HOSTCC="${HOSTCC:-cc}"
 check_sha256 "$HERE/config" "$CONFIG_SHA256"
@@ -71,8 +75,14 @@ archive_git init --bare --quiet --template= "$BUILD_DIR/archive.git"
 GIT_ALTERNATE_OBJECT_DIRECTORIES="$(git -C "$SRC_DIR" rev-parse --path-format=absolute --git-path objects)" \
 	archive_git --git-dir="$BUILD_DIR/archive.git" archive --format=tar "$COMMIT" > "$BUILD_DIR/source.tar"
 check_sha256 "$BUILD_DIR/source.tar" "$SOURCE_SHA256"
+# The release asset keeps its rebuild recipe and licence notices in unemu/.
+GIT_ALTERNATE_OBJECT_DIRECTORIES="$(git -C "$SRC_DIR" rev-parse --path-format=absolute --git-path objects)" \
+	archive_git --git-dir="$BUILD_DIR/archive.git" archive --format=tar \
+	--prefix="$SOURCE_NAME/" "$COMMIT" > "$BUILD_DIR/release-source.tar"
+check_sha256 "$BUILD_DIR/release-source.tar" "$SOURCE_ARCHIVE_SHA256"
 mkdir "$BUILD_DIR/tree"
-tar -xf "$BUILD_DIR/source.tar" -C "$BUILD_DIR/tree"
+# Match the release recipe: packaging files are not firmware build inputs.
+tar --exclude=unemu -xf "$BUILD_DIR/source.tar" -C "$BUILD_DIR/tree"
 cp "$HERE/config" "$BUILD_DIR/tree/.config"
 # Use upstream's release-tarball mechanism plus a nonempty distributor suffix.
 # Without both, buildversion.py appends the build time and hostname.
@@ -140,13 +150,13 @@ then
 fi
 check_sha256 "$IMAGE" "$OUTPUT_SHA256"
 if ! cmp -s "$IMAGE" "$OUT"; then
-	cp "$IMAGE" "$OUT"
+	mv "$IMAGE" "$OUT"
 fi
 echo "built $OUT ($SIZE bytes) from $COMMIT"
 
 # A separate export keeps the system BIOS configuration and bytes independent.
 mkdir "$BUILD_DIR/vgatree"
-tar -xf "$BUILD_DIR/source.tar" -C "$BUILD_DIR/vgatree"
+tar --exclude=unemu -xf "$BUILD_DIR/source.tar" -C "$BUILD_DIR/vgatree"
 cp "$HERE/vgaconfig" "$BUILD_DIR/vgatree/.config"
 printf '%s\n' "$VERSION" > "$BUILD_DIR/vgatree/.version"
 MAKE_ARGS[1]="$BUILD_DIR/vgatree"
@@ -166,7 +176,11 @@ if ! grep -Fxq -- '#define BUILD_VERSION "1.17.0-unemupc-stdvga"' \
 	exit 1
 fi
 # Keep a symbol-aware 16-bit disassembly for the minimum-CPU audit.
-"${CROSS_PREFIX}objdump" -d -M i8086 "$BUILD_DIR/vgatree/out/vgarom.o" > "$HERE/build/vgabios.disasm"
+"${CROSS_PREFIX}objdump" -d -M i8086 "$BUILD_DIR/vgatree/out/vgarom.o" > "$BUILD_DIR/vgabios.disasm"
 check_sha256 "$VGA_IMAGE" "$VGA_OUTPUT_SHA256"
-cp "$VGA_IMAGE" "$HERE/build/vgabios-1.17.0-stdvga.bin"
+# Install locally even when a worktree initially shares fixtures via symlinks.
+mv "$VGA_IMAGE" "$HERE/build/vgabios-1.17.0-stdvga.bin"
+mv "$BUILD_DIR/vgabios.disasm" "$HERE/build/vgabios.disasm"
 echo "built $HERE/build/vgabios-1.17.0-stdvga.bin ($VGA_SIZE bytes) from $COMMIT"
+mv "$BUILD_DIR/release-source.tar" "$SOURCE_OUT"
+echo "wrote $SOURCE_OUT (source of both ROMs, LGPL-3.0-only)"

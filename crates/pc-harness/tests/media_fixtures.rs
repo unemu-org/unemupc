@@ -342,12 +342,14 @@ struct SourceArchive {
     script: &'static str,
     /// Top-level entries under the archive's root directory.
     entries: &'static [&'static str],
-    /// Members copied verbatim from this repository.
+    /// Members copied from this repository, with LGPLv3 notices in the Git release.
     copies: &'static [(&'static str, &'static str)],
     /// A member and text that identify the pinned revision or our patch.
     marker: (&'static str, &'static str),
     /// Upstream paths left out: prebuilt binaries or developer tooling.
     absent: &'static [&'static str],
+    /// Git archives retain a release prefix and a global commit header.
+    git: Option<(&'static str, &'static str)>,
 }
 
 const SOURCE_ARCHIVE_PIN: &str = "SOURCE_ARCHIVE_SHA256=\"";
@@ -373,6 +375,7 @@ const SOURCE_ARCHIVES: &[SourceArchive] = &[
             "je\tint_13_fn00\t\t; Reset disk system regardless of DL",
         ),
         absent: &["8088_bios/binaries", "8088_bios/xtide_r625"],
+        git: None,
     },
     SourceArchive {
         relative: "vgabios/vgabios-0.9d-unemu.1-src.tar",
@@ -385,6 +388,7 @@ const SOURCE_ARCHIVES: &[SourceArchive] = &[
         // The fork's teletype BEL tone, which its 0.8a-based releases lacked.
         marker: ("vgabios/vgabios.c", "static void vga_beep()"),
         absent: &["vgabios/.beads/config.yaml"],
+        git: None,
     },
     SourceArchive {
         relative: "unemu-at-bios/unemu-at-bios-1.0.2-unemu.3-src.tar",
@@ -400,6 +404,7 @@ const SOURCE_ARCHIVES: &[SourceArchive] = &[
             "%define VERSION\t\t'1.0.2-unemu.3'",
         ),
         absent: &["unemu-at-bios/binaries", "unemu-at-bios/xtide_r625"],
+        git: None,
     },
     SourceArchive {
         relative: "xtide-universal-bios/xtide-universal-bios-r638-src.tar",
@@ -412,6 +417,40 @@ const SOURCE_ARCHIVES: &[SourceArchive] = &[
         // The revision string the ROM's sign-on embeds.
         marker: ("trunk/XTIDE_Universal_BIOS/Inc/Revision.inc", "638 "),
         absent: &[],
+        git: None,
+    },
+    SourceArchive {
+        relative: "seabios/build/seabios-1.17.0-unemu1-src.tar",
+        script: include_str!("../../../vendor/seabios/fetch.sh"),
+        entries: &[
+            ".gitignore",
+            "COPYING",
+            "COPYING.LESSER",
+            "Makefile",
+            "README",
+            "README.unemu.md",
+            "docs",
+            "scripts",
+            "src",
+            "unemu",
+            "vgasrc",
+        ],
+        copies: &[
+            (
+                "unemu/config",
+                include_str!("../../../vendor/seabios/config"),
+            ),
+            (
+                "unemu/vgaconfig",
+                include_str!("../../../vendor/seabios/vgaconfig"),
+            ),
+        ],
+        marker: ("unemu/BUILD.md", "Release `v1.17.0-unemu1`"),
+        absent: &[".git", "out"],
+        git: Some((
+            "seabios-1.17.0-unemu1",
+            "e38573ec2d7d43fb7802bc43ddcb3ce2bf892809",
+        )),
     },
 ];
 
@@ -437,9 +476,9 @@ fn tar_number(field: &[u8]) -> u64 {
     u64::from_str_radix(tar_text(field).trim(), 8).expect("octal tar header field")
 }
 
-/// Members of a POSIX ustar archive (POSIX.1, pax utility, "ustar Interchange
-/// Format"): 512-byte headers, each followed by its data padded to 512 bytes,
-/// ended by zero blocks.
+/// Members of a POSIX ustar archive, including Git's global pax header
+/// (POSIX.1, pax utility, "ustar Interchange Format" and "pax Interchange
+/// Format"): 512-byte headers followed by padded data, ended by zero blocks.
 fn ustar_members(archive: &[u8]) -> Vec<TarMember> {
     assert_eq!(
         archive.len() % 512,
@@ -496,10 +535,25 @@ fn source_archives_match_pins_and_carry_their_notice() {
             parse_pin(archive.script, SOURCE_ARCHIVE_PIN).unwrap(),
             "source archive SHA-256: {relative}"
         );
-        let root = Path::new(relative).file_stem().unwrap().to_str().unwrap();
+        let root = archive.git.map_or_else(
+            || Path::new(relative).file_stem().unwrap().to_str().unwrap(),
+            |(root, _)| root,
+        );
         let members = ustar_members(&bytes);
+        let contents = if let Some((_, commit)) = archive.git {
+            let header = &members[0];
+            assert_eq!(header.path, "pax_global_header");
+            assert_eq!(header.kind, b'g');
+            assert_eq!(header.data, format!("52 comment={commit}\n").as_bytes());
+            assert_eq!(header.mode, 0o666);
+            assert_eq!(header.owner, (0, 0));
+            assert_eq!(header.owner_names, ("root".into(), "root".into()));
+            &members[1..]
+        } else {
+            &members[..]
+        };
         let mut entries = BTreeSet::new();
-        for member in &members {
+        for member in contents {
             let path = &member.path;
             let inner = path
                 .strip_prefix(root)
@@ -519,20 +573,23 @@ fn source_archives_match_pins_and_carry_their_notice() {
                         .is_some_and(|rest| rest.starts_with('/'));
                 assert!(!excluded, "{relative}: {path} should be left out");
             }
-            // Nothing from the host that wrote the archive: no owner, no
-            // per-file times, only plain files and directories.
+            // Metadata follows the archive format, independent of host identity.
             assert!(
                 matches!(member.kind, b'0' | b'5'),
                 "{relative}: {path} type"
             );
+            let (file_mode, dir_mode, owner_names) = if archive.git.is_some() {
+                (0o664, 0o775, ("root".into(), "root".into()))
+            } else {
+                (0o644, 0o755, (String::new(), String::new()))
+            };
             assert!(
-                matches!(member.mode, 0o644 | 0o755),
+                member.mode == file_mode || member.mode == dir_mode,
                 "{relative}: {path} mode"
             );
             assert_eq!(member.owner, (0, 0), "{relative}: {path} owner");
             assert_eq!(
-                member.owner_names,
-                (String::new(), String::new()),
+                member.owner_names, owner_names,
                 "{relative}: {path} owner names"
             );
             assert_eq!(member.mtime, members[0].mtime, "{relative}: {path} mtime");
@@ -549,6 +606,15 @@ fn source_archives_match_pins_and_carry_their_notice() {
             String::from_utf8_lossy(&found.data).into_owned()
         };
         for &(inner, expected) in archive.copies {
+            let expected = if archive.git.is_some() {
+                expected.replacen(
+                    "# SPDX-License-Identifier: AGPL-3.0-or-later",
+                    "# This file may be distributed under the terms of the GNU LGPLv3 license.",
+                    1,
+                )
+            } else {
+                expected.to_owned()
+            };
             assert_eq!(member(inner), expected, "{relative}: {inner}");
         }
         let (inner, text) = archive.marker;
@@ -556,5 +622,11 @@ fn source_archives_match_pins_and_carry_their_notice() {
             member(inner).contains(text),
             "{relative}: {inner} lacks {text:?}"
         );
+        if archive.git.is_some() {
+            for path in ["COPYING", "COPYING.LESSER"] {
+                assert!(!member(path).is_empty(), "{relative}: {path}");
+            }
+            assert!(member("unemu/build.sh").contains("--exclude=./unemu"));
+        }
     }
 }

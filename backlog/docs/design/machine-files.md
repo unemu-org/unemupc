@@ -393,12 +393,16 @@ Synthetic guest probes exercise that fallback and both board pulses, retaining
 a RAM marker and checking the 386 reset signature, CS hidden base, A20 source
 combinations and reset-storm report. No IBM 5170 reset wiring is changed.
 
-The firmware is built from `unemu-org/seabios`, pinned at
-`7da2116237ed8916970795b0d8cae5bf6e277d0a`: upstream rel-1.17.0 plus the
+The firmware is built from `unemu-org/seabios`, pinned at release
+`v1.17.0-unemu1`, commit `e38573ec2d7d43fb7802bc43ddcb3ce2bf892809`: upstream rel-1.17.0 plus the
 fork's documented 80386 compatibility fixes. The initial fix replaces inline
 `BSWAP` in `__swab32` with 386-compatible C. The fork is the source of truth;
 fixes go upstream (`upc-o0j.23`). The catalogue ID distinguishes this fix set
 from the former upstream fixture, while its ROM filename stays unchanged.
+Both SeaBIOS catalogue entries pin the verified release source archive
+`vendor/seabios/build/seabios-1.17.0-unemu1-src.tar` (SHA-256
+`b85015a695a9b1b8080c4871335bb68c2ec9aa9c8ba69e88a122a925c580c8c0`).
+It includes the rebuild recipe; the release firmware sources and ROM bytes are unchanged.
 
 **MEASURED at CPU pin `b7c10b6f` (2026-11-24):** the shipped diskless
 machine completes POST within a 10,000,000-step bound. Port 402h reports

@@ -237,14 +237,17 @@ unpaged execution only. The separate paging ROM above supplies paging coverage;
 a DOS extender remains unqualified.
 
 `seabios-1.17.0-unemu1-isa` remains **Listed**; the exact FreeDOS profiles
-are qualified above. The fixture now builds from the source of truth, `unemu-org/seabios`, commit
-`7da2116237ed8916970795b0d8cae5bf6e277d0a`: upstream rel-1.17.0 plus its
+are qualified above. The fixture now builds from the source of truth, `unemu-org/seabios`, release
+`v1.17.0-unemu1`, commit `e38573ec2d7d43fb7802bc43ddcb3ce2bf892809`: upstream rel-1.17.0 plus its
 documented 80386 fix set (`README.unemu.md`). The first fix computes
 `__swab32` in C instead of using the 486-only `BSWAP`; fixes go upstream
 (`upc-o0j.23`). **MEASURED on 2026-11-24:** two independent builds are byte
 identical (`cmp`), 131,072 bytes, SHA-256
 `ad50fdb5e12a03dd5c17eac481a4183a7793b84252319eea02b8c878667c994f`.
-The firmware config, version suffix and ROM filename remain unchanged.
+The firmware config, version suffix and ROM filename remain unchanged. Both
+SeaBIOS entries pin the release source archive, SHA-256
+`b85015a695a9b1b8080c4871335bb68c2ec9aa9c8ba69e88a122a925c580c8c0`,
+which includes the LGPLv3-noticed rebuild files; firmware sources and ROM bytes are unchanged.
 
 **MEASURED at `b7c10b6f` on 2026-11-24:** the shipped diskless machine
 passes POST. Port 402h reports fw_cfg, `RamSize: 0x01000000 [cmos]` and

@@ -502,8 +502,8 @@ Machine/core availability below is the spike's source assessment at x86jit
 pin `8979fc9`, not a SeaBIOS boot result.
 
 **Firmware source (2026-11-24).** The shipped build now pins the source of
-truth, [unemu-org/seabios](https://github.com/unemu-org/seabios), at
-`7da2116237ed8916970795b0d8cae5bf6e277d0a`: upstream rel-1.17.0 plus the
+truth, [unemu-org/seabios](https://github.com/unemu-org/seabios), at release
+`v1.17.0-unemu1`, commit `e38573ec2d7d43fb7802bc43ddcb3ce2bf892809`: upstream rel-1.17.0 plus the
 fix set in the fork's `README.unemu.md`. The initial code fix replaces
 `__swab32`'s inline `bswapl` with C compiled for the 80386 (`byteorder.h:15–20`).
 Upstream's inline instruction requires a 486 despite `-march=i386`; the
@@ -672,7 +672,11 @@ and pins, not a change to the catalogue's general firmware status.
 Tested: a 131,072-byte system BIOS at E0000h, SHA-256
 `ad50fdb5e12a03dd5c17eac481a4183a7793b84252319eea02b8c878667c994f`.
 It is open firmware (LGPL-3.0-only), built by `vendor/seabios/fetch.sh`
-from the fork commit `7da2116237ed8916970795b0d8cae5bf6e277d0a`.
+from release `v1.17.0-unemu1`, fork commit
+`e38573ec2d7d43fb7802bc43ddcb3ce2bf892809`. Both SeaBIOS and SeaVGABIOS
+pin its corresponding source archive, SHA-256
+`b85015a695a9b1b8080c4871335bb68c2ec9aa9c8ba69e88a122a925c580c8c0`;
+the release adds rebuild files and documentation without changing firmware sources or ROM bytes.
 The catalogue declares an 80386 minimum, AT keyboard/PICs and 128-byte CMOS. It belongs to both
 `generic-386-isa` and `generic-486-isa`, provides floppy/fixed-disk services and enables
 `cmos-qemu-layout`. It has no pre-mapped ROM scan window. The shipped
