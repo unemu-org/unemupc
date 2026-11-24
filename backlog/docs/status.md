@@ -2,22 +2,26 @@
 
 ## DOS extender phase B exit (2026-11-24)
 
-**MEASURED at x86jit `0bc16f55`: phase B exit is not achieved.** All three
-CPUs boot FreeDOS and invoke the pinned open DOS/32A 9.1.2a loader, both
-raw and after JemmEx 5.85 installation. The 386 stops in the loader's
-FPU detection at FNSTCW [BP+2] (`D9 7E 02`); both 486 variants stop at
-FDISI (`DB E1`). Raw stops are real mode / CPL 0; JemmEx stops are V86 /
-CPL 3 with PE=1 and monitor delivery evidence. The 32-bit LE client has
-not started, so protected entry by the extender, paging while it runs,
-its 1 MiB DPMI checksum, and return to DOS remain unqualified.
+**MEASURED at x86jit `fc07c81f`: phase B exit is achieved.** The 80386DX
+and both 80486DX entries run the unchanged open DOS/32A 9.1.2a loader and
+project-owned 32-bit LE client under FreeDOS, raw and with JemmEx 5.85 VCPI.
+All six print `DOS32-PM32-BEGIN`, live CR0, and the 1 MiB DPMI checksum
+`DOS32-1M-SUM=FFFE0000`, free the allocation and return successfully.
+AUTOEXEC prints `DOS32-RETURNED`, executes VER (FreeCom 0.86 output),
+prints `DOS32-VER-DONE`, then reaches `A:\>`. Each test then types
+`echo dos32-ok`, checks its output and the next prompt, and pins that
+second screen too (13,681,937/14,857,941 retired on 386;
+16,581,984/17,657,988 on either 486, raw/VCPI).
 
-Six deterministic goldens pin the honest CPU refusals, full decoded VGA
-text hashes, exact retired counts (10,765,842–13,714,275) and final delivery
-records. A project-owned NASM LE client, pinned loader fetch/cache check,
-licence acknowledgment, required-fixture failures and visible optional
-skips are ready for upstream CPU fixes. No machine/device changes or
-vendor patches are included. See
-[CPU findings, budgets and timings](design/protected-mode-gaps.md#dos-extender-qualification)
+CPU diagnostics preserve full CR0. Samples in both client loops observe
+PE=1, VM=0 and PG=1 with VCPI (PG=0 raw); printed CR0 independently agrees:
+00000001/80000001 on 386, 00000011/80000011 on 486. The six renamed
+`*_seabios_freedos_dos32a_{raw,vcpi}` goldens pin screen hashes and final
+retired counts: raw/VCPI 13,391,425/14,567,429 on 386 and
+15,991,472/17,067,476 on either 486. DOS/32A's mouse warning 9004 is
+non-fatal. Fixture bytes, shipped machines and devices are unchanged.
+The repin removes the old FNSTCW/FNDISI refusals. See
+[measurements and scope](design/protected-mode-gaps.md#dos-extender-qualification)
 and [client contract](../../vendor/dos-extender-test/README.md).
 
 ## Nominal CPU clocks and turbo (2026-11-24)
@@ -115,14 +119,17 @@ The serial-only counts in the older board entries below are historical.
 
 ## test386 full-machine validation (2026-11-24)
 
-**MEASURED**, x86jit `0bc16f55e557f3a4dac12a35335b175d41a42a54`: all three
-CPUs pass test386's V86 section and produce POST **`00 01 02 03 04 05 06 08
-09 20 21 22 0b 0c 0d 0e 0f 10 11`**, zero ASCII bytes, and **1,409,775**
-retired instructions. POST 11's first page fault is correct, but the upstream
-handler rejects PDE.A=1 on a present PDE / absent PTE walk. This matches the
-CPU's documented deterministic paging policy. The golden pins the error HLT
-at 00D0:FE89, not FFh completion. No board defect or CPU patch is involved.
-See [coverage and CPU findings](design/protected-mode-gaps.md#test386-full-machine-validation-2026-11-24).
+**MEASURED**, x86jit `fc07c81f580689c31f182f4421fb9cc5f07374d1`: all three
+CPUs produce POST **`00 01 02 03 04 05 06 08 09 20 21 22 0b 0c 0d 0e 0f
+10 11`**, zero ASCII bytes, and **1,413,097** retired instructions. All ten
+not-present paging rows now pass. The next stop is the first CPL-3 write
+protection #PF(7), at 00AB:9F88. The handler expects PDE.A=0; the CPU sets
+both PDE/PTE A bits, as required for 486 operand protection faults and
+retained as deterministic 386 policy. The golden asserts the handler's
+A-bit check and error HLT at 00D0:FE89; FFh completion remains unreached.
+No board defect or vendor patch is involved. See
+[coverage and CPU findings](design/protected-mode-gaps.md#test386-full-machine-validation-2026-11-24)
+and the [absent-FPU audit](design/protected-mode-gaps.md#repin-and-absent-coprocessor-audit-2026-11-24).
 
 ## Virtual-8086 DOS monitor on generic ISA boards (2026-11-24)
 

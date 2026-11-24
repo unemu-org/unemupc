@@ -3,105 +3,105 @@
 ## DOS extender qualification
 
 **MEASURED, 2026-11-24**, x86jit
-`0bc16f55e557f3a4dac12a35335b175d41a42a54`: phase B exit remains
-**blocked before the 32-bit client starts**. All three CPUs boot FreeDOS
-kernel 2044 / FreeCOM 0.86 through the pinned SeaBIOS/SeaVGABIOS fixtures
-and invoke the unmodified open **DOS/32A 9.1.2a** loader. The raw variant
-has no memory manager; the VCPI variant first loads **JemmEx 5.85** with
-`LOAD NOEMS NORAM NOVMW`. The six normal tests are named
-`*_seabios_freedos_dos32a_{raw,vcpi}_cpu_boundary`, in the generic386 and
-generic486 test binaries, using one shared helper.
+`fc07c81f580689c31f182f4421fb9cc5f07374d1`: **phase B exit is achieved**
+on the 80386DX and both 80486DX entries. FreeDOS kernel 2044 / FreeCOM
+0.86 boots through the pinned SeaBIOS/SeaVGABIOS fixtures and runs the
+unmodified open **DOS/32A 9.1.2a** loader with the project-owned LE client.
+The raw variant uses DOS/32A's own host; the VCPI variant first loads
+**JemmEx 5.85**, `LOAD NOEMS NORAM NOVMW`. The six normal goldens are named
+`*_seabios_freedos_dos32a_{raw,vcpi}` in the generic386/generic486 binaries.
 
-The [loader archive and licence](../../../vendor/dos32a/README.md) and
-[NASM-built LE client](../../../vendor/dos-extender-test/README.md) have
-pinned hashes. The client is intended to print its live CR0, allocate and
-checksum 1 MiB above 1 MiB through DPMI, print FFFE0000, then exit through
-DOS. AUTOEXEC checks ERRORLEVEL, runs VER, and prints return markers.
-**These client operations, protected entry by the extender, paging during
-client execution, and return to DOS have not been observed.** Their source
-and format have been inspected and assembled; runtime correctness remains
-unqualified until the CPU boundaries below are removed upstream.
+All runs print `DOS32-PM32-BEGIN`, a live CR0 line, and
+`DOS32-1M-SUM=FFFE0000`. The client allocates 1 MiB above 1 MiB through DPMI
+0501h, fills and sums 262,144 dwords, frees it with 0502h and exits with
+INT 21h AX=4C00h. AUTOEXEC checks ERRORLEVEL, prints `DOS32-RETURNED`, runs
+VER, prints `DOS32-VER-DONE` and reaches `A:\>`. The VER output after the
+return marker contains `FreeCom version 0.86`. No `DOS32-FAIL` or
+`DOS32-ERROR` appears. DOS/32A's mouse warning 9004 appears in all six
+screens and does not prevent execution or return. No vendor bytes change.
 
-Each golden hashes the full decoded 80×25 VGA text, and asserts the exact
-CPU refusal, CS:IP, linear address, bytes, retired count, PE/VM/CPL and final
-delivery. It also asserts that no client/return marker appeared. The screen
-contains `DOS/32A -- DOS Extender version 9.1.2`; VCPI also contains
-`JemmEx loaded`. No final `A:\>` prompt is reached. Raw text SHA-256 is
-`b63027eb7663ae41eead37d69a0d4ceeb7cc41e1df5bfc5b07def2cea15d24e9`;
-VCPI text SHA-256 is
-`5159d6897f105da89e02580b82e18681de91bfa0b2d1b6e8c97949b6f4f1eaa3`.
+| CPU | Host | Client CR0 | Retired at final prompt | Initial wall time |
+| --- | --- | --- | ---: | ---: |
+| 80386DX | raw | 00000001 | 13,391,425 | 5.52 s |
+| 80386DX | JemmEx/VCPI | 80000001 | 14,567,429 | 8.94 s |
+| early 80486DX | raw | 00000011 | 15,991,472 | 10.29 s |
+| CPUID 80486DX | raw | 00000011 | 15,991,472 | 10.26 s |
+| early 80486DX | JemmEx/VCPI | 80000011 | 17,067,476 | 13.58 s |
+| CPUID 80486DX | JemmEx/VCPI | 80000011 | 17,067,476 | 13.58 s |
+
+Host times are diagnostic only, with two 386 or four 486 tests running
+concurrently. The virtual cap remains the clock-scaled equivalent of
+5,000,000 rate-one instruction steps, polled every 100,000 units.
+Each golden asserts the full decoded 80×25 VGA text hash and retired count:
+
+| CPU | Raw SHA-256 | JemmEx/VCPI SHA-256 |
+| --- | --- | --- |
+| 80386DX | `4690215855180e22e1fda558b078091b25ca42b5f0375a83866f9d809fe3f886` | `b89ce13b2337dce6f5032213378b2f9bdc67d90e35ce3bb26b13cc84d6f0bca3` |
+| both 80486DX | `3272ede0290c83dcfe3a6dfc9fa8624d9f1c98bfa9994d9fd95ae67958902add` | `90c6697061ae575eb35a47c1412e3df3d4cd7130c6a8ac611a63b277a2e18cef` |
+
+At the returned prompt, each golden types `echo dos32-ok` through the
+8042 keyboard and requires a standalone `dos32-ok` output line followed by
+another `A:\>` prompt. This separately qualifies interactive input after
+AUTOEXEC. The second screen and retired count are also exact:
+
+| CPU | Host | Retired after following command | VGA text SHA-256 |
+| --- | --- | ---: | --- |
+| 80386DX | raw | 13,681,937 | `9fc9126c386e48828de20e872ab2bc86bfb1b90b9ff308f0363faa467f8c4d30` |
+| 80386DX | VCPI | 14,857,941 | `b72f3e676b549527111648e80d7874237691a5027a221d7c64391680cfd03410` |
+| both 80486DX | raw | 16,581,984 | `b642c73744bde5c06e9853a4e336e33578e635ef219b7ad811d5fd4ff14c056f` |
+| both 80486DX | VCPI | 17,657,988 | `c45f344719fa957cae5cebf34fad345926483822c45807862ff0fd730ac4daa4` |
+
+Measured total wall times including that command were 4.75/7.44 s on 386
+(raw/VCPI), 8.34/12.44 s on early 486, and 8.41/12.44 s on CPUID 486,
+again with two or four goldens concurrently.
+
+The CPU diagnostic adapter now preserves full CR0 and exposes its PG bit.
+Samples identify the client's fill and sum loops by full EIP relative to
+its call/pop EBP code base (offsets 52h–5Dh and 62h–6Dh in the hash-pinned
+client). Both loops must be observed with a flat 32-bit CS, VM=0, PE=1 and
+the exact CR0 above. Thus SeaBIOS protected entry or the monitor running
+alone cannot satisfy the client-mode check. Raw runs have PG=0; VCPI runs
+have PG=1 while the client runs. The printed CR0 independently agrees.
+The existing diagnostic code-byte/IP picture is 16-bit; the loop check
+uses the CPU register API's full EIP instead. V86 execution and monitor
+V86→ring-0 deliveries must also be observed in VCPI runs. At the returned
+DOS prompt raw runs have PE=PG=VM=0; VCPI runs retain PE=PG=VM=1.
 
 ### CPU FINDINGS
 
-| CPU | Host path | Exact stop CS:IP / linear | Bytes / instruction | Mode / CPL / MSW | Retired |
-| --- | --- | --- | --- | --- | ---: |
-| 80386DX | raw | 2171:030D / 00021A1D | D9 7E 02 / FNSTCW [BP+2] | real / 0 / 0000 | 10,765,842 |
-| 80386DX | JemmEx | 21AE:030D / 00021DED | D9 7E 02 / FNSTCW [BP+2] | V86 / 3 / 0001 | 11,147,577 |
-| early 80486DX | raw | 2171:0327 / 00021A37 | DB E1 / FDISI (FNDISI) | real / 0 / 0010 | 13,332,394 |
-| early 80486DX | JemmEx | 21AE:0327 / 00021E07 | DB E1 / FDISI (FNDISI) | V86 / 3 / 0011 | 13,714,260 |
-| CPUID 80486DX | raw | 2171:0327 / 00021A37 | DB E1 / FDISI (FNDISI) | real / 0 / 0010 | 13,332,400 |
-| CPUID 80486DX | JemmEx | 21AE:0327 / 00021E07 | DB E1 / FDISI (FNDISI) | V86 / 3 / 0011 | 13,714,275 |
+**MEASURED:** no new DOS/32A CPU boundary. The old 386 FNSTCW refusal and
+486 FNDISI refusal are gone. **READ:** xj-srh.39 (x86jit) makes absent
+286/386 no-wait control outputs read all ones and makes obsolete
+FNENI/FNDISI controls no-ops with a 287/387/486 FPU. Those changes let
+`DOS32A/TEXT/KERNEL/DETECT.ASM`, `fpu_detect`, finish without a guest patch.
+This qualifies this small ring-zero DOS/32A client, not arbitrary DOS
+extenders or later game compatibility.
 
-Every stop is `CpuError::UnsupportedInstruction`, A20 on. The pinned CPU
-policy is no FPU on the 386 and an integrated FPU on both 486 models.
-**READ:** the archive's `DOS32A/TEXT/KERNEL/DETECT.ASM`, `fpu_detect`,
-performs FNINIT then FNSTCW, checks AH=03h, clears the legacy control-word
-bit 7, executes FLDCW then FDISI. The 386 stops at FNSTCW; both 486s reach
-FDISI. These are loader CPU/FPU probes, before its LE loader executes the
-client. No vendor byte patch or CPU workaround is applied.
-
-The final delivery in every run is software **INT 2Ah**, saved
-**05E3:0280**, linear **000060B0**, no error code. Raw is CPL 0→0 / VM 0→0;
-JemmEx is CPL 3→0 / VM 1→0. The final-delivery retired counts and total
-observed deliveries are:
-
-| CPU | Raw last / total | JemmEx last / total |
-| --- | ---: | ---: |
-| 80386DX | 10,765,778 / 2,445 | 11,147,477 / 3,174 |
-| early 80486DX | 13,332,304 / 2,429 | 13,714,134 / 3,158 |
-| CPUID 80486DX | 13,332,304 / 2,429 | 13,714,143 / 3,158 |
-
-The JemmEx runs observe live VM=1 and PE=1, and retain monitor V86→ring-0
-deliveries. This establishes the monitor's protected state; the raw loader
-is still in real mode at the refusal. Earlier PE samples during SeaBIOS
-boot are not evidence of DOS/32A protected entry. The diagnostic interface
-exposes MSW, not full CR0, so **CR0.PG is not measured here**. JemmEx's
-paged-monitor implementation is read evidence only; no claim of paging
-while the client runs is possible before the client starts.
-
-The run cap is the shared clock-scaled equivalent of 5,000,000 retired
-instruction steps at rate 1; polls are every 100,000 virtual instruction
-units. Initial test-profile wall times were **3.38–3.66 s** on the 386
-(two goldens concurrently) and **6.01–6.40 s** on the 486 (four concurrently).
-Host timings do not enter guest execution or assertions. Retired counts
-and screen hashes agree on repeat runs.
-
-The temporary floppy is a copy of base SHA-256
-`b7b088333f7f30584d768941fecea8288b63f2d61e13ec6c9472439eda66e51f`,
-with files added by mcopy at the fixed FAT epoch. It is mounted read-only;
-the original bytes and hash remain unchanged. Derived SHA-256 pins are
-`be15dc9ad686ee5c33d21165e6ee837a1c6875b0acf5cae0935b7e2faaf7bc7c`
-(raw) and
-`e5018f57f57db4c8a8dcdcc9e1c2770d21d4970267646ec71bce33c32c853dbd`
-(JemmEx). No shipped machine or device behavior changes.
+The [loader archive](../../../vendor/dos32a/README.md) and
+[client](../../../vendor/dos-extender-test/README.md) keep their original
+hashes. The read-only temporary floppy derives from base SHA-256
+`b7b088333f7f30584d768941fecea8288b63f2d61e13ec6c9472439eda66e51f`;
+mcopy writes only the temporary copy at the fixed FAT epoch. Derived hashes
+remain `be15dc9ad686ee5c33d21165e6ee837a1c6875b0acf5cae0935b7e2faaf7bc7c`
+(raw) and `e5018f57f57db4c8a8dcdcc9e1c2770d21d4970267646ec71bce33c32c853dbd`
+(VCPI). Shipped machine files and board/device behavior are unchanged.
 
 ## test386 full-machine validation (2026-11-24)
 
-**MEASURED**, CPU pin `0bc16f55e557f3a4dac12a35335b175d41a42a54`, upstream
+**MEASURED**, CPU pin `fc07c81f580689c31f182f4421fb9cc5f07374d1`, upstream
 test386 commit `cfd052d1e64d5375dea5a681c1eadeed64ceda2c`:
-`test386_golden` boots the unchanged 64 KiB diagnostic at F0000h on
-`generic-386-isa` and both `generic-486-isa` CPU variants. E0000h is padded
-with FFh to fill the board's 128 KiB decode. No BIOS or service shim runs.
-Configuration remains POST 80h, ASCII 402h, `CPU_FAMILY=3`, `TEST_UNDEF=0`,
-`ROM128=0`; see the [fixture recipe](../../../vendor/test386/README.md).
+`test386_golden` boots the unchanged 64 KiB ROM at F0000h on the 80386DX
+and both 80486DX generic ISA boards. E0000h is FFh padding for the board's
+128 KiB decode. POST 80h, ASCII 402h, `CPU_FAMILY=3`, `TEST_UNDEF=0`,
+`ROM128=0` remain unchanged; see the
+[fixture recipe](../../../vendor/test386/README.md).
 
-All three CPUs produce POST **`00 01 02 03 04 05 06 08 09 20 21 22 0b 0c 0d
-0e 0f 10 11`** and **zero debug-console bytes**. They retire **1,409,775**
-instructions, then halt in the diagnostic's error routine at **00D0:FE89**
-(next IP FE8Ah, linear FFE8Ah). Initial test-profile wall times were
-0.83–0.87 s with three tests running concurrently; the golden has a
-5,000,000 virtual-time-unit cap. The exact progress, final #PF, table bytes,
-retired count and error HLT are asserted. FFh completion is **not** reached.
+All three produce POST **`00 01 02 03 04 05 06 08 09 20 21 22 0b 0c 0d
+0e 0f 10 11`**, zero ASCII bytes and **1,413,097** retired instructions,
+then error HLT at **00D0:FE89** (next EIP FE8Ah). Initial wall times were
+0.81–0.86 s for three concurrent tests. The cap is 5,000,000 virtual units.
+FFh completion is not reached. The stream is unchanged, but the diagnostic
+advances 3,322 instructions past the previous stop within POST 11.
 
 | POST | Coverage at this pin |
 | --- | --- |
@@ -109,52 +109,99 @@ retired count and error HLT are asserted. FFh completion is **not** reached.
 | 08 | Combined PE/PG write and protected entry execute with RAM page tables. |
 | 09 | Protected pushes/pops with both stack address sizes complete. |
 | 20 | User/ring transitions, privileged-instruction faults, interrupt gates and call gates complete. |
-| 21 | V86 entry/exit, IOPL-sensitive faults, TSS bitmap denial and allowance, and interrupt checks complete. The ROM128-only 16-bit-gate test is excluded by the unchanged fixture configuration. |
-| 22 | The checkpoint and common task setup execute; extended task-switch tests are ROM128-only and are not claimed here. |
-| 0b–10 | Protected segment moves, sign/zero extension, 16/32-bit LEA, segment-override memory accesses and protected string/REP tests complete. |
-| 11 | The first not-present page test reaches its #PF handler; the handler rejects PDE.A=1. |
-| 12 onward, FF | Unreached. POST numbers are not execution order. |
+| 21 | V86 entry/exit, IOPL-sensitive faults, TSS bitmap denial/allowance and interrupt checks complete. ROM128-only 16-bit-gate checks stay excluded. |
+| 22 | Common task setup executes; extended task-switch tests are ROM128-only and are not claimed. |
+| 0b–10 | Protected segment moves, sign/zero extension, LEA, segment overrides and string/REP tests complete. |
+| 11 | All ten not-present PDE/PTE rows and the first user read-only read pass; the first user write-protection fault reaches its handler, which rejects PDE.A=1. |
+| 12 onward, FF | Unreached; POST numbers are not execution order. |
 
 ### CPU FINDINGS
 
-**MEASURED: one CPU-policy/diagnostic-expectation mismatch, no board defect.**
-POST 11 starts at `src/test386.asm:1297–1328`. The first table row at
-`src/tests/paging_p.asm:189` is PDE flags 03h, PTE flags 02h, expected #PF(0),
-read at CPL 0. ESI=9DD6h selects that row. The access at **00D0:9F76**
-(linear F9F76h) is **`A1 00 F0 49 00`**, `MOV EAX,[0049F000h]` in USE32
-(`paging_p.asm:367`). It faults at retired **1,409,748**, with error code 0
-and CR2=0049F000h, as expected. The final delivery record asserts this event.
+**MEASURED: CPU-policy/diagnostic-expectation mismatch, no board defect.**
+`src/test386.asm:1297–1328` iterates the table. The failing row is
+`src/tests/paging_p.asm:204`, PDE=05h / PTE=05h (present, user, read-only),
+expected user write #PF(7). ESI=9DF7h selects row index 11. The instruction
+at **00AB:9F88**, linear **000F9F88**, is
+**`C7 05 00 F0 49 00 EF BE AD DE`**, `MOV dword [0049F000h],DEADBEEFh`
+(`paging_p.asm:372`). At retired **1,413,070** it delivers #PF(7),
+CPL 3→0, VM 0→0. That fault and CR2=0049F000h are correct. A sample at
+retired 1,413,080, 00D0:A05C, asserts EAX=0049F000h just after MOV EAX,CR2;
+the handler's error-code and CR2 comparisons pass before its A-bit check.
 
-The handler at `paging_p.asm:434–458` expects **PDE.A=0** even though PDE.P=1
-and the PTE is absent. Actual PDE at physical 1004h is **00003023h**;
-PTE at 327Ch remains **0009F002h**. A single-instruction probe measured:
+The handler at `paging_p.asm:455–463` requires PDE.A=0 and PTE.A=D=0 for
+every fault, including protection faults. Actual physical PDE 1004h is
+**00003025h**, PTE 327Ch is **0009F025h**: both A bits set, D clear.
+At retired **1,413,090**, **00D0:A06C**, EAX=00003025h, instruction
+**`A9 20 00 00 00`** tests PDE.A, followed by
+**`0F 85 08 5E 00 00`** at A071h branching to the error routine.
+The golden samples this check as well as the final fault, tables and halt,
+so a different failure reaching the same HLT cannot pass unnoticed.
 
-```text
-retired 1409751  00d0:a040  EAX=00000044 EBX=00000000  #PF error matches
-retired 1409757  00d0:a059  EAX=00000000 EBX=00000000  reading CR2
-retired 1409768  00d0:a06c  EAX=00003023 EBX=00000000  TEST EAX,20h
-retired 1409769  00d0:a071  EAX=00003023 EBX=00000000  JNZ error
-retired 1409770  00d0:fe7f  EAX=00003023 EBX=00000000  error routine
-```
+**READ:** Intel486 Programmer's Reference Manual §9.9.14 requires both A
+bits on operand protection faults; x86jit's
+`x86jit-core/src/interp/legacy/paging.rs` retains that behavior on both 486
+entries and the same deterministic policy on the 386. The 386
+protection-fault A-bit behavior is **ASSUMED CPU policy**, not an independently
+measured physical-chip result. xj-srh.38 (x86jit) changes only the
+not-present walk: no A/D updates until both entries are present. All ten
+not-present rows now pass. No CPU change or vendor patch bypasses the
+next expectation mismatch.
 
-The decisive bytes are **`A9 20 00 00 00 0F 85 08 5E 00 00`** at A06Ch.
-**READ:** x86jit's pinned `backlog/docs/design/paging.md` §3.3 explicitly
-sets PDE.A before reading the PTE; an absent PTE may leave PDE.A set. Its
-§2 H9 cites Intel SDM Vol. 3A §§5.10.2.3/5.10.3.1 permitting upper-level
-accessed entries without a complete lower translation. The same deterministic
-choice applies to the 386, whose failed-walk intermediate state is less fully
-specified. This is an upstream test expectation conflicting with a documented
-CPU policy, **not evidence of an incorrect architectural #PF or a new V86
-regression**. No CPU change or ROM patch is made to bypass the check.
+Final registers on all models: EAX=000000D0h, EBX=7, ECX=3Fh, EDX=7,
+ESI=9DF7h, EDI=0, EBP=4000h, ESP=FFDBh, EIP=FE8Ah, FLAGS=0046h.
+CS=00D0h (base F0000h, limit FFFFh, attributes 409Bh), DS=0044h (base 0,
+limit FFFFFFFFh, attributes 80F3h), ES=0 unusable, SS=0118h (base 10000h,
+limit 7FFFFh, attributes 4093h). GDTR=600h:031Fh, IDTR=400h:0177h,
+LDTR=0008h (base A00h, limit 5F7h), TR=0030h (base 5000h, limit 67h).
+MSW=0001h on 386 / 0011h on 486; CPL=0, A20 on. The fault's saved
+registers are EAX=44h, EBX=0, ECX=3Fh, EDX=7, ESI=9DF7h, EDI=0,
+EBP=4000h, SS:ESP=012Bh:00007FFFh, FLAGS=0202h, CS=00ABh, DS=0044h.
+Reproduce with all three `test386_*_golden` tests and `--nocapture`.
 
-Final registers on every model: EAX=000000D0h, EBX=0, ECX=4Ah, EDX=0,
-ESI=9DD6h, EDI=3000h, EBP=4000h, ESP=FFEFh, EIP=FE8Ah, FLAGS=0046h,
-CPL=0, A20 enabled. CS=00D0h (base F0000h, limit FFFFh, attributes 409Bh),
-DS=0044h (base 0, limit FFFFFFFFh, attributes 80F3h), ES=0110h (base 1000h,
-limit 3FFFh), SS=0118h (base 10000h, limit 7FFFFh, attributes 4093h).
-GDTR=600h:031Fh, IDTR=400h:0177h, LDTR=0008h (base A00h, limit 5F7h),
-TR=0030h (base 5000h, limit 67h). MSW is 0001h on 386, 0011h on 486.
-Reproduce with the three `test386_*_golden` tests and the unchanged pinned ROM.
+## Repin and absent-coprocessor audit (2026-11-24)
+
+**READ:** xj-srh.39 (x86jit) broadens no-FPU control stores to all-high
+words for 286 and 386 with CR0.EM=0 (FNSTCW, FNSTSW m16/AX, FNSTENV,
+FNSAVE); no-wait initialization/control forms complete without an effect.
+CR0.EM=1 still raises #NM. This is a deterministic absent-bus policy,
+not a claim that undefined physical socket data has one universal value.
+The fc07c81f PG=0 dispatch repair changes host performance, not virtual time.
+
+Kiselev's open AT fixture calls `src/cpu.inc:318–350`, `detect_fpu`:
+FNINIT, a short loop, clear the control-word buffer, FNSTCW, compare with
+03FFh. The previous absent word outputs already returned FFFFh on 286;
+the broader stores do not change that probe. Present returns 037Fh and
+also fails this BIOS's 8087-oriented comparison. Both configurations
+therefore print `Mathematics Co-processor:   Absent`. The absent branch
+prints without clearing the BDA bit inherited from CMOS by
+`src/rtc.inc:340–344`. BDA equipment bit 1 and CMOS 14h bit 1 still follow
+the configured socket (clear for None, set for 80287), independently of
+the printed result.
+
+**MEASURED:** the paired Kiselev run retains byte-identical screens at
+18,990,963 retired instructions for either socket policy. BDA equipment is
+0231h / CMOS 14h is 21h with None, and 0233h / 23h with 80287. The exact
+printed coprocessor line is `Mathematics Co-processor:   Absent` in both.
+The named test takes 6.38 s for the pair in this test-profile run.
+
+SeaBIOS has **no FPU-presence instruction probe** in this pinned build.
+`src/misc.c:62–68`, `mathcp_setup`, unconditionally sets BDA equipment bit
+1 and installs IRQ13, called from `src/post.c:146`. It reports a coprocessor
+even on the no-FPU 386; the repin does not change that firmware behavior.
+Derived CMOS bit 1 remains clear on 386, set on 486. The synthetic
+machine-file FPU/CMOS tests and generic-board storage tests cover these
+configuration values. The no-FPU 386 FNSTCW now returns FFFFh rather than
+refusing, explaining DOS/32A's progress, not a SeaBIOS POST change.
+
+**MEASURED:** named SeaBIOS diskless POST probes report BDA equipment
+0026h on all three entries, CMOS 14h=00h on 386 / 02h on both 486s.
+Retired counts stay 8,400,480 (386) and 10,975,128 (both 486s), with wall
+times 3.10 s and 6.46 s respectively in the named runs. The first full
+required-fixture gate passes all 2,827 ordinary/ignored tests (eight
+user-ROM exclusions) and 900 release device tests. Apart from the advanced
+test386 and DOS/32A expectations above, existing golden values change only
+their CPU revision guards: no other retired counts, POST streams, serial
+text, screen/frame or audio hashes are adjusted for this repin.
 
 ## V86 monitor and CPU-state audit (2026-11-24)
 
@@ -232,8 +279,8 @@ refused. VME/CR4/VIF/VIP are absent. Both 486 entries retain the AM+AC typed
 refusal and pending CR0.NE external FERR routing. The 386's external numeric
 routing is supported by the CPU but not independently exercised by this guest.
 
-The repin advances test386 because V86 entry and execution are now public.
-The PDE.A policy predates this repin. Other goldens change only their revision
+The earlier `0bc16f55` repin advanced test386 through V86 entry and execution.
+The current failed-walk and protection-fault A-bit findings are recorded above. Other goldens change only their revision
 guards unless rerun evidence requires an individually explained expectation.
 
 ## Paging restore audit

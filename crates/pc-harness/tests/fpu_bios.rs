@@ -3,6 +3,7 @@
 //! See `backlog/docs/design/machine-config.md` §CPU model selection.
 
 use assembly::{bios, FpuChip};
+use cpu::Cpu;
 
 #[path = "support/fixtures.rs"]
 mod fixtures;
@@ -35,6 +36,27 @@ fn kiselev_empty_socket_finishes_the_coprocessor_probe() {
                 .unwrap(),
             machine::RunOutcome::RetiredCapReached
         );
+        let mut equipment = [0; 2];
+        assembled
+            .machine
+            .cpu()
+            .read_mem(0x410, &mut equipment)
+            .unwrap();
+        assembled
+            .machine
+            .bus_mut()
+            .port_write(0x70, 1, 0x14)
+            .unwrap();
+        let cmos = assembled.machine.bus_mut().port_read(0x71, 1).unwrap();
+        let equipment = u16::from_le_bytes(equipment);
+        // The absent branch prints its result without clearing the equipment
+        // bit inherited from CMOS, even for the present engine's 037Fh word.
+        assert_eq!(equipment & 2, cmos as u16 & 2);
+        assert_eq!(cmos & 2, if fpu == FpuChip::None { 0 } else { 2 });
+        eprintln!(
+            "FPU {fpu:?}: BDA equipment={equipment:04x}; CMOS14={cmos:02x}; retired={}",
+            assembled.machine.cpu().retired()
+        );
         let video::Frame::Text(grid) = assembled
             .capture_text(assembly::DeviceId::Mda)
             .unwrap()
@@ -60,12 +82,11 @@ fn kiselev_empty_socket_finishes_the_coprocessor_probe() {
 #[test]
 #[ignore = "requires the open BIOS fixture and boots the project-owned IRQ13 guest"]
 fn kiselev_irq13_chains_to_int2_for_numeric_errors() {
-    use cpu::Cpu;
     let Some(rom) = fixtures::fixture("kiselev-bios/bios-xi8088.bin") else {
         return;
     };
     assert!(
-        include_str!("../../../Cargo.lock").contains("#0bc16f55e557f3a4dac12a35335b175d41a42a54")
+        include_str!("../../../Cargo.lock").contains("#fc07c81f580689c31f182f4421fb9cc5f07374d1")
     );
     // Kiselev 8088 BIOS, bios.asm int_75: both EOIs precede software INT 02h.
     // The guest keeps that firmware vector and replaces only INT 02h.

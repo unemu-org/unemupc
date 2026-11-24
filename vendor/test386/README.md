@@ -43,19 +43,22 @@ at FFFF0000h–FFFFFFFFh. Tests fill E0000h–EFFFFh with FFh to satisfy the
 board's 128 KiB decode. Tests use the explicit unlisted-fixture assembly option,
 leaving shipped firmware catalogue and scan policy intact. No SeaBIOS runs.
 
-At CPU pin `0bc16f55e557f3a4dac12a35335b175d41a42a54`, all three models
+At CPU pin `fc07c81f580689c31f182f4421fb9cc5f07374d1`, all three models
 produce POST `00 01 02 03 04 05 06 08 09 20 21 22 0b 0c 0d 0e 0f 10 11`
-and zero ASCII bytes, retiring 1,409,775 instructions. POST 21's V86 tests
-complete. The first page-fault test at POST 11 enters the expected #PF(0)
-handler for `MOV EAX,[0049F000h]` at 00D0:9F76, but the handler expects
-PDE.A=0 for a present PDE / absent PTE. The CPU's documented paging policy
-leaves PDE.A=1 (00003023h at physical 1004h); the diagnostic therefore reaches
-its error HLT at 00D0:FE89. This is a CPU-policy/test-expectation mismatch,
-not a board failure or FFh completion. No source is patched to bypass it.
-The ROM128-only task-switch and 16-bit V86-gate tests remain excluded by the
-unchanged build configuration. The bound is 5,000,000 virtual-time units;
-initial concurrent test-profile times were 0.83–0.87 seconds. The retained
-bare scheduler rig also captures POST at 80h.
+and zero ASCII bytes, retiring 1,413,097 instructions. All ten not-present
+PDE/PTE rows now pass. The first user write-protection row at
+`src/tests/paging_p.asm:204` correctly faults with #PF(7) on
+`MOV dword [0049F000h],DEADBEEFh`, 00AB:9F88. The handler then rejects
+PDE.A=1: physical 1004h contains 00003025h and PTE 327Ch contains
+0009F025h. Setting both A bits on operand protection faults is required
+by Intel486 PRM §9.9.14 and retained as deterministic CPU policy on 386.
+The golden samples EAX=3025h at the handler's A06Ch check and pins the
+error HLT at 00D0:FE89. This is the next CPU-policy/test-expectation
+mismatch; no board failure or FFh completion is claimed. No ROM patch
+bypasses the check. ROM128-only task-switch and 16-bit V86-gate tests
+remain excluded. The bound is 5,000,000 virtual-time units; initial
+concurrent test-profile times were 0.81–0.86 seconds. The bare scheduler
+rig still captures POST at 80h.
 
 See [measured coverage and CPU findings](../../backlog/docs/design/protected-mode-gaps.md)
 and `crates/pc-harness/tests/test386_golden.rs` for the pinned stop contract.

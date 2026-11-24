@@ -13,7 +13,7 @@ use device::ByteStreamKind;
 #[path = "support/fixtures.rs"]
 mod fixtures;
 
-const CPU_REV: &str = "0bc16f55e557f3a4dac12a35335b175d41a42a54";
+const CPU_REV: &str = "fc07c81f580689c31f182f4421fb9cc5f07374d1";
 const CAP: u64 = 5_000_000;
 const GOLDEN_POST: &[u8] = &[
     0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x08, 0x09, 0x20, 0x21, 0x22, 0x0B, 0x0C, 0x0D, 0x0E,
@@ -101,6 +101,26 @@ fn run(chip: CpuChip) {
     .unwrap();
     assembled.machine.enable_delivery_log().unwrap();
     let started = std::time::Instant::now();
+    // Inspect the handler before its A-bit check, so an identical error HLT
+    // reached for another reason cannot satisfy the golden.
+    let mut cap = 0;
+    for (target, ip, eax) in [(1_413_080, 0xA05C, 0x49F000), (1_413_090, 0xA06C, 0x3025)] {
+        while assembled.machine.cpu().retired() < target {
+            // REP iterations consume steps without each retiring an instruction.
+            cap += target - assembled.machine.cpu().retired();
+            assert!(cap <= CAP);
+            assert_eq!(
+                assembled.machine.run_bounded(Some(cap)).unwrap(),
+                machine::RunOutcome::RetiredCapReached
+            );
+        }
+        assert_eq!(assembled.machine.cpu().reg(CpuReg::Rip), ip);
+        assert_eq!(assembled.machine.cpu().reg(CpuReg::Rax), eax);
+        eprintln!(
+            "{} handler: retired={target}; IP={ip:04x}; EAX={eax:08x}",
+            chip.name()
+        );
+    }
     let outcome = assembled.machine.run_bounded(Some(CAP));
     let wall = started.elapsed();
     let post = assembled
@@ -142,7 +162,7 @@ fn run(chip: CpuChip) {
         "test386 progress changed; review and advance the golden"
     );
     assert_eq!(text, "", "printing follows the paging tests");
-    assert_eq!(retired, 1_409_775);
+    assert_eq!(retired, 1_413_097);
     assert_eq!(outcome.unwrap(), machine::RunOutcome::Halted);
     let state = assembled.machine.cpu().diagnostic_state();
     assert_eq!(state.code_linear, 0xFFE8A);
@@ -152,8 +172,8 @@ fn run(chip: CpuChip) {
     assert!(!system.virtual_8086);
     assert_eq!(system.cpl, 0);
     assert_eq!(assembled.machine.cpu().reg(CpuReg::Rip), 0xFE8A);
-    assert_eq!(assembled.machine.cpu().reg(CpuReg::Rsi), 0x9DD6);
-    for (address, expected) in [(0x1004, 0x3023u32), (0x327C, 0x9F002)] {
+    assert_eq!(assembled.machine.cpu().reg(CpuReg::Rsi), 0x9DF7);
+    for (address, expected) in [(0x1004, 0x3025u32), (0x327C, 0x9F025)] {
         let mut bytes = [0; 4];
         assembled
             .machine
@@ -167,14 +187,14 @@ fn run(chip: CpuChip) {
     else {
         panic!("expected the final page-fault record");
     };
+    eprintln!("last delivery: {fault}");
     assert_eq!(
         (fault.vector, fault.error_code, fault.cs, fault.ip),
-        (14, Some(0), 0xD0, 0x9F76)
+        (14, Some(7), 0xAB, 0x9F88)
     );
-    assert_eq!(fault.retired, 1_409_748);
-    assert_eq!(fault.regs.unwrap().edx, 0);
+    assert_eq!(fault.retired, 1_413_070);
+    assert_eq!(fault.regs.unwrap().edx, 7);
     assert!(!fault.virtual_8086_before);
-    eprintln!("last delivery: {fault}");
 }
 
 #[test]

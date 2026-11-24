@@ -23,7 +23,7 @@ fn budget(chip: CpuChip, previous_steps: u64) -> u64 {
 
 fn shipped(chip: CpuChip) -> Option<assembly::MachineConfig> {
     assert!(
-        include_str!("../../../../Cargo.lock").contains("0bc16f55e557f3a4dac12a35335b175d41a42a54")
+        include_str!("../../../../Cargo.lock").contains("fc07c81f580689c31f182f4421fb9cc5f07374d1")
     );
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     if ["bios-1.17.0-isa.bin", "build/vgabios-1.17.0-stdvga.bin"]
@@ -382,6 +382,24 @@ pub fn seabios_reaches_diskless_post_end(chip: CpuChip) {
         }
     }
     result.unwrap();
+    let mut equipment = [0; 2];
+    machine
+        .machine
+        .cpu()
+        .read_mem(0x410, &mut equipment)
+        .unwrap();
+    let equipment = u16::from_le_bytes(equipment);
+    machine.machine.bus_mut().port_write(0x70, 1, 0x14).unwrap();
+    let cmos = machine.machine.bus_mut().port_read(0x71, 1).unwrap();
+    // SeaBIOS sets the BDA coprocessor flag unconditionally; CMOS still
+    // records the configured socket, so the two differ on a no-FPU 386.
+    assert_eq!(equipment & 2, 2);
+    assert_eq!(cmos & 2, if chip == CpuChip::I80386 { 0 } else { 2 });
+    eprintln!(
+        "{} FPU: BDA equipment={equipment:04x}; CMOS14={cmos:02x}",
+        chip.name()
+    );
+
     // The pinned BIOS emits this PCI-search notice before trying fw_cfg ROMs.
     let debug_text = String::from_utf8_lossy(&debug);
     assert!(debug_text.contains("Running option rom at c000:0003"));
@@ -1405,7 +1423,7 @@ pub fn seabios_freedos_dos32a(chip: CpuChip, vcpi: bool) {
     if vcpi {
         let source = root.join("vendor/freedos/floppy-1.4/freedos-1.4-floppy-src.tar");
         if !jemm_source_available(&source, required) {
-            eprintln!("skipping *_seabios_freedos_dos32a_vcpi_cpu_boundary: JemmEx source fixture is missing");
+            eprintln!("skipping *_seabios_freedos_dos32a_vcpi: JemmEx source fixture is missing");
             return;
         }
         assert_eq!(
@@ -1486,6 +1504,12 @@ pub fn seabios_freedos_dos32a(chip: CpuChip, vcpi: bool) {
     let started = std::time::Instant::now();
     let mut saw_v86 = false;
     let mut saw_v86_delivery = false;
+    let mut saw_client_pe = false;
+    let mut saw_client_pg = false;
+    let mut saw_fill = false;
+    let mut saw_sum = false;
+    let expected_cr0 =
+        if chip == CpuChip::I80386 { 1 } else { 0x11 } | if vcpi { 1 << 31 } else { 0 };
     for cap in (100_000..=budget(chip, 5_000_000)).step_by(100_000) {
         let result = assembled.machine.run_bounded(Some(cap));
         let state = assembled.machine.cpu().diagnostic_state();
@@ -1497,123 +1521,120 @@ pub fn seabios_freedos_dos32a(chip: CpuChip, vcpi: bool) {
                 if last.virtual_8086_before && !last.virtual_8086_after
                     && last.cpl_before == 3 && last.cpl_after == 0)
         });
-        if let Err(machine::MachineError::Cpu(error)) = result {
-            let text = freedos_text(&assembled);
-            let report = assembled.machine.cpu().stop_report(&error).unwrap();
-            let is_386 = chip == CpuChip::I80386;
-            let expected_ip = if is_386 { 0x030D } else { 0x0327 };
-            let expected_cs = if vcpi { 0x21AE } else { 0x2171 };
-            let expected_bytes: &[u8] = if is_386 {
-                &[0xD9, 0x7E, 0x02]
-            } else {
-                &[0xDB, 0xE1]
-            };
-            let expected_retired = match (chip, vcpi) {
-                (CpuChip::I80386, false) => 10_765_842,
-                (CpuChip::I80386, true) => 11_147_577,
-                (CpuChip::I80486Dx, false) => 13_332_394,
-                (CpuChip::I80486Dx, true) => 13_714_260,
-                (CpuChip::I80486DxCpuid, false) => 13_332_400,
-                (CpuChip::I80486DxCpuid, true) => 13_714_275,
-                _ => unreachable!(),
-            };
-            let Some(machine::DeliveryEntry::Deliveries { last, .. }) = deliveries.entries.last()
-            else {
-                panic!("DOS/32A must retain its final DOS delivery");
-            };
-            eprintln!("CPU FINDINGS: {} DOS32A vcpi={vcpi}: {error}; retired={}; wall={:?}; text SHA-256={}; deliveries={}; last={last}\n{text}\n{report}\n{state}", chip.name(), assembled.machine.cpu().retired(), started.elapsed(), text_sha256(&text), deliveries.total);
-            assert!(
-                matches!(error, cpu::CpuError::UnsupportedInstruction { addr, cs, ref bytes }
-                if addr == expected_ip && cs == expected_cs && bytes == expected_bytes)
-            );
-            assert_eq!((report.cs, report.ip), (expected_cs, expected_ip));
-            assert_eq!(
-                report.code_linear,
-                u32::from(expected_cs) * 16 + expected_ip as u32
-            );
-            assert_eq!(assembled.machine.cpu().retired(), expected_retired);
-            assert_eq!(
-                system.msw,
-                match (is_386, vcpi) {
-                    (true, false) => 0x0000,
-                    (true, true) => 0x0001,
-                    (false, false) => 0x0010,
-                    (false, true) => 0x0011,
-                }
-            );
-            assert!(state.a20);
-            assert_eq!(system.virtual_8086, vcpi);
-            assert_eq!(system.protected(), vcpi);
-            assert_eq!(system.cpl, if vcpi { 3 } else { 0 });
+        let text = freedos_text(&assembled);
+        // EBP is the client's call/pop code base. Full EIP identifies its two
+        // long loops even when the diagnostic's legacy IP view truncates it.
+        let eip = assembled.machine.cpu().reg(cpu::CpuReg::Rip);
+        let base = assembled.machine.cpu().reg(cpu::CpuReg::Rbp);
+        let offset = eip.checked_sub(base);
+        let fill = offset.is_some_and(|offset| (0x52..0x5E).contains(&offset));
+        let sum = offset.is_some_and(|offset| (0x62..0x6E).contains(&offset));
+        if text.contains("DOS32-PM32-BEGIN") && (fill || sum) {
+            assert_eq!(state.cs().base, 0);
+            assert_ne!(state.cs().attributes & 0x4000, 0);
+            assert!(system.protected());
+            assert!(!system.virtual_8086);
+            assert_eq!(system.cr0, expected_cr0);
+            if (fill && !saw_fill) || (sum && !saw_sum) {
+                eprintln!("{} DOS32A vcpi={vcpi}: client {} EIP={eip:08x} EBP={base:08x} CR0={:08x}; retired={}", chip.name(), if fill { "fill" } else { "sum" }, system.cr0, assembled.machine.cpu().retired());
+            }
+            saw_fill |= fill;
+            saw_sum |= sum;
+            saw_client_pe |= system.protected();
+            saw_client_pg |= system.paging();
+        }
+        if let Err(machine::MachineError::Cpu(error)) = &result {
+            eprintln!("CPU FINDINGS: {} DOS32A vcpi={vcpi}: {error}; retired={}; wall={:?}\n{text}\n{}\n{state}", chip.name(), assembled.machine.cpu().retired(), started.elapsed(), assembled.machine.cpu().stop_report(error).unwrap());
+        }
+        result.unwrap();
+        if text.contains("DOS32-VER-DONE") && text.contains("A:\\>") {
+            eprintln!("{} DOS32A vcpi={vcpi}: retired={}; wall={:?}; text SHA-256={}; client PE={saw_client_pe} PG={saw_client_pg}; v86={saw_v86} deliveries={saw_v86_delivery}\n{text}\n{state}", chip.name(), assembled.machine.cpu().retired(), started.elapsed(), text_sha256(&text));
+            assert!(text.contains("DOS32-PM32-BEGIN"));
+            assert!(text.contains("DOS32-1M-SUM=FFFE0000"));
+            assert!(text.contains("DOS32-RETURNED"));
+            assert!(!text.contains("DOS32-ERROR"));
+            assert!(!text.contains("DOS32-FAIL"));
+            assert!(saw_fill && saw_sum, "sample both client loops");
+            assert!(text.contains(&format!("DOS32-CR0={expected_cr0:08X}")));
+            let after_return = text.split_once("DOS32-RETURNED").unwrap().1;
+            assert!(after_return.contains("FreeCom version 0.86"));
+            assert!(after_return.contains("DOS32-VER-DONE"));
+            assert!(after_return.contains("A:\\>"));
+            assert!(saw_client_pe);
+            assert_eq!(saw_client_pg, vcpi);
             assert_eq!(saw_v86, vcpi);
             assert_eq!(saw_v86_delivery, vcpi);
+            assert_eq!(text.contains("JemmEx loaded"), vcpi);
+            assert_eq!(system.virtual_8086, vcpi);
+            assert_eq!(system.protected(), vcpi);
+            assert_eq!(system.paging(), vcpi);
             assert_eq!(
-                deliveries.total,
-                if is_386 {
-                    if vcpi {
-                        3174
-                    } else {
-                        2445
-                    }
-                } else if vcpi {
-                    3158
-                } else {
-                    2429
+                assembled.machine.cpu().retired(),
+                match (chip, vcpi) {
+                    (CpuChip::I80386, false) => 13_391_425,
+                    (CpuChip::I80386, true) => 14_567_429,
+                    (_, false) => 15_991_472,
+                    (_, true) => 17_067_476,
                 }
-            );
-            assert_eq!(last.kind, cpu::DeliveryKind::Software);
-            assert_eq!(last.error_code, None);
-            assert_eq!(
-                (last.vector, last.cs, last.ip, last.linear),
-                (0x2A, 0x05E3, 0x0280, 0x60B0)
-            );
-            assert_eq!(
-                last.retired,
-                if is_386 {
-                    if vcpi {
-                        11_147_477
-                    } else {
-                        10_765_778
-                    }
-                } else if vcpi {
-                    if chip == CpuChip::I80486Dx {
-                        13_714_134
-                    } else {
-                        13_714_143
-                    }
-                } else {
-                    13_332_304
-                }
-            );
-            assert_eq!(
-                (last.virtual_8086_before, last.virtual_8086_after),
-                (vcpi, false)
-            );
-            assert_eq!(
-                (last.cpl_before, last.cpl_after),
-                (if vcpi { 3 } else { 0 }, 0)
             );
             assert_eq!(
                 text_sha256(&text),
-                if vcpi {
-                    "5159d6897f105da89e02580b82e18681de91bfa0b2d1b6e8c97949b6f4f1eaa3"
-                } else {
-                    "b63027eb7663ae41eead37d69a0d4ceeb7cc41e1df5bfc5b07def2cea15d24e9"
+                match (chip, vcpi) {
+                    (CpuChip::I80386, false) =>
+                        "4690215855180e22e1fda558b078091b25ca42b5f0375a83866f9d809fe3f886",
+                    (CpuChip::I80386, true) =>
+                        "b89ce13b2337dce6f5032213378b2f9bdc67d90e35ce3bb26b13cc84d6f0bca3",
+                    (_, false) =>
+                        "3272ede0290c83dcfe3a6dfc9fa8624d9f1c98bfa9994d9fd95ae67958902add",
+                    (_, true) => "90c6697061ae575eb35a47c1412e3df3d4cd7130c6a8ac611a63b277a2e18cef",
                 }
             );
-            assert!(text.contains("DOS/32A -- DOS Extender version 9.1.2"));
-            assert_eq!(text.contains("JemmEx loaded"), vcpi);
-            assert!(!text.contains("DOS32-PM32-BEGIN"));
-            assert!(!text.contains("DOS32-RETURNED"));
-            assert!(!text.contains("DOS32-VER-DONE"));
-            assert!(!text.contains("A:\\>"));
-            return;
+            let keyboard = assembled.device_index[&DeviceId::Keyboard];
+            let echo_dos32_ok = [
+                0x12, 0x2E, 0x23, 0x18, 0x39, 0x20, 0x18, 0x1F, 0x04, 0x03, 0x0C, 0x18, 0x25, 0x1C,
+            ];
+            let scancodes: Vec<_> = echo_dos32_ok
+                .into_iter()
+                .flat_map(|key| [key, key | 0x80])
+                .collect();
+            assembly::inject_scancodes(&mut assembled.machine, keyboard, &scancodes);
+            for command_cap in ((cap + 100_000)..=budget(chip, 5_000_000)).step_by(100_000) {
+                assembled.machine.run_bounded(Some(command_cap)).unwrap();
+                let text = freedos_text(&assembled);
+                if text.lines().any(|line| line.trim() == "dos32-ok")
+                    && text.lines().any(|line| line.trim() == "A:\\>")
+                {
+                    eprintln!("{} DOS32A vcpi={vcpi}: following command retired={}; wall={:?}; text SHA-256={}\n{text}", chip.name(), assembled.machine.cpu().retired(), started.elapsed(), text_sha256(&text));
+                    assert_eq!(
+                        assembled.machine.cpu().retired(),
+                        match (chip, vcpi) {
+                            (CpuChip::I80386, false) => 13_681_937,
+                            (CpuChip::I80386, true) => 14_857_941,
+                            (_, false) => 16_581_984,
+                            (_, true) => 17_657_988,
+                        }
+                    );
+                    assert_eq!(
+                        text_sha256(&text),
+                        match (chip, vcpi) {
+                            (CpuChip::I80386, false) =>
+                                "9fc9126c386e48828de20e872ab2bc86bfb1b90b9ff308f0363faa467f8c4d30",
+                            (CpuChip::I80386, true) =>
+                                "b72f3e676b549527111648e80d7874237691a5027a221d7c64391680cfd03410",
+                            (_, false) =>
+                                "b642c73744bde5c06e9853a4e336e33578e635ef219b7ad811d5fd4ff14c056f",
+                            (_, true) =>
+                                "c45f344719fa957cae5cebf34fad345926483822c45807862ff0fd730ac4daa4",
+                        }
+                    );
+                    return;
+                }
+            }
+            panic!(
+                "DOS32A following command budget exhausted\n{}",
+                freedos_text(&assembled)
+            );
         }
-        result.unwrap();
-        assert!(
-            !freedos_text(&assembled).contains("DOS32-VER-DONE"),
-            "DOS/32A advanced beyond the pinned CPU boundary; remeasure the end-to-end golden"
-        );
     }
     panic!(
         "DOS32A budget exhausted\n{}\n{}",

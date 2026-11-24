@@ -163,21 +163,21 @@ fn generic486_cpuid_seabios_freedos_jemmex_v86() {
 }
 
 #[test]
-fn generic486_dx_seabios_freedos_dos32a_raw_cpu_boundary() {
+fn generic486_dx_seabios_freedos_dos32a_raw() {
     generic_isa::seabios_freedos_dos32a(assembly::CpuChip::I80486Dx, false);
 }
 
 #[test]
-fn generic486_dx_seabios_freedos_dos32a_vcpi_cpu_boundary() {
+fn generic486_dx_seabios_freedos_dos32a_vcpi() {
     generic_isa::seabios_freedos_dos32a(assembly::CpuChip::I80486Dx, true);
 }
 
 #[test]
-fn generic486_cpuid_seabios_freedos_dos32a_raw_cpu_boundary() {
+fn generic486_cpuid_seabios_freedos_dos32a_raw() {
     generic_isa::seabios_freedos_dos32a(assembly::CpuChip::I80486DxCpuid, false);
 }
 
 #[test]
-fn generic486_cpuid_seabios_freedos_dos32a_vcpi_cpu_boundary() {
+fn generic486_cpuid_seabios_freedos_dos32a_vcpi() {
     generic_isa::seabios_freedos_dos32a(assembly::CpuChip::I80486DxCpuid, true);
 }

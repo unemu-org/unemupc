@@ -12,6 +12,8 @@
 //! CS:IP and the 16 words at SS:SP. The FLAGS layout is that of the Intel
 //! 80286 Programmer's Reference Manual, §3.5.3 (Flags Word) and §10.3
 //! (FLAGS: IOPL in bits 12–13, NT in bit 14); the MSW is §10.1.
+//! Full CR0 also retains PG for 386/486 diagnostics (Intel 80386 Programmer's
+//! Reference Manual §10.1, Control Registers, and §5.2, Page Translation).
 //!
 //! Memory is read as the stop report reads it, through the CPU's own map with
 //! the 80286's 24-bit address bus and the board's A20 gate applied. A byte in
@@ -63,6 +65,8 @@ impl<T: Copy> Peek<T> {
 /// The system registers of a machine CPU profile.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SystemRegisters {
+    /// Full control register zero, including PG (Intel 80386 PRM §10.1).
+    pub cr0: u32,
     /// Machine status word (the low 16 bits of CR0); bit 0 is PE.
     pub msw: u16,
     /// EFLAGS.VM: paragraph segments at CPL 3 (Intel 80386 PRM, Chapter 15).
@@ -80,6 +84,11 @@ pub struct SystemRegisters {
 }
 
 impl SystemRegisters {
+    /// Whether two-level paging is enabled (Intel 80386 PRM §5.2, CR0.PG).
+    pub fn paging(&self) -> bool {
+        self.cr0 & (1 << 31) != 0
+    }
+
     /// Whether the processor runs in protected mode (MSW.PE).
     pub fn protected(&self) -> bool {
         self.msw & 1 != 0

@@ -652,6 +652,7 @@ impl X86JitCpu {
             })
         };
         let system = machine.then(|| crate::diagnostic::SystemRegisters {
+            cr0: legacy.cr0,
             msw: legacy.cr0 as u16,
             virtual_8086: state.rflags_system & (1 << 17) != 0,
             cpl: legacy.cpl,
@@ -1170,6 +1171,24 @@ mod tests {
         assert_eq!(cpu.reg(CpuReg::Rip), 0x2001);
         assert!(cpu.vm.mem.is_code_page(2));
         cpu
+    }
+
+    #[test]
+    fn diagnostics_preserve_full_cr0_and_observe_paging_without_mutation() {
+        let mut cpu = paged_guest();
+        let retired = cpu.retired();
+        let system = cpu.diagnostic_state().system.unwrap();
+        assert_eq!(system.cr0, 0x8000_0011);
+        assert_eq!(system.msw, 0x0011);
+        assert!(system.protected());
+        assert!(system.paging());
+        assert_eq!(cpu.retired(), retired);
+        assert_eq!(cpu.cpu.cpu.legacy.cr0, system.cr0);
+        cpu.reset().unwrap();
+        let reset = cpu.diagnostic_state().system.unwrap();
+        assert_eq!(reset.cr0, 0);
+        assert!(!reset.protected());
+        assert!(!reset.paging());
     }
 
     #[test]

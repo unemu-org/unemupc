@@ -60,11 +60,11 @@ fn generic386_seabios_freedos_jemmex_v86() {
 }
 
 #[test]
-fn generic386_seabios_freedos_dos32a_raw_cpu_boundary() {
+fn generic386_seabios_freedos_dos32a_raw() {
     generic_isa::seabios_freedos_dos32a(assembly::CpuChip::I80386, false);
 }
 
 #[test]
-fn generic386_seabios_freedos_dos32a_vcpi_cpu_boundary() {
+fn generic386_seabios_freedos_dos32a_vcpi() {
     generic_isa::seabios_freedos_dos32a(assembly::CpuChip::I80386, true);
 }

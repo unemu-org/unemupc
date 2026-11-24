@@ -35,7 +35,7 @@ Call/pop discovers the loaded code address, so there are no absolute code
 addresses or relocation records. DOS/32A supplies flat 32-bit selectors;
 DS and ES are explicitly loaded from the data/stack selector.
 
-## Intended runtime contract
+## Runtime contract
 
 The client prints `DOS32-PM32-BEGIN` using the extender's INT 21h AH=09h
 translation, reads the live CR0 with MOV EAX,CR0 and prints `DOS32-CR0=`
@@ -52,8 +52,21 @@ INT 21h AX=4C00h returns to DOS. Allocation, address, checksum or release
 failure prints `DOS32-FAIL` and exits with status 1.
 
 The golden AUTOEXEC checks ERRORLEVEL, prints `DOS32-RETURNED`, executes
-VER, prints `DOS32-VER-DONE`, and returns to the prompt. The raw variant
+VER, prints `DOS32-VER-DONE`, and returns to the prompt. The test then types `echo dos32-ok` through
+the keyboard and requires its output and a new prompt. The raw variant
 has no JEMMEX/XMS manager; DOS/32A selects its own host. The VCPI variant
 first runs `JEMMEX LOAD NOEMS NORAM NOVMW`. Runtime qualification and any
 CPU boundary are recorded in
 [protected-mode gaps](../../backlog/docs/design/protected-mode-gaps.md#dos-extender-qualification).
+
+**MEASURED, 2026-11-24**, CPU pin
+`fc07c81f580689c31f182f4421fb9cc5f07374d1`: the unchanged client completes
+on 80386DX and both 80486DX variants, raw and with JemmEx/VCPI. All six
+print the expected checksum, return with status zero, execute VER, and
+reach `A:\>`. CPU-side samples in both long loops observe PE=1 and VM=0;
+VCPI samples also observe PG=1. CR0 is 00000001 / 80000001 on 386 and
+00000011 / 80000011 on 486 (raw / VCPI), matching the printed line.
+The golden identifies the fill and sum loops at code offsets 52h–5Dh and
+62h–6Dh relative to EBP, the call/pop code base; changing this pinned
+client requires reviewing those offsets too. DOS/32A's mouse warning 9004
+is non-fatal. No client or extender binary patch is needed.
