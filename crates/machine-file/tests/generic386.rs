@@ -137,37 +137,7 @@ fn generic386_toml_yaml_defaults_and_memory_limits_match() {
     }
 }
 
-/// SeaBIOS rel-1.17.0, stacks.c check_irqs and x86.h cpu_relax use REP NOP.
-/// Intel SDM Volume 2B, PAUSE: F3 90 is a NOP on earlier IA-32 processors.
-/// The current CPU instead delivers #UD repeatedly without leaving CS:IP;
-/// the probe records that boundary without treating it as completed POST.
-fn assert_seabios_rep_nop_fault(machine: &machine::Machine<cpu::X86JitCpu>) {
-    assert_eq!(machine.cpu().code_address(), (0xF000, 0xA72C));
-    assert_eq!(machine.cpu().retired(), 9_970_193);
-    assert_eq!(machine.virtual_time(), 10_000_000);
-    let system = machine.cpu().diagnostic_state().system.unwrap();
-    assert!(!system.protected());
-    assert_eq!(system.cpl, 0);
-    assert_eq!(system.idtr.limit, 0x3FF);
-    let mut bytes = [0; 2];
-    machine.cpu().read_mem(0xFA72C, &mut bytes).unwrap();
-    assert_eq!(bytes, [0xF3, 0x90]);
-    let deliveries = machine.recent_deliveries().unwrap();
-    assert!(deliveries.entries.iter().any(|entry| matches!(entry,
-        machine::DeliveryEntry::Deliveries { count, last, .. }
-            if *count > 1 && last.kind == cpu::DeliveryKind::Fault
-                && last.vector == 6 && last.error_code.is_none()
-                && (last.cs, last.ip, last.linear) == (0xF000, 0xA72C, 0xFA72C)
-    )));
-    eprintln!(
-        "blocked: real mode CPL 0, F000:A72C, linear 000FA72C, bytes {bytes:02X?}, \
-         REP NOP; repeated #UD without an error code; retired: 9970193; \
-         completed steps: 10000000; RetiredCapReached"
-    );
-}
-
 #[test]
-#[ignore = "CPU delivers #UD on REP NOP (F3 90) at F000:A72C; POST is not qualified"]
 fn generic386_seabios_reaches_diskless_post_end() {
     let Some(config) = shipped() else {
         return;
@@ -206,17 +176,21 @@ fn generic386_seabios_reaches_diskless_post_end() {
             eprintln!("{report}");
         }
     }
-    if machine.machine.cpu().code_address() == (0xF000, 0xA72C) {
-        assert_eq!(result.unwrap(), machine::RunOutcome::RetiredCapReached);
-        assert_seabios_rep_nop_fault(&machine.machine);
-        assert!(debug.starts_with(b"SeaBIOS (version 1.17.0"));
-        assert!(debug.ends_with(b"Turning on vga text mode console\n"));
-        assert_eq!(serial, b"\x1bc\x1b[?7l\x1b[2J");
-        return;
-    }
     result.unwrap();
+    eprintln!("POST retired: {}", machine.machine.cpu().retired());
     // SeaBIOS rel-1.17.0, boot.c:965–980: boot_fail prints and waits for IRQs.
-    for expected in ["SeaBIOS (version 1.17.0", "No bootable device."] {
+    for expected in [
+        "SeaBIOS (version 1.17.0",
+        "Found QEMU fw_cfg",
+        "RamSize: 0x01000000 [cmos]",
+        "e820 map has 5 items:",
+        "0: 0000000000000000 - 000000000009fc00 = 1 RAM",
+        "1: 000000000009fc00 - 00000000000a0000 = 2 RESERVED",
+        "2: 00000000000f0000 - 0000000000100000 = 2 RESERVED",
+        "3: 0000000000100000 - 0000000001000000 = 1 RAM",
+        "4: 00000000fffc0000 - 0000000100000000 = 2 RESERVED",
+        "No bootable device.",
+    ] {
         assert!(
             serial
                 .windows(expected.len())
@@ -227,10 +201,16 @@ fn generic386_seabios_reaches_diskless_post_end() {
             "SeaBIOS did not emit {expected:?} within the retired-instruction budget"
         );
     }
+    // The serial console on COM1 must carry the boot failure on its own, so a
+    // UART regression cannot hide behind the debug console.
+    let marker = b"No bootable device.";
+    assert!(
+        serial.windows(marker.len()).any(|window| window == marker),
+        "SeaBIOS did not print the boot failure on the COM1 serial console"
+    );
 }
 
 #[test]
-#[ignore = "CPU delivers #UD on REP NOP at F000:A72C before POST completes; reset/resume is not qualified"]
 fn generic386_seabios_keyboard_reset_reaches_resume() {
     let Some(config) = shipped() else {
         return;
@@ -246,16 +226,16 @@ fn generic386_seabios_keyboard_reset_reaches_resume() {
     let mut assembled = machine_file::assemble_with_observation(&config, &policy).unwrap();
     assembled.machine.enable_delivery_log().unwrap();
     let result = assembled.machine.run_bounded(Some(10_000_000));
-    if assembled.machine.cpu().code_address() == (0xF000, 0xA72C) {
-        assert_eq!(result.unwrap(), machine::RunOutcome::RetiredCapReached);
-        assert_seabios_rep_nop_fault(&assembled.machine);
-        return;
-    }
     result.unwrap();
-    assembled
+    let post = assembled
         .observation
         .drain_bytes(DeviceId::DebugConsole, device::ByteStreamKind::DebugConsole)
         .unwrap();
+    assert!(String::from_utf8_lossy(&post).contains("No bootable device."));
+    eprintln!(
+        "before reset retired: {}",
+        assembled.machine.cpu().retired()
+    );
     // SeaBIOS rel-1.17.0, resume.c handle_resume: CMOS 0Fh=0 selects reboot.
     assembled
         .machine
@@ -286,6 +266,11 @@ fn generic386_seabios_keyboard_reset_reaches_resume() {
             .windows(b"In resume (status=0)".len())
             .any(|window| window == b"In resume (status=0)")
         {
+            eprintln!(
+                "resume retired: {}; virtual time: {}",
+                assembled.machine.cpu().retired(),
+                assembled.machine.virtual_time()
+            );
             break;
         }
         assert_eq!(
@@ -293,5 +278,143 @@ fn generic386_seabios_keyboard_reset_reaches_resume() {
             machine::RunOutcome::ResetRequested,
             "SeaBIOS did not reach resume within the retired-instruction budget"
         );
+    }
+}
+
+/// SeaBIOS rel-1.17.0, malloc.c calcRamSize and system.c handle_1588,
+/// handle_15e801 and handle_15e820 derive legacy sizes from the E820 map.
+/// A synthetic floppy boot sector queries the installed handlers after POST.
+#[test]
+fn generic386_seabios_int15_memory_matches_e820() {
+    let Some(shipped) = shipped() else {
+        return;
+    };
+    struct Image(Vec<u8>);
+    impl machine_file::ImageReader for Image {
+        fn read(&mut self, _: &std::path::Path) -> std::io::Result<Vec<u8>> {
+            Ok(self.0.clone())
+        }
+    }
+    let assembly::ImageSource::Inline(bios) =
+        &shipped.images[shipped.system_bios_image.unwrap()].source
+    else {
+        panic!("fixture should be inline")
+    };
+    for extended in [15360u32, 3072] {
+        let file = "machines/generic-386-seabios.toml";
+        let input = include_str!("../../../machines/generic-386-seabios.toml").replace(
+            "extended_kib = 15360",
+            &format!("extended_kib = {extended}"),
+        );
+        let mut config = machine_file::lower(
+            &machine_file::parse_toml(file, &input).unwrap(),
+            &machine_file::Origins::from_toml(file, &input).unwrap(),
+            &mut Image(bios.clone()),
+        )
+        .unwrap();
+        let mut floppy = vec![0; 1_474_560];
+        floppy[..512].copy_from_slice(include_bytes!("fixtures/seabios-int15.bin"));
+        config.devices.push(
+            assembly::DeviceConfig::new(
+                DeviceId::Fdc,
+                DeviceKind::Fdc(assembly::FdcCfg { drive_slots: 2 }),
+                assembly::FdcCfg::port_windows(false),
+            )
+            .with_irq(6)
+            .with_dma(assembly::DmaSpec {
+                controller: DeviceId::Dma,
+                channel: 2,
+            }),
+        );
+        config.drives.push(assembly::DriveConfig {
+            media: None,
+            kind: assembly::DriveKind::Floppy {
+                geometry: assembly::FloppyGeometry::HD_1_44,
+            },
+            image: assembly::ImageSource::Inline(floppy),
+            expected_sha256: None,
+            controller: DeviceId::Fdc,
+            unit: 0,
+            write: assembly::WriteMode::ReadOnly,
+        });
+        let mut assembled = machine_file::assemble(&config).unwrap();
+        assembled.machine.enable_delivery_log().unwrap();
+        let outcome = assembled.machine.run_bounded(Some(10_000_000));
+        eprintln!(
+            "INT 15h {extended} KiB extended: {outcome:?}; retired: {}",
+            assembled.machine.cpu().retired()
+        );
+        assert_eq!(outcome.unwrap(), machine::RunOutcome::Halted);
+        let mut results = [0; 20];
+        assembled
+            .machine
+            .cpu()
+            .read_mem(0x500, &mut results)
+            .unwrap();
+        let word = |offset| u16::from_le_bytes(results[offset..offset + 2].try_into().unwrap());
+        assert_eq!(word(18), 0xCAFE, "guest did not complete INT 15h calls");
+        let end = usize::from(word(16));
+        assert!((0x624..=0xA80).contains(&end));
+        assert_eq!((end - 0x600) % 36, 0);
+        let mut entries = vec![0; end - 0x600];
+        assembled
+            .machine
+            .cpu()
+            .read_mem(0x600, &mut entries)
+            .unwrap();
+        let mut map = Vec::new();
+        let count = entries.len() / 36;
+        for (index, record) in entries.as_chunks::<36>().0.iter().enumerate() {
+            let dword = |offset| u32::from_le_bytes(record[offset..offset + 4].try_into().unwrap());
+            assert_eq!(dword(20), 0x534D4150);
+            assert_eq!(
+                dword(24),
+                if index + 1 == count {
+                    0
+                } else {
+                    index as u32 + 1
+                }
+            );
+            assert_eq!(dword(28), 20);
+            assert_eq!(record[32] & 1, 0, "E820 returned CF");
+            let start = u64::from_le_bytes(record[..8].try_into().unwrap());
+            let size = u64::from_le_bytes(record[8..16].try_into().unwrap());
+            map.push((start, size, dword(16)));
+        }
+        eprintln!("E820: {map:X?}; legacy words: {results:02X?}");
+        let ram_end = map
+            .iter()
+            .filter(|entry| entry.2 == 1)
+            .map(|entry| entry.0 + entry.1)
+            .max()
+            .unwrap();
+        let configured_end = (u64::from(extended) + 1024) * 1024;
+        assert_eq!(
+            map,
+            vec![
+                (0, 0x9FC00, 1),
+                (0x9FC00, 0x400, 2),
+                (0xF0000, 0x10000, 2),
+                (0x100000, configured_end - 0x100000, 1),
+                (0xFFFC0000, 0x40000, 2),
+            ]
+        );
+        assert_eq!(ram_end, configured_end);
+        let expected_kib = ((ram_end - 1024 * 1024) / 1024) as u16;
+        assert_eq!(word(0), expected_kib);
+        assert_eq!(word(2) & 1, 0, "AH=88h returned CF");
+        assert_eq!(
+            [word(4), word(6), word(8), word(10)],
+            [expected_kib, 0, expected_kib, 0]
+        );
+        assert_eq!(word(12) & 1, 0, "E801h returned CF");
+        for index in [0x30, 0x31] {
+            assembled
+                .machine
+                .bus_mut()
+                .port_write(0x70, 1, index)
+                .unwrap();
+            assert_eq!(assembled.machine.bus_mut().port_read(0x71, 1).unwrap(), 0);
+        }
     }
 }

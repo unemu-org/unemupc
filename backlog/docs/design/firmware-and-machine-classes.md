@@ -330,7 +330,7 @@ contract (machine-config.md). A board model has these parts:
 | `ibm-5170` | at | 80286 (80287 later) | none | **Kiselev Xi 8088 1.0.2** (tested; SHA-256 `1ad458ac…81a8`, MEASURED by `fetch.sh`), plus XUB AT r638 option ROM | IBM 5170 BIOS (even/odd pair) | **available now** |
 | `ibm-5160` | xt | 8088, v20 (reserved) | none | GLaBIOS `ARCH_5160`, Kiselev `MACHINE_XT`, Super PC/Turbo XT | IBM 5160 BIOS | reserved until `xj-50w.2 (x86jit)` |
 | `ibm-5150` | xt | 8088 (reserved) | none | GLaBIOS `ARCH_5150` | IBM 5150 BIOS | optional, later |
-| `generic-386-isa` | at386 | 80386DX | port 92h; emulator-only fw_cfg at 510h/511h | The unemu SeaBIOS fork, `CONFIG_QEMU`, serial console first; SeaVGABIOS later; Bochs `rombios` legacy fallback (decision-19, §3.6) | — | board available; reset executes at `deae5bac`; POST reaches REP NOP, then repeats #UD at `F000:A72C` |
+| `generic-386-isa` | at386 | 80386DX | port 92h; emulator-only fw_cfg at 510h/511h | The unemu SeaBIOS fork, `CONFIG_QEMU`, serial console first; SeaVGABIOS later; Bochs `rombios` legacy fallback (decision-19, §3.6) | — | board available; diskless POST, INT 15h memory queries and keyboard reset/resume pass at `b7c10b6f` |
 | `i440fx-piix3` | pci | Pentium Pro / Pentium II (reserved) | 82441FX PAM/SMRAM, PIIX3 PIRQ/ELCR | SeaBIOS (QEMU `pc` config); Bochs `rombios` | — | candidate for phases C/D |
 | `i440bx-piix4` | pci + AGP | Pentium II/III | 82443BX, PIIX4 | none for a real board (see §3.4) | Award/AMI/Phoenix images of named boards | enthusiast |
 | `neat-286` | at | 286 / 386SX | C&T CS8221 index/data registers (ASSUMED 22h/23h) | none | AMI/Phoenix NEAT BIOSes | enthusiast |
@@ -512,7 +512,7 @@ on #UD at `0008:000F510B`, after 3,582 retired instructions. Fixes belong in
 the fork and go upstream (`upc-o0j.23`), rather than in CPU or board workarounds.
 Source citations below retain the spike's upstream revision unless marked fork.
 
-**Execution qualification (2026-11-23, MEASURED).** CPU pin `deae5bac`
+**Execution qualification (2026-11-24, MEASURED).** CPU pin `b7c10b6f`
 (x86jit) supplies `CpuState::i386_reset`. The adapter applies
 the retained board A20 state after installing that image. Synthetic tests
 qualify the high reset fetch, near jumps before CS reload, the low target
@@ -523,37 +523,28 @@ deliberately unmapped. The assembled board's explicit reset-fetch policy
 temporarily forces CPU A20 on until the first CS reload, then restores the
 board gate; see machine-files.md §Generic 386 ISA board.
 
-**MEASURED with the fork on 2026-11-24:** the shipped 15 MiB extended-RAM
-diskless machine passes fw_cfg, reports 16 MiB from CMOS, relocates POST,
-detects no PCI system and selects COM1 as its primary display. Port 402h ends
-with `Turning on vga text mode console`; COM1 contains only 11 terminal
-initialization bytes (`\x1bc\x1b[?7l\x1b[2J`).
+**MEASURED with the fork on 2026-11-24:** the shipped diskless machine
+passes fw_cfg, reports 16 MiB from CMOS and completes POST. COM1 and port
+402h print `No bootable device.`. The probe stops after **5,885,053 retired
+instructions**.
+The probe asserts the banner, fw_cfg, RamSize and all five E820 lines.
+After POST, CMOS 0Fh=0 and an 8042 FEh pulse reach
+`In resume (status=0)` at **5,887,802 retired instructions**.
 
-The next boundary is REP NOP / PAUSE (`F3 90`) in big real mode, CPL 0,
-at `F000:A72C`, linear `000FA72Ch`. It is first reached after **1,117,388
-retired instructions / 1,147,195 completed steps**. One more bounded step
-records `DeliveryKind::Fault`, vector 6, no error code, leaving CS:IP
-unchanged. At the 10,000,000-step bound the result is `RetiredCapReached`,
-with **9,970,193 retired instructions**, still at that address, with repeated
-#UD deliveries between IRQ0 timer interrupts. A 20,000,000-step diagnostic
-also stayed there. This is a delivered fault, not an `UnsupportedSystem`
-refusal or shutdown.
+A synthetic floppy boot sector queries INT 15h at 16 MiB and 4 MiB.
+AH=88h and E801h return 15,360 KiB and 3,072 KiB above 1 MiB, with CF clear.
+E801h BX/DX are zero. E820h returns the expected five entries through its
+final zero continuation token. The guest clears CMOS 30h/31h before querying;
+the results still follow the highest E820 RAM end. See
+[machine-files.md §Generic 386 ISA board](machine-files.md#generic-386-isa-board)
+for the map, source sections, budgets and guest rebuild command.
+All three probes are normal tests and run in a few seconds each.
 
-**READ:** fork `stacks.c:607–621` (`check_irqs`) emits
-`sti; nop; rep; nop; cli; cld`; `x86.h:47–49` (`cpu_relax`) also uses
-REP NOP. Intel SDM Volume 2B, **PAUSE — Spin Loop Hint**, specifies NOP
-behaviour on earlier IA-32 processors, backward compatible with all IA-32
-processors ([Intel instruction reference](https://cdrdv2-public.intel.com/835757/325383-sdm-vol-2abcd.pdf)).
-This is a CPU decoding boundary; it does not call for a SeaBIOS fix or a board
-workaround. The former BSWAP shutdown is gone.
-
-Both ignored SeaBIOS probes assert the exact new boundary when the golden
-runner selects them. POST end, INT 15h AH=88h/E801h/E820h and keyboard
-reset/resume after complete POST remain unqualified. `boot.c:965–980`
-would print `No bootable device.` (or its retry form) and wait for IRQs;
-neither message is reached. Sparse backing and numeric commitment are
-qualified separately by CPU/board tests; TSS I/O bitmap, paging and
-SeaVGABIOS remain separate work.
+The old REP NOP stop at `F000:A72C` on `deae5bac` is passed at this pin.
+F3 90 and F2 90 execute as NOP on every model, so SeaBIOS `cpu_relax`
+needs no CPU option and no board workaround is applied.
+No new CPU boundary was observed. The fixture remains Listed; guest OS boot,
+TSS I/O bitmap, paging and SeaVGABIOS remain separate work.
 
 **Build target and decision (READ).** `CONFIG_QEMU` is the only target with
 ISA fallbacks: ATA at 1F0h/170h without PCI (`ata.c:1020–1030`), RAM size
@@ -611,10 +602,10 @@ hostname suffix, before checking output SHA-256.
 
 | Fixture | Build state (2026-11-24) | Catalogue / board |
 |---|---|---|
-| `vendor/seabios/bios-1.17.0-isa.bin` | Built from the fork; two independent builds matched by `cmp` (MEASURED); output SHA-256 pinned in the fixture | `seabios-1.17.0-unemu1-isa`, Listed, on `generic-386-isa`; reset executes at `deae5bac`; POST reaches REP NOP, then repeats #UD at `F000:A72C` |
+| `vendor/seabios/bios-1.17.0-isa.bin` | Built from the fork; two independent builds matched by `cmp` (MEASURED); output SHA-256 pinned in the fixture | `seabios-1.17.0-unemu1-isa`, Listed, on `generic-386-isa`; diskless POST, INT 15h memory queries and keyboard reset/resume pass at `b7c10b6f` |
 
-The board and catalogue entry assemble and execute the reset vector; the CPU
-decoding boundary above prevents boot qualification. QEMU's prebuilt
+The board and catalogue entry assemble and run diskless POST to the boot
+failure message; no guest OS boot is qualified yet. QEMU's prebuilt
 `bios.bin` is not used; its MPTABLE and other platform settings deliberately
 differ. Input and output hashes are recorded in the fixture README, together
 with the 2026-11-24 two-build measurement on macOS arm64 using i686-elf GCC

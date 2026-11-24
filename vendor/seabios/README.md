@@ -18,7 +18,10 @@ filename and version suffix stay unchanged. The board is `generic-386-isa`
 (`machines/generic-386-seabios.toml`); existing 286 machines do not use it.
 CI builds it in the fixtures lane. Execution qualification is recorded below.
 
-## Execution boundary
+## Execution boundary (historical, CPU pin `deae5bac`)
+
+This section records the former stop. The current pin passes it; see the end
+of this section.
 
 **MEASURED on 2026-11-24, CPU pin `deae5bac`:** the shipped diskless machine
 passes fw_cfg, reports 16 MiB RAM from CMOS, relocates init, detects no PCI
@@ -40,12 +43,14 @@ A 20,000,000-step diagnostic also remained there.
 encoding in `cpu_relax`. Intel SDM Volume 2B, **PAUSE — Spin Loop Hint**,
 specifies NOP behaviour on earlier IA-32 processors, backward compatible
 with all IA-32 processors; see the [Intel instruction reference](https://cdrdv2-public.intel.com/835757/325383-sdm-vol-2abcd.pdf).
-This is a CPU decoding boundary, rather than another BSWAP-like firmware
-minimum-CPU violation. No board or firmware workaround is applied.
+This was a CPU decoding boundary, not a firmware minimum-CPU violation.
+x86jit b7c10b6f executes F3 90 as NOP on every model; no board or firmware
+workaround is applied.
 
-Both ignored SeaBIOS probes assert the exact new boundary when selected by
-the golden runner. POST end, INT 15h AH=88h/E801h/E820h and keyboard
-reset/resume after complete POST remain unqualified; the entry stays Listed.
+The SeaBIOS probes are normal tests: diskless POST to `No bootable device.`,
+INT 15h AH=88h/E801h/E820h against the E820 map, and keyboard reset/resume
+after complete POST pass. No guest OS boot is qualified; the entry stays
+Listed.
 
 ## Build and tools
 

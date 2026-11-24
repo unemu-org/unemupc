@@ -348,7 +348,7 @@ flat backing and memory maps.
 
 [`machines/generic-386-seabios.toml`](../../../machines/generic-386-seabios.toml)
 uses 15 MiB of extended RAM and the `seabios-1.17.0-unemu1-isa` catalogue entry.
-At CPU pin `deae5bac` (x86jit), reset installs the core's
+At CPU pin `b7c10b6f` (x86jit), reset installs the core's
 `CpuState::i386_reset`: CS=F000h, hidden base FFFF0000h, EIP=FFF0h and
 EDX=0303h. Intel 80386 PRM §10.1 specifies DH=03h; DL=03h is the core's
 assumed stepping. CR0.ET reflects the FPU model (clear on this no-FPU board).
@@ -401,31 +401,55 @@ fork's documented 80386 compatibility fixes. The initial fix replaces inline
 fixes go upstream (`upc-o0j.23`). The catalogue ID distinguishes this fix set
 from the former upstream fixture, while its ROM filename stays unchanged.
 
-**MEASURED at CPU pin `deae5bac` (2026-11-24):** the shipped diskless machine
-passes fw_cfg, reports 16 MiB RAM from CMOS, relocates POST, detects no PCI
-system and configures COM1 as its primary display. Port 402h ends with
-`Turning on vga text mode console`; COM1 contains only the 11-byte terminal
-initialization `\x1bc\x1b[?7l\x1b[2J`.
+**MEASURED at CPU pin `b7c10b6f` (2026-11-24):** the shipped diskless
+machine completes POST within a 10,000,000-step bound. Port 402h reports
+`Found QEMU fw_cfg` and `RamSize: 0x01000000 [cmos]`. COM1 and port 402h
+print `No bootable device.`. The probe stops after **5,885,053 retired
+instructions**. It asserts these facts and the five E820 lines, rather than
+a full console transcript. The E820 map is:
 
-The next boundary is `F3 90` (REP NOP / PAUSE) at `F000:A72C`, linear
-`000FA72Ch`, big real mode, CPL 0. First reached after **1,117,388 retired
-instructions / 1,147,195 completed steps**, it records #UD (vector 6, no
-error code) on one further bounded step and leaves CS:IP unchanged. At the
-10,000,000-step bound it returns `RetiredCapReached`, **9,970,193 retired
-instructions**, repeating that fault between IRQ0 deliveries. A diagnostic
-bounded to 20,000,000 steps also stays there. **READ:** fork `stacks.c:607–621`
-(`check_irqs`) and `x86.h:47–49` (`cpu_relax`) use REP NOP. Intel SDM Volume
-2B, PAUSE, specifies NOP behaviour on earlier IA-32 processors. This CPU
-decoding boundary requires no board or firmware workaround.
+| Start | End (exclusive) | Type |
+| --- | --- | --- |
+| 00000000h | 0009FC00h | RAM |
+| 0009FC00h | 000A0000h | Reserved |
+| 000F0000h | 00100000h | Reserved |
+| 00100000h | 01000000h | RAM |
+| FFFC0000h | 100000000h | Reserved |
 
-Both ignored SeaBIOS probes assert this exact boundary, including mode,
-CPL, IDT limit, bytes, retired count and repeated #UD delivery. The fixture
-remains Listed; POST end and INT 15h AH=88h/E801h/E820h remain unqualified.
-The ignored `generic386_seabios_keyboard_reset_reaches_resume` probe will
-pulse the 8042 with CMOS 0Fh=0 and require `In resume (status=0)`
-(`resume.c:24–29`) after POST can complete. A resume marker after incomplete
-POST does not qualify a working reboot. See [fixture evidence](../../../vendor/seabios/README.md#execution-boundary).
-TSS I/O bitmap, paging and SeaVGABIOS remain separate work.
+The project-owned `seabios-int15` floppy boot sector calls INT 15h after
+POST. Its source and 512-byte image live under
+`crates/machine-file/tests/fixtures/`; rebuild with the NASM command in the
+source. The test pads it into a read-only 1.44 MiB in-memory floppy.
+It tests the shipped 16 MiB configuration and a derived 4 MiB configuration.
+The guest clears CMOS 30h/31h before the calls. Both sizes still follow
+E820, rather than that CMOS word:
+
+| Total memory | AH=88h AX, CF | E801h AX/CX | E801h BX/DX, CF | Highest E820 RAM end |
+| --- | --- | --- | --- | --- |
+| 16 MiB | 15360 KiB, clear | 15360 KiB | 0, clear | 01000000h |
+| 4 MiB | 3072 KiB, clear | 3072 KiB | 0, clear | 00400000h |
+
+The E820 test checks all five entries, SMAP signatures, returned lengths,
+CF and continuation tokens through the final zero token. Only the extended
+RAM entry changes with memory size. **READ:** SeaBIOS rel-1.17.0
+`malloc.c:476–491,565` sets `LegacyRamSize` from the highest RAM/ACPI entry
+end below 4 GiB. `system.c:170–180` caps AH=88h at 63 MiB above 1 MiB;
+`system.c:260–286` splits E801h at 16 MiB. These two configurations do not
+exercise those upper caps.
+
+After diskless POST, CMOS 0Fh=0 and an 8042 FEh pulse reach
+`In resume (status=0)` (`resume.c:24–29`). The probe checks complete POST
+before resetting. It reaches the resume marker at **5,887,802 retired
+instructions**, virtual time **5,997,128**. POST, INT 15h and resume probes
+are normal tests; each completes in a few seconds in the optimized test tier.
+
+The former `F3 90` stop at `F000:A72C` on `deae5bac` is passed.
+The current CPU executes F3 90 and F2 90 as NOP on every model, so SeaBIOS
+`cpu_relax` needs no option. x86jit plans an I80386 option for other REP
+prefixes on non-string instructions (default #UD per the 80386 PRM); the
+board does not need it for SeaBIOS. No new CPU boundary was observed.
+The fixture remains Listed; guest OS boot, TSS I/O bitmap, paging and
+SeaVGABIOS remain separate work.
 
 Headless reproduction (the CLI prints COM1; the test also captures port 402h):
 

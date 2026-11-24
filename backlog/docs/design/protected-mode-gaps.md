@@ -1,8 +1,8 @@
 # 386 protected-mode gaps
 
-## Current unpaged machine qualification (2026-11-23)
+## Current unpaged machine qualification (2026-11-24)
 
-**MEASURED**, CPU pin `99ed385ea653bbc7e66b16cd1de0dfd42366fa75`:
+**MEASURED**, CPU pin `b7c10b6fdda8f84d3eda9c5d7751fcda1c5893ed`:
 [the project-owned 386 ROM](i386-pm-test.md) runs on `generic-386-isa`
 from the high reset copy and low shadow, enters USE32 protected mode,
 uses flat and limited segments, handles #GP(0) and software interrupt/trap
@@ -13,6 +13,14 @@ This supplies the unpaged coverage of implementation items 1, 7 and 8 below;
 it does not cover paging, a DOS extender, or their full acceptance matrices.
 The investigation verdict and probes below describe their historical pin,
 not the current unpaged CPU capabilities.
+
+**MEASURED at the same pin:** SeaBIOS completes diskless POST and prints
+`No bootable device.`. The probe stops at 5,885,053 retired instructions.
+A synthetic floppy
+checks INT 15h AH=88h, E801h and all E820 entries at 16 MiB and 4 MiB.
+After complete POST, CMOS 0Fh=0 and 8042 FEh reach the resume marker.
+The former REP NOP stop is passed: F3 90 executes as NOP on every model. See
+[machine-file qualification](machine-files.md#generic-386-isa-board).
 
 ## Context
 

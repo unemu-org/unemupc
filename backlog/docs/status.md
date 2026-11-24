@@ -1,6 +1,6 @@
 # Status
 
-## Generic 386 ISA board (2026-11-23)
+## Generic 386 ISA board (2026-11-24)
 
 The `generic-386-isa` board accepts the 80386DX CPU model, 640 KiB conventional
 RAM and up to 63 MiB extended RAM (64 KiB steps). Board-local 128-byte CMOS,
@@ -17,7 +17,7 @@ verify the sparse backing, 4 GiB reservation, numeric committed bytes bounded
 by the mapped population, and unmapped gaps. The tested 64 KiB-aligned regions
 need no host-page rounding on supported hosts.
 
-The CPU pin is `deae5bac` (x86jit). The adapter installs
+The CPU pin is `b7c10b6f` (x86jit). The adapter installs
 `CpuState::i386_reset`, then reapplies the retained board A20 line. Synthetic
 CPU and board tests execute the high reset copy, retain its hidden base across
 a near jump, reload CS into low memory and preserve RAM over repeated resets.
@@ -50,27 +50,30 @@ documented 80386 fix set (`README.unemu.md`). The first fix computes
 (`upc-o0j.23`). **MEASURED on 2026-11-24:** two independent builds are byte
 identical (`cmp`), 131,072 bytes, SHA-256
 `ad50fdb5e12a03dd5c17eac481a4183a7793b84252319eea02b8c878667c994f`.
-The config, version suffix, ROM filename and CPU pin remain unchanged.
+The firmware config, version suffix and ROM filename remain unchanged.
 
-**MEASURED at `deae5bac`:** the diskless shipped machine passes fw_cfg,
-reports 16 MiB from CMOS, relocates POST and selects the COM1 console.
-Port 402h ends with `Turning on vga text mode console`; COM1 contains only
-11 terminal-control bytes. The first `F3 90` (REP NOP / PAUSE) is reached at
-`F000:A72C`, linear `000FA72Ch`, big real mode, CPL 0, after **1,117,388
-retired instructions / 1,147,195 completed steps**. One more step records
-#UD (vector 6, no error code) at that address and leaves CS:IP unchanged.
-At the 10,000,000-step cap it returns `RetiredCapReached`, with **9,970,193
-retired instructions**, repeating the same #UD between IRQ0 deliveries.
-A 20,000,000-step diagnostic also stayed there. **READ:** fork
-`stacks.c:607–621` and `x86.h:47–49` emit this encoding; Intel SDM Volume 2B,
-PAUSE, specifies NOP behaviour on earlier IA-32 processors. This is a CPU
-decoding boundary; no board or firmware workaround is applied.
+**MEASURED at `b7c10b6f` on 2026-11-24:** the shipped diskless machine
+passes POST. Port 402h reports fw_cfg, `RamSize: 0x01000000 [cmos]` and
+five E820 entries. COM1 and port 402h print `No bootable device.`.
+The bounded probe stops after **5,885,053 retired instructions**.
+CMOS 0Fh=0 followed by an 8042 FEh reset reaches
+`In resume (status=0)` at **5,887,802 retired instructions**.
+Both probes are normal tests; each runs in a few seconds.
 
-Both ignored SeaBIOS probes check the new address, bytes, real mode, CPL,
-IDT limit, retired count and repeated #UD delivery. No POST-end or INT 15h
-AH=88h/E801h/E820h qualification is claimed. Keyboard reset/resume after
-complete POST remains pending. TSS I/O bitmap, paging and SeaVGABIOS remain
-separate work. See [fixture evidence](../../vendor/seabios/README.md#execution-boundary).
+A project-owned floppy boot sector calls INT 15h after POST. At 16 MiB and
+4 MiB, AH=88h returns **15,360 KiB** and **3,072 KiB**, with CF clear.
+E801h returns the same sizes in AX/CX and zero in BX/DX, with CF clear.
+E820h returns five entries, including RAM from 1 MiB to the configured end.
+The guest clears CMOS 30h/31h before querying. The legacy sizes still match
+the highest E820 RAM-entry end, as SeaBIOS `malloc.c:476–491,565` and
+`system.c:170–180,260–308` specify.
+
+The former REP NOP stop at `F000:A72C` is passed by this CPU pin.
+F3 90 executes as NOP on every model, so no CPU option or board
+workaround is needed.
+The firmware remains Listed; diskless POST and memory queries do not qualify
+a guest OS. TSS I/O bitmap, paging and SeaVGABIOS remain separate work.
+See [machine-file qualification](design/machine-files.md#generic-386-isa-board).
 
 
 2026-11-22 — The front end moved to [unemu](https://github.com/unemu-org/unemu) at `0f279540`; entries above this marker are the core's own.
