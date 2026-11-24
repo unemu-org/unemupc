@@ -300,6 +300,13 @@ Update this when a feature lands, breaks, or gets pulled. Stale status is worse 
   flips. Its independent pixel golden passes all 60 displayed frames on the
   unchanged VGA model. The reported application fault is not reproduced;
   no model correction is claimed. See [the evidence](design/vga-modex-test.md).
+- **2026-11-24 — Release 0.0.5:** the generic 386 and 486 ISA boards with
+  the unemu SeaBIOS fork and SeaVGABIOS, FreeDOS from floppy and IDE on them,
+  FPU errors through IRQ13 and port F0h on AT boards, contract 0.6 with
+  content bindings, and CPU clocks in MHz with turbo. Rows for features first
+  read by this release name 0.0.5, and `pc_config::compat::NEXT_RELEASE`
+  moves to 0.0.6. Paging is not in this release. The release archive holds
+  the standalone `unemupc` only; unemu pins this release's commit.
 - **2026-11-23 — Release 0.0.4:** the first release of the core repository
   after the split. The workspace version is 0.0.4 and
   `pc_config::compat::NEXT_RELEASE` is 0.0.5, so a core row for a feature

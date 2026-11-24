@@ -23,7 +23,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.0.4"
+version = "0.0.5"
 edition = "2021"
 license = "AGPL-3.0-or-later"
 rust-version = "1.99"
@@ -33,7 +33,7 @@ repository = "https://github.com/unemu-org/unemupc"
 publish = false
 
 [workspace.dependencies]
-unemupc = { path = "crates/unemupc", version = "0.0.4" }
+unemupc = { path = "crates/unemupc", version = "0.0.5" }
 machine-view = { version = "0.0.4", git = "https://github.com/unemu-org/unemu-host", rev = "de86256cfd9d88aeb48c0d5480fa2838f0c152b8" }
 unemu-test-core = { version = "0.0.4", git = "https://github.com/unemu-org/unemu-host", rev = "de86256cfd9d88aeb48c0d5480fa2838f0c152b8" }
 winit = "0.30"
@@ -64,21 +64,21 @@ unemu-core-api = { version = "0.6", git = "https://github.com/unemu-org/unemu-co
 # repository at the same revision: it depends on that copy of the contract.
 unemu-core-files = { version = "0.6", git = "https://github.com/unemu-org/unemu-core-api", rev = "a4ec90098e7ca0bc7ce60b2d20af43f140eb3960" }
 # Internal crates share the workspace version.
-assembly = { path = "crates/assembly", version = "0.0.4" }
-device = { path = "crates/device", version = "0.0.4" }
-bus = { path = "crates/bus", version = "0.0.4" }
-chipset = { path = "crates/chipset", version = "0.0.4" }
-cpu = { path = "crates/cpu", version = "0.0.4" }
-machine = { path = "crates/machine", version = "0.0.4" }
-machine-file = { path = "crates/machine-file", version = "0.0.4" }
-pc-config = { path = "crates/pc-config", version = "0.0.4" }
-journal = { path = "crates/journal", version = "0.0.4" }
-journal-files = { path = "crates/journal-files", version = "0.0.4" }
-devices = { path = "crates/devices", version = "0.0.4" }
-video = { path = "crates/video", version = "0.0.4" }
-audio = { path = "crates/audio", version = "0.0.4" }
-testkit = { path = "crates/testkit", version = "0.0.4" }
-unemu-pc-core = { path = "crates/pc-core", version = "0.0.4" }
+assembly = { path = "crates/assembly", version = "0.0.5" }
+device = { path = "crates/device", version = "0.0.5" }
+bus = { path = "crates/bus", version = "0.0.5" }
+chipset = { path = "crates/chipset", version = "0.0.5" }
+cpu = { path = "crates/cpu", version = "0.0.5" }
+machine = { path = "crates/machine", version = "0.0.5" }
+machine-file = { path = "crates/machine-file", version = "0.0.5" }
+pc-config = { path = "crates/pc-config", version = "0.0.5" }
+journal = { path = "crates/journal", version = "0.0.5" }
+journal-files = { path = "crates/journal-files", version = "0.0.5" }
+devices = { path = "crates/devices", version = "0.0.5" }
+video = { path = "crates/video", version = "0.0.5" }
+audio = { path = "crates/audio", version = "0.0.5" }
+testkit = { path = "crates/testkit", version = "0.0.5" }
+unemu-pc-core = { path = "crates/pc-core", version = "0.0.5" }
 
 # Keep hardware preconditions and arithmetic checked even in optimized dev/test code.
 [profile.dev]

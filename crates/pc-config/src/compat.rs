@@ -25,8 +25,8 @@ impl fmt::Display for Release {
 type AppVersion = Release;
 pub type Row = (&'static str, Release);
 pub const BASELINE: Release = Release(0, 0, 1);
-pub const NEXT_RELEASE: Release = Release(0, 0, 5);
-pub const NEWEST_ROW: Release = NEXT_RELEASE;
+pub const NEXT_RELEASE: Release = Release(0, 0, 6);
+pub const NEWEST_ROW: Release = Release(0, 0, 5);
 /// Core config release. Application composition supplies CoreDescription::version to readers.
 pub fn package() -> Release {
     Release(
@@ -70,8 +70,8 @@ pub const MACHINE_KEYS: &[Row] = &[
     ("media.id", BASELINE),
     ("media.source", BASELINE),
     ("media.head", BASELINE),
-    ("media.zero", NEXT_RELEASE),
-    ("media.zero.size", NEXT_RELEASE),
+    ("media.zero", Release(0, 0, 5)),
+    ("media.zero.size", Release(0, 0, 5)),
     ("media.name", BASELINE),
     ("media.policy", BASELINE),
     ("media.geometry", BASELINE),
@@ -102,9 +102,9 @@ pub const MACHINE_KEYS: &[Row] = &[
     ("machine.cpu", BASELINE),
     ("machine.cpu.model", BASELINE),
     ("machine.cpu.rate", BASELINE),
-    ("machine.cpu.clock_mhz", NEXT_RELEASE),
-    ("machine.cpu.turbo", NEXT_RELEASE),
-    ("machine.cpu.turbo.clock_mhz", NEXT_RELEASE),
+    ("machine.cpu.clock_mhz", Release(0, 0, 5)),
+    ("machine.cpu.turbo", Release(0, 0, 5)),
+    ("machine.cpu.turbo.clock_mhz", Release(0, 0, 5)),
     ("machine.cpu.fpu", BASELINE),
     ("machine.memory", BASELINE),
     ("machine.memory.conventional_kib", BASELINE),
@@ -160,8 +160,8 @@ pub const MACHINE_KEYS: &[Row] = &[
 /// Firmware catalogue entries, by id (`assembly::BoardModel::firmware_catalogue`). A
 /// release that does not list an entry refuses its bytes.
 pub const CATALOGUE: &[Row] = &[
-    ("seabios-1.17.0-unemu1-isa", NEXT_RELEASE),
-    ("seavgabios-1.17.0-unemu1-stdvga", NEXT_RELEASE),
+    ("seabios-1.17.0-unemu1-isa", Release(0, 0, 5)),
+    ("seavgabios-1.17.0-unemu1-stdvga", Release(0, 0, 5)),
     ("kiselev-xi8088-1.0.2", BASELINE),
     ("kiselev-xi8088-1.0.2-atreset", BASELINE),
     ("unemu-at-bios-1.0.2-unemu.3", BASELINE),
@@ -272,7 +272,7 @@ fn machine_values(machine: &schema::MachineFile) -> AppVersion {
 pub fn board_model(value: schema::BoardModel) -> AppVersion {
     match value {
         schema::BoardModel::Ibm5170 => BASELINE,
-        schema::BoardModel::Generic386Isa | schema::BoardModel::Generic486Isa => NEXT_RELEASE,
+        schema::BoardModel::Generic386Isa | schema::BoardModel::Generic486Isa => Release(0, 0, 5),
     }
 }
 
@@ -281,7 +281,7 @@ pub fn cpu_model(value: schema::CpuModel) -> AppVersion {
     match value {
         schema::CpuModel::I80286 => BASELINE,
         schema::CpuModel::I80386 | schema::CpuModel::I80486Dx | schema::CpuModel::I80486DxCpuid => {
-            NEXT_RELEASE
+            Release(0, 0, 5)
         }
     }
 }
@@ -290,7 +290,7 @@ pub fn cpu_model(value: schema::CpuModel) -> AppVersion {
 pub fn fpu_model(value: schema::FpuModel) -> AppVersion {
     match value {
         schema::FpuModel::None | schema::FpuModel::I80287 => BASELINE,
-        schema::FpuModel::Integrated => NEXT_RELEASE,
+        schema::FpuModel::Integrated => Release(0, 0, 5),
     }
 }
 
@@ -699,7 +699,10 @@ mod tests {
             .iter()
             .find(|entry| entry.id == "seavgabios-1.17.0-unemu1-stdvga")
             .unwrap();
-        assert_eq!(firmware(entry.sha256, entry.size).unwrap(), NEXT_RELEASE);
+        assert_eq!(
+            firmware(entry.sha256, entry.size).unwrap(),
+            Release(0, 0, 5)
+        );
     }
 
     #[test]
