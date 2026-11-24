@@ -1537,3 +1537,24 @@ Input Register, pp. 12–13, and Interface Lines, p. 40](https://minuszerodegree
 p. 5](https://minuszerodegrees.net/oa/OA%20-%20IBM%20PC%20AT%20High%20Capacity%20Diskette%20Drive.pdf).
 The power-on clear line for inserted media is a deliberate compatibility policy;
 physical drive output can start asserted until its first step with a disk present.
+
+## Native zero disks
+
+Prepared launches may give a fixed medium `zero = { size = N }` instead of
+an external `head`. These sources have no content row or required blob.
+Size is positive, sector aligned and equal to the explicit IDE geometry.
+The image codec lowers them to Blank, and assembly builds a verified zero
+sector source before any byte-vector fallback can materialize the disk.
+
+`journal::VerifiedBase::zero` computes the actual SHA-256 of all N zero bytes
+with a fixed 64 KiB streaming buffer at runtime, never during discovery or
+composition. The immutable source retains only its length. Volatile and
+readonly media use SparseOverlay; protected writes are refused and volatile
+replacements disappear with the mount. Journal mode uses the same verified
+base hash and length in its header and replays separate replacements on reopen.
+Memory grows with replaced sectors, independently of disk capacity.
+
+Current-reader raw, fixed-VHD and machine exports also work for native zeros.
+They emit current sector bytes to new outputs and never rewrite the generated
+base or an existing external base. The single sector-source/overlay boundary
+remains suitable for future hash-linked layers.

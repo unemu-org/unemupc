@@ -354,3 +354,178 @@ impl std::fmt::Debug for DiskBase {
             .finish_non_exhaustive()
     }
 }
+
+/// Volatile or protected replacements over a verified immutable disk base.
+/// ATA/ATAPI-4, READ SECTOR(S) and WRITE SECTOR(S): each LBA is 512 bytes.
+/// See persistent-media.md § Memory and hashing.
+pub(crate) struct SparseMedia {
+    overlay: journal::SparseOverlay,
+    readonly: bool,
+}
+impl SparseMedia {
+    pub(crate) fn new(base: journal::VerifiedBase, readonly: bool) -> Self {
+        Self {
+            overlay: journal::SparseOverlay::new(Rc::new(base)),
+            readonly,
+        }
+    }
+}
+impl device::SectorMedia for SparseMedia {
+    fn sector_count(&self) -> u64 {
+        use journal::SectorSource;
+        self.overlay.byte_len() / 512
+    }
+    fn read_sector(&self, lba: u64) -> [u8; 512] {
+        use journal::SectorSource;
+        self.overlay.read_sector(lba).unwrap_or([0; 512])
+    }
+    fn write_batch(&mut self, sectors: &[device::SectorWrite]) {
+        if self.readonly || sectors.iter().any(|s| s.lba >= self.sector_count()) {
+            return;
+        }
+        for sector in sectors {
+            self.overlay.replace(sector.lba, Box::new(sector.bytes));
+        }
+    }
+    fn write_protected(&self) -> bool {
+        self.readonly
+    }
+}
+
+#[cfg(test)]
+mod zero_tests {
+    use super::*;
+    use device::{SectorMedia, SectorWrite};
+
+    #[test]
+    fn zero_mount_readonly_refuses_writes_and_volatile_discards_them() {
+        let base = journal::VerifiedBase::zero(2048).unwrap();
+        let batch = [SectorWrite {
+            lba: 3,
+            bytes: [0x5a; 512],
+        }];
+        let mut readonly = SparseMedia::new(base.clone(), true);
+        assert!(readonly.write_protected());
+        readonly.write_batch(&batch);
+        assert_eq!(readonly.read_sector(3), [0; 512]);
+        assert_eq!(readonly.overlay.written_sectors(), 0);
+        let mut volatile = SparseMedia::new(base.clone(), false);
+        assert_eq!(volatile.read_sector(0), [0; 512]);
+        assert_eq!(volatile.read_sector(3), [0; 512]);
+        volatile.write_batch(&batch);
+        assert_eq!(volatile.read_sector(3), [0x5a; 512]);
+        assert_eq!(volatile.overlay.written_sectors(), 1);
+        assert_eq!(SparseMedia::new(base, false).read_sector(3), [0; 512]);
+    }
+}
+
+#[cfg(test)]
+mod zero_ata_tests {
+    use super::*;
+    use crate::{DeviceId, DriveConfig, DriveKind, HardDiskGeometry, ImageSource};
+
+    fn config(size: u64, geometry: HardDiskGeometry, write: crate::WriteMode) -> MachineConfig {
+        let mut config = crate::at_boot(vec![0xf4]);
+        config.drives = vec![DriveConfig {
+            media: None,
+            kind: DriveKind::HardDisk { geometry },
+            image: ImageSource::Blank { size },
+            expected_sha256: None,
+            controller: DeviceId::Ide,
+            unit: 0,
+            write,
+        }];
+        config
+    }
+
+    #[test]
+    fn large_native_zero_mount_keeps_a_verified_sector_base() {
+        let config = config(
+            528482304,
+            HardDiskGeometry {
+                cylinders: 1024,
+                heads: 16,
+                sectors_per_track: 63,
+                bytes_per_sector: 512,
+            },
+            crate::WriteMode::Volatile,
+        );
+        let (resolved, metadata) =
+            crate::assemble::resolve_file_sources(&config, crate::AssemblyOptions::default())
+                .unwrap();
+        assert!(metadata[0].is_some());
+        assert!(matches!(
+            resolved.drives[0].image,
+            ImageSource::Blank { size: 528482304 }
+        ));
+        crate::assemble::mount_ide_drives(
+            &resolved,
+            DeviceId::Ide,
+            &mut Vec::new(),
+            &metadata,
+            0,
+            &InlineMount,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn native_zero_mount_ata_writes_obey_volatile_and_readonly_policies_on_mock_bus() {
+        for readonly in [false, true] {
+            let config = config(
+                1536,
+                HardDiskGeometry {
+                    cylinders: 1,
+                    heads: 1,
+                    sectors_per_track: 3,
+                    bytes_per_sector: 512,
+                },
+                if readonly {
+                    crate::WriteMode::ReadOnly
+                } else {
+                    crate::WriteMode::Volatile
+                },
+            );
+            let (resolved, metadata) =
+                crate::assemble::resolve_file_sources(&config, crate::AssemblyOptions::default())
+                    .unwrap();
+            let drives = crate::assemble::mount_ide_drives(
+                &resolved,
+                DeviceId::Ide,
+                &mut Vec::new(),
+                &metadata,
+                0,
+                &InlineMount,
+            )
+            .unwrap();
+            let mut bus =
+                testkit::MockBus::new(Box::new(devices::ata::Ata::with_drives(drives).unwrap()));
+            for (index, command) in [0x20, 0x30, 0x20].into_iter().enumerate() {
+                for (port, value) in [
+                    (0x1f6, 0xe0),
+                    (0x1f2, 1),
+                    (0x1f3, 2),
+                    (0x1f4, 0),
+                    (0x1f5, 0),
+                    (0x1f7, command),
+                ] {
+                    bus.port_write(port, 1, value).unwrap();
+                }
+                if command == 0x30 {
+                    if readonly {
+                        assert_ne!(bus.port_read(0x1f7, 1).unwrap() & 1, 0);
+                    } else {
+                        for _ in 0..256 {
+                            bus.port_write(0x1f0, 2, 0x5a5a).unwrap();
+                        }
+                    }
+                } else {
+                    for _ in 0..256 {
+                        let value = bus.port_read(0x1f0, 2).unwrap();
+                        assert_eq!(value, if index == 2 && !readonly { 0x5a5a } else { 0 });
+                    }
+                }
+            }
+        }
+    }
+}

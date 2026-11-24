@@ -11,8 +11,8 @@
 //! SHA-256 and length of its flat bytes, which is how the contract's
 //! `ContentSource` opens content; `record` gives each journalled medium and
 //! a journalled CMOS the record of the machine's storage that holds its
-//! journal, and its retention. The document is never stored and never
-//! pushed. See `backlog/docs/design/core-contract.md` §14.2.2.
+//! journal, and its retention. Portable prepared launches may be stored as
+//! machine configs; launches augmented with session-kept records are transient. See `backlog/docs/design/core-contract.md` §14.2.2.
 //!
 //! [`check`] needs no content and is the core's `validate`; [`lower`] reads
 //! the firmware and CMOS bytes and names each disk base and each journal by
@@ -30,6 +30,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use unemu_core_api::{ContentRef, ContentSource};
+
+mod prepare;
+pub use prepare::prepare;
 
 /// The media type of the launch document, the one config type the PC core
 /// takes.
@@ -73,8 +76,8 @@ pub struct ContentRow {
     /// The blob or head the config names.
     pub digest: Digest,
     /// SHA-256 of the flat bytes the core opens: for a raw blob its own
-    /// digest, for a layered head the chain's result, for a zero base the
-    /// digest of that many zero bytes.
+    /// digest, for a layered head the chain's result. Native zero media
+    /// have no content row.
     pub sha256: [u8; 32],
     /// Their length.
     pub size: u64,
@@ -233,6 +236,33 @@ pub fn encode(launch: &Launch) -> Result<Vec<u8>> {
     Ok(text.into_bytes())
 }
 
+/// Read the portable launch subset used as a stored machine config. Session
+/// augmentation uses `decode` instead because kept records belong to one session.
+pub fn decode_portable(bytes: &[u8]) -> Result<Launch> {
+    let launch = decode(bytes)?;
+    check_portable(&launch)?;
+    Ok(launch)
+}
+
+/// Write a launch for storage without retaining session storage names.
+pub fn encode_portable(launch: &Launch) -> Result<Vec<u8>> {
+    check_portable(launch)?;
+    encode(launch)
+}
+
+fn check_portable(launch: &Launch) -> Result<()> {
+    check(launch, assembly::AssemblyOptions::default())?;
+    if launch.records.iter().any(|row| {
+        unemu_core_api::is_kept_record_name(&row.name)
+            || row.name != format!("{}{RECORD_SUFFIX}", row.medium)
+    }) {
+        return Err(invalid(
+            "session-kept records are transient and cannot be stored in a portable launch",
+        ));
+    }
+    Ok(())
+}
+
 fn sha256_from_hex(text: &str) -> Result<[u8; 32]> {
     let malformed = || invalid("content sha256 must be 64 lowercase hex digits");
     if text.len() != 64
@@ -290,8 +320,10 @@ pub fn lower(
     let mut bases = BTreeMap::new();
     let mut records = BTreeMap::new();
     for medium in &config.media {
-        let row = checked.rows[&medium.head].clone();
-        bases.insert(PathBuf::from(&medium.source), (row.sha256, row.size));
+        if let Some(head) = medium.head {
+            let row = checked.rows[&head].clone();
+            bases.insert(PathBuf::from(&medium.source), (row.sha256, row.size));
+        }
     }
     if let Some(nvram) = config
         .nvram
@@ -331,7 +363,14 @@ fn run(
     options: assembly::AssemblyOptions,
 ) -> Result<Checked> {
     let mut rows = BTreeMap::new();
+    let mut lengths = BTreeMap::new();
     for row in &launch.content {
+        if lengths
+            .insert(row.sha256, row.size)
+            .is_some_and(|size| size != row.size)
+        {
+            return Err(invalid("content sha256 has conflicting flat sizes"));
+        }
         let flat = image::ContentRow {
             sha256: row.sha256,
             size: row.size,

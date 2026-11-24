@@ -82,6 +82,8 @@ impl Reader<'_> {
     /// of another length than the row's is refused before it is read, so a
     /// source can neither make the codec allocate a size of its choosing nor
     /// hand it other bytes than the row names.
+    // Supplied receipts do not yet reach ROM validation or CMOS image lowering,
+    // so both still hash these small bytes again after checking their length.
     fn small(&self, digest: &Digest) -> io::Result<Vec<u8>> {
         let row = self
             .rows
@@ -306,6 +308,7 @@ fn bind_with_selection(
         return Err(invalid("unreferenced firmware binding"));
     }
     let mut used = BTreeSet::new();
+    let mut zero_names = BTreeSet::new();
     let mut slot_index = 0;
     let mut ids = BTreeSet::new();
     if config
@@ -341,17 +344,31 @@ fn bind_with_selection(
                 .find(|m| &m.id == id)
                 .ok_or_else(|| invalid("unknown catalogue medium"))?;
             if used.insert(id.clone()) {
-                bind_name(&mut bindings, &medium.source, &medium.head, false)?;
+                if let Some(head) = medium.head {
+                    bind_name(&mut bindings, &medium.source, &head, false)?;
+                } else {
+                    logical(&medium.source)?;
+                    if !zero_names.insert(medium.source.clone())
+                        || bindings.contains_key(&medium.source)
+                    {
+                        return Err(invalid("duplicate logical asset name"));
+                    }
+                }
                 let role = if kind == "ide" {
                     Role::FixedDisk
                 } else {
                     Role::Floppy
                 };
-                roles.push((medium.head, role));
-            } else if !matches!(medium.policy, Policy::Readonly) {
+                if let Some(head) = medium.head {
+                    roles.push((head, role));
+                }
+            } else if medium.zero.is_some() || !matches!(medium.policy, Policy::Readonly) {
                 return Err(invalid("writable medium bound more than once"));
             }
-            let disk_size = row(rows, &medium.head)?.size;
+            let disk_size = medium.size(rows)?;
+            if medium.zero.is_some() && kind != "ide" {
+                return Err(invalid("native zero medium requires an IDE drive"));
+            }
             let g = &medium.geometry;
             if g.sector_bytes != 512
                 || u64::from(g.cylinders)
@@ -407,6 +424,9 @@ fn bind_with_selection(
         slot_index += 1;
         Ok(())
     })?;
+    if zero_names.iter().any(|name| bindings.contains_key(name)) {
+        return Err(invalid("duplicate logical asset name"));
+    }
     if used.len() != config.media.len() || slot_index != config.slots.len() {
         return Err(invalid("unreferenced medium or slot binding"));
     }
@@ -509,8 +529,14 @@ pub(crate) fn finish(
                 *keep_generations = keep(&m.id);
             }
             entries.push(assembly::FloppyMedium {
-                image: assembly::ImageSource::File(m.source.clone().into()),
-                expected_sha256: Some(row(rows, &m.head)?.sha256),
+                image: match &m.zero {
+                    Some(zero) => assembly::ImageSource::Blank { size: zero.size },
+                    None => assembly::ImageSource::File(m.source.clone().into()),
+                },
+                expected_sha256: m
+                    .head
+                    .map(|head| row(rows, &head).map(|r| r.sha256))
+                    .transpose()?,
                 write,
                 name: m.name.clone().unwrap_or_default(),
             });

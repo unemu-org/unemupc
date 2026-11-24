@@ -6156,9 +6156,15 @@ length and digest (corrected 2026-11-19, S1: the plan said three and missed
 #### 14.2.2. The launch document
 
 The one config type the PC platform lists:
-`application/vnd.unemu.pc.launch.v1+toml`. It is never
-stored, never pushed and needs no compatibility row. It is the stored
-config's schema, unchanged, plus two tables the PC provider adds
+`application/vnd.unemu.pc.launch.v1+toml`. A portable prepared launch may be
+stored as a machine config. It contains document-owned media and deterministic
+`<medium>.upfj` record names, with no journal bytes or session storage handles.
+`pc-config::launch::encode_portable` and `decode_portable` check this subset;
+session-kept record names are refused there. Session-augmented launches remain
+transient and use the ordinary launch codec. Front-end stores dispatch on the
+config media type and retain the launch's required runtime content; they must
+not feed a prepared launch to the old stored-image Config decoder. The launch
+uses the stored config's schema plus two tables the PC provider adds
 (§14.6 Q1). The format as landed with S5 (corrected 2026-11-20, S5; its
 encoding is pinned by `pc-config`'s test
 `a_document_round_trips_byte_for_byte_and_its_encoding_is_pinned`):
@@ -7653,8 +7659,10 @@ and S10 to be possible:
   first real use of `Storage`, `Record` and `validate` by the PC, so a gap
   it finds becomes contract 0.3 by §13.1's protocol, with unemunes
   re-pinning.
-- Decision-30's marker is not touched by stage B; the launch document is
-  never stored and needs no compatibility row (§14.6 Q6).
+- Stage B originally kept launch documents transient. Portable prepared
+  launches may now be stored (content-bindings § What may now be stored);
+  session-augmented launches remain transient. Native zero media have core
+  compatibility rows alongside the existing stored-image vocabulary.
 
 ### 14.6. Decided by the maintainer on 2026-11-19
 

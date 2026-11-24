@@ -70,6 +70,8 @@ pub const MACHINE_KEYS: &[Row] = &[
     ("media.id", BASELINE),
     ("media.source", BASELINE),
     ("media.head", BASELINE),
+    ("media.zero", NEXT_RELEASE),
+    ("media.zero.size", NEXT_RELEASE),
     ("media.name", BASELINE),
     ("media.policy", BASELINE),
     ("media.geometry", BASELINE),
@@ -531,6 +533,7 @@ mod tests {
         check("", struct_fields::<image::Config>(), &[]);
         check("firmware", struct_fields::<image::Firmware>(), &[]);
         check("media", struct_fields::<image::Medium>(), &[]);
+        check("media.zero", struct_fields::<image::Zero>(), &[]);
         check("media.geometry", struct_fields::<image::Geometry>(), &[]);
         check("slots", struct_fields::<image::Slot>(), &[]);
         check("nvram", struct_fields::<image::Nvram>(), &[]);

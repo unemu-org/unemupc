@@ -77,7 +77,8 @@ fn launch_from_file(
         media.push(image::Medium {
             id: id.clone(),
             source: format!("assets/{id}.img"),
-            head: digest,
+            head: Some(digest),
+            zero: None,
             name: None,
             policy: image::Policy::from_write(&drive.write),
             geometry: image::Geometry::of_medium(drive.kind, bytes.len() as u64)?,

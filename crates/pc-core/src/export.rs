@@ -397,7 +397,7 @@ fn machine_document(
     })
     .map_err(config_error)?;
     for medium in &launch.config.media {
-        notes.push(format!("Medium {}: source/head identity {} is replaced by the exported current-byte SHA-256; write policy {} becomes volatile for exported media.", medium.id, medium.head, medium.policy.as_str()));
+        notes.push(format!("Medium {}: source/head identity {} is replaced by the exported current-byte SHA-256; write policy {} becomes volatile for exported media.", medium.id, medium.head.map(|h| h.to_string()).unwrap_or_else(|| "native zero".into()), medium.policy.as_str()));
     }
     for record in &launch.records {
         notes.push(format!("Journal {}: record {} and keep_generations={} are omitted; exported media start with volatile writes.", record.medium, record.name, record.keep_generations));

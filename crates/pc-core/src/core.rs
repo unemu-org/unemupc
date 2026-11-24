@@ -5,9 +5,10 @@
 
 use crate::machine::PC_FEATURES;
 use unemu_core_api::{
-    ConfigDocument, ContractVersion, Core, CoreDescription, CreateRequest, Error, ErrorKind,
-    ExportFormat, ExportReport, ExportRequest, ExportScope, ExportSink, Machine, MediaDescription,
-    Notice, OptionDescription, PlatformDescription, SlotId, Validated,
+    BindingFacts, BindingSlot, ConfigDocument, ConfigDocumentBuf, ContractVersion, Core,
+    CoreDescription, CreateRequest, Error, ErrorKind, ExportFormat, ExportReport, ExportRequest,
+    ExportScope, ExportSink, Machine, MediaDescription, Notice, OptionDescription,
+    PlatformDescription, PreparedConfig, SlotId, Validated,
 };
 
 /// The platform id stored PC images name.
@@ -32,6 +33,7 @@ static OPTIONS: [OptionDescription; 2] = [
 
 static PLATFORMS: [PlatformDescription; 1] =
     [PlatformDescription::new(PLATFORM, "IBM PC compatible")
+        .with_content_bindings(true)
         .with_features(PC_FEATURES)
         .with_config_types(&[pc_config::launch::MEDIA_TYPE])
         .with_options(&OPTIONS)
@@ -62,6 +64,101 @@ pub struct PcCore;
 impl Core for PcCore {
     fn description(&self) -> &CoreDescription {
         &DESCRIPTION
+    }
+
+    fn binding_slots(
+        &self,
+        platform: &str,
+        config: ConfigDocument<'_>,
+    ) -> Result<Vec<BindingSlot>, Error> {
+        check_type(platform, config)?;
+        let text = std::str::from_utf8(config.bytes)
+            .map_err(|e| Error::new(ErrorKind::Config, e.to_string()))?;
+        let launch = pc_config::launch::decode(config.bytes).map_err(config_error)?;
+        let plan = pc_config::bindings::plan_envelope(text)?;
+        if plan.slots().is_empty() {
+            self.validate(platform, config)?;
+        }
+        let mut slots = plan.slots().to_vec();
+        if let Some(cards) = launch
+            .config
+            .machine
+            .get("card")
+            .and_then(toml::Value::as_array)
+        {
+            for (i, card) in cards.iter().enumerate() {
+                let Some(kind) = card.get("kind").and_then(toml::Value::as_str) else {
+                    continue;
+                };
+                let controller = card.get("id").and_then(toml::Value::as_str).unwrap_or(kind);
+                for (j, drive) in card
+                    .get("drives")
+                    .and_then(toml::Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .enumerate()
+                {
+                    let drive = drive
+                        .as_table()
+                        .ok_or_else(|| Error::new(ErrorKind::Config, "drive table required"))?;
+                    let unit = pc_config::image::unit(kind, drive).map_err(config_error)?;
+                    let Some(binding) = launch
+                        .config
+                        .slots
+                        .iter()
+                        .find(|slot| slot.controller == controller && slot.unit == unit)
+                    else {
+                        continue;
+                    };
+                    for id in &binding.catalogue {
+                        if let Some(zero) = launch
+                            .config
+                            .media
+                            .iter()
+                            .find(|m| m.id == *id)
+                            .and_then(|m| m.zero.as_ref())
+                        {
+                            slots.push(BindingSlot::zero_disk(
+                                format!("card[{i}].drives[{j}]"),
+                                id,
+                                zero.size,
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        slots.sort_by(|a, b| a.id.cmp(&b.id));
+        Ok(slots)
+    }
+
+    fn compose(
+        &self,
+        platform: &str,
+        config: ConfigDocument<'_>,
+        facts: BindingFacts<'_>,
+    ) -> Result<PreparedConfig, Error> {
+        check_type(platform, config)?;
+        let launch = pc_config::launch::prepare(config.bytes, facts.uses)?;
+        let required = pc_config::launch::check(&launch, assembly::AssemblyOptions::default())
+            .map_err(config_error)?;
+        let bytes = pc_config::launch::encode_portable(&launch).map_err(config_error)?;
+        let content = mount::ContentCache::open(facts.content, &required)?;
+        pc_config::launch::lower(&launch, &content, assembly::AssemblyOptions::default()).map_err(
+            |error| {
+                content.error().unwrap_or_else(|| {
+                    let mut mapped = config_error(error);
+                    if mapped.kind == ErrorKind::Config {
+                        mapped.kind = ErrorKind::Unsupported;
+                    }
+                    mapped
+                })
+            },
+        )?;
+        Ok(PreparedConfig::new(
+            ConfigDocumentBuf::new(pc_config::launch::MEDIA_TYPE, bytes),
+            Validated::new(required),
+        ))
     }
 
     fn create(&self, request: &CreateRequest<'_>) -> Result<Box<dyn Machine>, Error> {

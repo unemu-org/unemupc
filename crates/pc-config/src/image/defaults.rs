@@ -68,12 +68,14 @@ pub fn materialize(hardware: &mut Table, config: &assembly::MachineConfig) -> Re
             )
             .into(),
         );
+        // Metadata lowering substitutes blank CMOS for unread images, so only
+        // fill an omitted source and preserve any explicit image binding.
         match rtc.nvram {
             assembly::NvramSource::Derived => {
-                target.insert("nvram".into(), "derived".into());
+                target.entry("nvram").or_insert_with(|| "derived".into());
             }
             assembly::NvramSource::Blank => {
-                target.insert("nvram".into(), "blank".into());
+                target.entry("nvram").or_insert_with(|| "blank".into());
             }
             _ => {}
         }

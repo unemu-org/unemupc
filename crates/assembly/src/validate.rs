@@ -1522,7 +1522,10 @@ impl MachineConfig {
                     Some("an explicit journal path is required")
                 } else if *keep_generations == 0 {
                     Some("keep_generations must be positive")
-                } else if !matches!(drive.image, crate::ImageSource::File(_)) {
+                } else if !matches!(drive.image, crate::ImageSource::File(_))
+                    && !(matches!(drive.kind, crate::DriveKind::HardDisk { .. })
+                        && matches!(drive.image, crate::ImageSource::Blank { .. }))
+                {
                     Some("journal mode requires a file-backed image")
                 } else if match drive.kind {
                     crate::DriveKind::Floppy { geometry } => geometry.bytes_per_sector != 512,

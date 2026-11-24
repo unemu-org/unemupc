@@ -739,12 +739,25 @@ impl BindingPlan {
         }
         for (i, card) in shadow.card.iter_mut().flatten().enumerate() {
             for (j, drive) in card.drives.iter_mut().flatten().enumerate() {
+                if !self.prefix.is_empty()
+                    && (drive.disk.is_some() || drive.inserted.is_some())
+                    && drive.write == Some(WriteMode::Journal)
+                    && drive.journal.is_none()
+                {
+                    drive.journal = Some(format!("disk-{i}-{j}.upfj"));
+                }
                 drive.disk = None;
                 if drive.inserted.take().is_some() {
                     drive.image = Some(logical_key(&Target::Drive(i, j, None)));
                 }
                 for (k, medium) in drive.media.iter_mut().flatten().enumerate() {
                     if medium.use_id.take().is_some() {
+                        if !self.prefix.is_empty()
+                            && medium.write == Some(WriteMode::Journal)
+                            && medium.journal.is_none()
+                        {
+                            medium.journal = Some(format!("disk-{i}-{j}-{k}.upfj"));
+                        }
                         medium.image = logical_key(&Target::Drive(i, j, Some(k)));
                         medium.medium = None;
                         medium.size = None;

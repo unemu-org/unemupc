@@ -3,6 +3,7 @@
 //! § Memory and hashing. This disk-format seam can also back hash-linked layers.
 
 use crate::{Header, SECTOR_LEN};
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::io;
 use std::rc::Rc;
@@ -55,6 +56,30 @@ impl VerifiedBase {
         Ok(Self { source, identity })
     }
 
+    /// Build a generated zero base without allocating its capacity. The full
+    /// hash is required because journals bind bytes, not source descriptors.
+    pub fn zero(size: u64) -> Result<Self, crate::Error> {
+        let mut identity = Header {
+            base_length: size,
+            base_digest: [0; 32],
+            anchor_generation: 0,
+        };
+        identity.encode()?;
+        let buffer = [0; 65536];
+        let mut hash = Sha256::new();
+        let mut remaining = size;
+        while remaining != 0 {
+            let count = remaining.min(buffer.len() as u64) as usize;
+            hash.update(&buffer[..count]);
+            remaining -= count as u64;
+        }
+        identity.base_digest = hash.finalize().into();
+        Ok(Self {
+            source: Rc::new(ZeroSource(size)),
+            identity,
+        })
+    }
+
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, crate::Error> {
         let base = Self::memory(bytes);
         base.identity.encode()?;
@@ -89,6 +114,19 @@ impl SectorSource for VerifiedBase {
     }
     fn read_range(&self, first_lba: u64, bytes: &mut [u8]) -> io::Result<()> {
         self.source.read_range(first_lba, bytes)
+    }
+}
+
+struct ZeroSource(u64);
+impl SectorSource for ZeroSource {
+    fn byte_len(&self) -> u64 {
+        self.0
+    }
+    fn read_sector(&self, _: u64) -> io::Result<[u8; SECTOR_LEN]> {
+        Ok([0; SECTOR_LEN])
+    }
+    fn check_unchanged(&self) -> io::Result<()> {
+        Ok(())
     }
 }
 
@@ -191,5 +229,85 @@ impl SectorSource for SparseOverlay {
         self.sectors
             .get(&lba)
             .map_or_else(|| self.parent.read_sector(lba), |bytes| Ok(**bytes))
+    }
+}
+
+#[cfg(test)]
+mod zero_tests {
+    use super::*;
+    use unemu_core_api::{test_support::MemoryStorage, Storage};
+
+    #[test]
+    fn zero_identity_is_the_full_byte_hash_and_replacements_stay_sparse() {
+        let size = 3 * SECTOR_LEN;
+        let base = VerifiedBase::zero(size as u64).unwrap();
+        assert_eq!(
+            base.identity().base_digest,
+            <[u8; 32]>::from(Sha256::digest(vec![0; size]))
+        );
+        assert_eq!(base.read_sector(0).unwrap(), [0; SECTOR_LEN]);
+        assert_eq!(base.read_sector(2).unwrap(), [0; SECTOR_LEN]);
+        let mut overlay = SparseOverlay::new(Rc::new(base.clone()));
+        overlay.replace(2, Box::new([0xa5; SECTOR_LEN]));
+        assert_eq!(overlay.written_sectors(), 1);
+        assert_eq!(overlay.read_sector(2).unwrap(), [0xa5; SECTOR_LEN]);
+        assert_eq!(base.read_sector(2).unwrap(), [0; SECTOR_LEN]);
+        assert_eq!(
+            SparseOverlay::new(Rc::new(base)).read_sector(2).unwrap(),
+            [0; SECTOR_LEN]
+        );
+    }
+
+    #[test]
+    fn large_zero_base_has_no_capacity_sized_storage() {
+        let base = VerifiedBase::zero(504 * 1024 * 1024).unwrap();
+        assert_eq!(base.byte_len(), 528482304);
+        assert_eq!(
+            base.read_sector(base.byte_len() / 512 - 1).unwrap(),
+            [0; SECTOR_LEN]
+        );
+        let mut overlay = SparseOverlay::new(Rc::new(base));
+        assert_eq!(overlay.written_sectors(), 0);
+        overlay.replace(1032191, Box::new([7; SECTOR_LEN]));
+        assert_eq!(overlay.written_sectors(), 1);
+        assert_eq!(
+            std::mem::size_of::<ZeroSource>(),
+            std::mem::size_of::<u64>()
+        );
+    }
+
+    #[test]
+    fn zero_journal_reopens_replacements_against_the_generated_identity() {
+        let base = VerifiedBase::zero(2048).unwrap();
+        let storage = MemoryStorage::new();
+        let mut media = crate::JournalMedia::open_record(
+            storage.open("zero.upfj").unwrap(),
+            &base,
+            2048,
+            crate::SinkStatus::default(),
+        )
+        .unwrap();
+        media.write_batch(&[(3, [0x5a; 512])]);
+        media.finish().unwrap();
+        let reopened = crate::JournalMedia::open_record(
+            storage.open("zero.upfj").unwrap(),
+            &base,
+            2048,
+            crate::SinkStatus::default(),
+        )
+        .unwrap();
+        assert_eq!(reopened.read_sector(0), [0; 512]);
+        assert_eq!(reopened.read_sector(3), [0x5a; 512]);
+        assert_eq!(reopened.written_sectors(), 1);
+        assert_eq!(
+            crate::Header::decode(
+                &storage.contents("zero.upfj").unwrap()[..crate::HEADER_LEN],
+                &[0; 2048],
+                2048
+            )
+            .unwrap()
+            .base_digest,
+            base.identity().base_digest
+        );
     }
 }

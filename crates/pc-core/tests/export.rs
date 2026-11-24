@@ -463,7 +463,8 @@ fn catalogue_config() -> Vec<u8> {
         launch.config.media.push(Medium {
             id: id.into(),
             source: format!("assets/{id}.img"),
-            head: digest,
+            head: Some(digest),
+            zero: None,
             name: Some(format!("Custom {id}")),
             policy: Policy::Volatile,
             geometry: Geometry {

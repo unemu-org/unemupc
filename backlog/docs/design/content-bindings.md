@@ -9,10 +9,13 @@ Status: accepted with a reduced first scope (maintainer, 2026-11-24).
   and a native zero disk. Integration covers the open AT templates.
 - A native zero disk stays document-owned, as the contract requires: no zero
   content row and no front-end blob. Its base is a bounded-memory zero sector
-  source behind the existing overlay. Full journal and export coverage of
-  zero disks may follow later.
-- Deferred: passing supplied receipts down to ROM lowering. Until then the
-  core keeps its existing check of small ROM bytes against their digest.
+  source behind the existing overlay. Journal reopening is covered in the
+  first scope. Existing current-reader exports also support zero media;
+  they do not need the generated base identity.
+- Deferred: passing supplied receipts down to ROM and CMOS image lowering.
+  Until then the core keeps its existing digest checks of small ROM bytes
+  and supplied CMOS images, including journal-backed CMOS through
+  `Context::image` in `crates/pc-config/src/lower.rs`.
   The contract forbids rehashing supplied content, so this is a known gap,
   tracked as follow-up work.
 - The three questions below are answered as recommended: a portable prepared
@@ -20,7 +23,8 @@ Status: accepted with a reduced first scope (maintainer, 2026-11-24).
   catalogue firmware, and roles follow from position when the document
   omits them.
 
-Evidence labels: **READ** means inspected source at `file:line`.
+Evidence labels: **MEASURED** means exercised by the named tests.
+**READ** means inspected source at `file:line`.
 **ASSUMED** means a proposal or an estimate that has not been implemented or measured.
 Paths prefixed `unemu-core-api:`, `unemu:` or `unemu-media:` name those repositories.
 Other paths name this repository. Contract evidence is from revision `086c5c2`.
@@ -78,7 +82,8 @@ This is the same distinction between host paths and launch keys that exists toda
 
 ## Two complete recipe config files
 
-**ASSUMED:** the files below are proposed launch-template inputs, not files accepted today.
+**MEASURED:** both files below are accepted launch-template inputs, exercised by
+`crates/pc-core/tests/content_bindings.rs` through `&dyn Core`.
 The `machine.` prefix is the existing envelope nesting.
 Removing that prefix and the outer envelope gives the corresponding host machine file.
 `machine.disks` declares document-owned zero disks.
@@ -301,8 +306,9 @@ Existing image geometry checks already use checked multiplication
 **READ** (`crates/pc-config/src/launch.rs:5`, `crates/pc-config/src/launch.rs:70`):
 a stored head digest may name an object rather than the flat bytes.
 A launch content row maps that digest to flat SHA-256 and size.
-The module explicitly says launch documents are never stored or pushed.
-The new contract instead requires the prepared document to be storable
+The earlier launch policy forbade storage. Portable prepared launches now
+have `encode_portable` / `decode_portable` codec entry points; kept-record
+names remain transient. The contract requires the prepared document to be storable
 (`unemu-core-api:src/binding.rs:173`).
 
 **ASSUMED — proposal:** PreparedConfig contains the existing launch representation.
@@ -330,9 +336,9 @@ Do not add another image lookup to the assembler.
 **READ** (`crates/pc-config/src/image/mod.rs:191`,
 `crates/pc-config/src/image/codec.rs:335`, `crates/pc-config/src/image/codec.rs:503`,
 `crates/pc-config/src/launch.rs:292`):
-every medium currently requires a head and content row.
-Every medium lowers to ImageSource::File and enters the mount's content-base map.
-That cannot represent a ZeroDisk without inventing external content.
+before the native-zero extension every medium required a head and content row.
+Every medium lowered to ImageSource::File and entered the mount's content-base map.
+That could not represent a ZeroDisk without inventing external content.
 
 **ASSUMED — smallest extension:** make a medium's source identity exactly one of
 the existing `head` or `zero = { size = N }`.
@@ -356,9 +362,11 @@ catalogue_mode = false
 inserted = "system"
 ```
 
-**ASSUMED:** remove template `machine.disks` and drive selectors after creating these rows.
+**READ:** preparation removes template `machine.disks` and drive selectors after creating these rows.
 The resolved hardware contains drive wiring and geometry, as today.
-Lower the native zero medium to ImageSource::Blank, outside the external-content map.
+The codec lowers a native zero medium to ImageSource::Blank, outside the external-content map.
+Assembly resolves fixed-disk blanks to verified zero sector bases before its
+byte-materializing fallback; merely constructing a Blank is insufficient.
 Supply its immutable sectors through the existing SectorSource and SparseOverlay interfaces.
 All write modes use that overlay boundary.
 Readonly rejects writes; volatile discards replacements; journal persists replacements.
@@ -670,7 +678,9 @@ The migration requires that coordinated release step
 ## Implementation handoffs and estimate
 
 **ASSUMED:** the supervisor can assign the following sequential deliverables.
-Files named below are future implementation scope, not changes made by this note.
+The grammar/planning and fact-resolution steps are implemented. The native
+zero and core-operation steps now have implementation and contract tests.
+Receipt propagation and the later integration work remain separate.
 Each step keeps the existing path and logical-key lowering as the single resolution route.
 
 | Step | Files | Tests and acceptance | Estimate |
@@ -713,3 +723,41 @@ This design-only change adds no tests and claims no runtime acceptance result.
    Never accept a package's broader label as a substitute.
 
 Related: [core contract](core-contract.md), [machine files](machine-files.md), [persistent media](persistent-media.md), [deferred layers](../deferred.md#layered-disk-images-base-image-plus-content-addressed-layers), unemu-core-api `docs/decisions/0002-content-bindings.md`, `docs/conformance.md`, `docs/migration-0.6.md`.
+
+## Implemented first-scope details
+
+The core now advertises both binding operations for its launch media type.
+`launch::prepare` performs config and fact checks, resolves logical keys,
+freezes defaults, preserves existing heads and receipts, and writes native
+zero rows. `PcCore::compose` opens the resulting identity set and checks small
+firmware bytes before returning the owned portable document. No machine or
+storage handle is acquired during composition. Bound firmware must match a
+reviewed board-catalogue entry. Receipt propagation into ROM and CMOS image
+lowering remains deferred; the existing digest checks of small ROM bytes
+and supplied CMOS images (including journal-backed CMOS) still run.
+
+The portable launch codec accepts document-owned record names and refuses
+session-kept record names. The front-end store still needs its coordinated
+media-type dispatch change in its own repository; it must use this launch
+codec rather than the old stored-image Config decoder. This workspace has
+no front-end image store to migrate.
+
+Zero media require exactly one positive `zero.size` or external `head`,
+matching geometry. Native zero media currently attach to IDE drives.
+`VerifiedBase::zero` hashes the complete generated stream with a fixed 64 KiB
+buffer at runtime. Volatile and readonly mounts use sparse replacements;
+journals bind the generated full hash and length and replay replacements on
+reopen. No disk-capacity buffer, content row, receipt or Validated identity
+is generated for zero media. The explicit host binding loader still reports
+Unsupported for zero selectors; the prepared launch codec is the native-zero
+entry point in this scope.
+
+Raw, fixed-VHD and machine exports work unchanged through current-sector
+readers. Their tests cover a native-zero base with modified current bytes;
+exports write new outputs and do not preserve the zero shorthand.
+
+Contract tests cover both complete examples, fact permutations, config-only
+rejections without opens, receipt/error kinds, portable round trips, preserved
+layered heads and an open AT POST banner through the existing text observation.
+Sector and mock-bus tests cover sparse writes, readonly policy, large declared
+capacity, the complete generated SHA-256 and journal reopening.

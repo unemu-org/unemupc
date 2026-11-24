@@ -1104,13 +1104,16 @@ pub fn resolve_sources_preverified<'a>(
             message: "option ROMs cannot use parts; only firmware.bios supports parts".into(),
         });
     }
-    if !config.drives.iter().any(|d| d.media.is_some())
-        && !config
-            .images
-            .iter()
-            .map(|image| &image.source)
-            .chain(config.drives.iter().map(|drive| &drive.image))
-            .any(|source| matches!(source, ImageSource::File(_) | ImageSource::Interleaved(_)))
+    if !config.drives.iter().any(|d| {
+        d.media.is_some()
+            || (matches!(d.kind, DriveKind::HardDisk { .. })
+                && matches!(d.image, ImageSource::Blank { .. }))
+    }) && !config
+        .images
+        .iter()
+        .map(|image| &image.source)
+        .chain(config.drives.iter().map(|drive| &drive.image))
+        .any(|source| matches!(source, ImageSource::File(_) | ImageSource::Interleaved(_)))
     {
         return Ok((Cow::Borrowed(config), Vec::new()));
     }
@@ -1153,6 +1156,19 @@ pub fn resolve_sources_preverified<'a>(
     let mut base_metadata = vec![None; resolved.drives.len()];
     for (index, drive) in resolved.drives.iter_mut().enumerate() {
         if drive.media.is_some() {
+            continue;
+        }
+        if let (DriveKind::HardDisk { .. }, ImageSource::Blank { size }) =
+            (&drive.kind, &drive.image)
+        {
+            drive.kind.check_image_len(index, *size)?;
+            let base = journal::VerifiedBase::zero(*size).map_err(|e| ConfigError::Journal {
+                drive_index: index,
+                message: e.to_string(),
+            })?;
+            base_metadata[index] = Some(DriveBase {
+                verified: Some(base.into()),
+            });
             continue;
         }
         if let ImageSource::File(path) = &drive.image {
@@ -1407,6 +1423,13 @@ pub fn mount_ide_drives(
                 persistence.push(handle);
                 media
             }
+            mode if verified.is_some() => Box::new(crate::mount::SparseMedia::new(
+                verified
+                    .ok_or(ConfigError::InvalidAtaGeometry { drive_index })?
+                    .verified()
+                    .clone(),
+                *mode == WriteMode::ReadOnly,
+            )),
             mode => Box::new(device::InMemoryMedia::new(
                 bytes,
                 u64::from(capacity),
