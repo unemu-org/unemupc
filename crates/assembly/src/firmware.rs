@@ -856,12 +856,7 @@ pub fn validate_option_roms_with_catalogue(
                     image_index,
                 })?
         };
-        if !image.base.is_multiple_of(2048) {
-            return Err(ConfigError::OptionRomMisaligned {
-                image_index,
-                base: image.base,
-            });
-        }
+        check_option_rom_alignment(image_index, image.base)?;
         if image.base < start
             || image.base >= end
             || image
@@ -976,7 +971,18 @@ pub fn check_option_rom_catalogue(
     Ok(unlisted)
 }
 
-pub(crate) fn check_bios_placement(base: u64, size: u64) -> Result<(), ConfigError> {
+/// Check the scan-step alignment independently of ROM bytes and BIOS identity.
+/// IBM Personal Computer AT Technical Reference, System BIOS,
+/// "Adapters with System-Accessible ROM Modules", p. 5-11.
+pub fn check_option_rom_alignment(image_index: usize, base: u64) -> Result<(), ConfigError> {
+    if !base.is_multiple_of(2048) {
+        return Err(ConfigError::OptionRomMisaligned { image_index, base });
+    }
+    Ok(())
+}
+
+/// Check reset ROM size and placement without reading its bytes.
+pub fn check_bios_placement(base: u64, size: u64) -> Result<(), ConfigError> {
     if size == 0 || !size.is_multiple_of(8192) || base.checked_add(size) != Some(0x100000) {
         return Err(ConfigError::BiosPlacement { base, size });
     }

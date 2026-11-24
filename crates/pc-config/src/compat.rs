@@ -507,7 +507,8 @@ mod tests {
     /// config key cannot ship without a row. Schema 1 refuses the reserved
     /// names (timing, unmodelled hardware, run and presentation tables); the
     /// bundle refuses descriptive and inheritance keys, a drive's media keys
-    /// and the NVRAM image's policy keys.
+    /// and the NVRAM image's policy keys. Package selectors and zero declarations
+    /// belong to templates and must be composed before a stored config is rated.
     #[test]
     fn every_machine_config_key_has_a_row() {
         let mut expected = Vec::new();
@@ -545,6 +546,7 @@ mod tests {
                     "name",
                     "description",
                     "extends",
+                    "disks",
                 ],
             ],
         );
@@ -587,7 +589,11 @@ mod tests {
         );
         for rom in ["bios", "option_roms"] {
             let prefix = format!("machine.firmware.{rom}");
-            check(&prefix, struct_fields::<schema::Rom>(), &[]);
+            check(
+                &prefix,
+                struct_fields::<schema::Rom>(),
+                &[&["use", "rom", "role", "size"]],
+            );
             check(
                 &format!("{prefix}.parts"),
                 struct_fields::<schema::RomPart>(),
@@ -603,6 +609,8 @@ mod tests {
             "machine.card.drives",
             struct_fields::<schema::Drive>(),
             &[&[
+                "disk",
+                "inserted",
                 "image",
                 "sha256",
                 "write",

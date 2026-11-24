@@ -25,6 +25,7 @@ view!(MachineFile {
     memory: Option<super::Memory>,
     firmware: Option<super::Firmware>,
     card: Option<Vec<super::Card>>,
+    disks: Option<Vec<super::ZeroDisk>>,
 } ignore { run, presentation, streams, mhz, frequency, clock_hz, cycles, cycle_exact, wait_states, bus_mhz, memory_wait_states, timing });
 
 view!(Board {
@@ -57,6 +58,10 @@ view!(Firmware {
 } ignore { basic });
 
 view!(Rom {
+    use_id: Option<String>,
+    rom: Option<String>,
+    role: Option<String>,
+    size: Option<u64>,
     offset: Option<usize>,
     parts: Option<Vec<super::RomPart>>,
     image: Option<String>,
@@ -89,6 +94,8 @@ view!(Card {
 } ignore { monitor, rom, mmio, mhz, frequency, clock_hz, cycles, cycle_exact, wait_states, bus_mhz, memory_wait_states, timing });
 
 view!(Drive {
+    disk: Option<String>,
+    inserted: Option<super::MediumSelector>,
     unit: Option<u8>,
     channel: Option<super::Channel>,
     drive_type: Option<super::DriveType>,

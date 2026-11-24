@@ -30,6 +30,7 @@ use std::{fmt, ops::Range, path::Path, path::PathBuf};
 
 use serde::Deserialize;
 
+pub mod bindings;
 pub mod compat;
 pub mod image;
 mod integrity;

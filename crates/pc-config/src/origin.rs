@@ -38,6 +38,7 @@ pub struct Origins {
     image_file: PathBuf,
     fields: BTreeMap<String, Origin>,
     image_files: BTreeMap<PathBuf, PathBuf>,
+    logical_images: BTreeMap<String, PathBuf>,
 }
 
 impl Origins {
@@ -49,6 +50,7 @@ impl Origins {
             document: Origin { file, line: None },
             fields: BTreeMap::new(),
             image_files: BTreeMap::new(),
+            logical_images: BTreeMap::new(),
         }
     }
 
@@ -71,6 +73,9 @@ impl Origins {
 
     /// Resolve an asset against its defining layer, including preset and symlink origins.
     pub fn image_path(&self, field: &str, image: &str) -> PathBuf {
+        if let Some(key) = self.logical_images.get(field) {
+            return key.clone();
+        }
         let origin = self.get(field);
         let file = if let Some(file) = self.image_files.get(&origin.file) {
             file
@@ -80,6 +85,11 @@ impl Origins {
             &origin.file
         };
         file.parent().unwrap_or(Path::new(".")).join(image)
+    }
+
+    /// Keep a generated logical key independent of its selector's source directory.
+    pub fn bind_image_key(&mut self, field: &str, key: &str) {
+        self.logical_images.insert(field.into(), key.into());
     }
 
     /// Take the child layer's document and image bases when merging it over
@@ -117,7 +127,13 @@ impl Origins {
             .range(from.to_owned()..)
             .take_while(|(key, _)| within(key, from))
         {
-            self.insert(format!("{to}{}", &key[from.len()..]), origin.clone());
+            let suffix = &key[from.len()..];
+            let mapped = if to.is_empty() {
+                suffix.trim_start_matches('.').to_owned()
+            } else {
+                format!("{to}{suffix}")
+            };
+            self.insert(mapped, origin.clone());
         }
     }
 
@@ -188,6 +204,15 @@ impl Origins {
                 || field.starts_with("firmware.bios.parts")
                 || field.ends_with(".mouse")
                 || field == "board.display_switch"
+                || field == "disks"
+                || field.starts_with("disks[")
+                || field.ends_with(".use")
+                || field.ends_with(".rom")
+                || field.ends_with(".role")
+                || field.ends_with(".size")
+                || field.ends_with(".disk")
+                || field.contains(".inserted")
+                || field.contains(".media[")
             {
                 self.insert(field, origin);
             }

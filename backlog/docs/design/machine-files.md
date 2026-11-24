@@ -715,6 +715,52 @@ size, and a zero modulo-256 byte sum. The whole image must fit the BIOS scan
 window; it cannot overlap another image. Assembly records effective scan order
 by ascending address, independent of file order.
 
+### Explicit content selectors
+
+The schema-1 hardware tables also accept package bindings (see
+[content bindings](content-bindings.md), § One source per item). Both TOML and
+YAML use the same keys, including inside an image or launch envelope's `machine`.
+A binding-aware host loader takes verified `BindingUse`/`BindingItem` facts;
+ordinary loading of an unresolved template reports that composition is required.
+Planning never opens content or searches firmware directories.
+
+- A BIOS or option ROM uses `use = "package-use"`, `rom = "item-id"`, optional
+  `role`, `size` and `sha256`, and its normal `base`/`offset`/`provides` fields.
+  Exactly one source group is allowed: `image`, `parts`, or `use` plus `rom`.
+  Option ROMs require `base`. Roles are exactly `system-bios`, `video-bios` and
+  `option-rom`; the package must declare the effective positional role even
+  when the document omits `role`. The separate C0000h–C7FFFh window requires
+  video firmware; reviewed catalogue video firmware also requires that role
+  outside this window. Roles remain local to the selected item and package.
+- A drive can use `inserted = { use = "dos", medium = "disk-1" }` instead of
+  `image`. The selector also accepts `size` and `sha256` assertions. Controller,
+  unit/channel, drive type, geometry and write policy retain their normal meaning.
+- A floppy `media` member can use `{ use = "dos", medium = "disk-2" }` instead
+  of `image`, with the same assertions and per-medium write policy. Every member
+  is resolved, including members not inserted at power-on. Catalogue order stays
+  unchanged. `image`, `disk`, `inserted` and `media` are exclusive source groups.
+- Top-level `disks = [{ id = "system", size = 528482304 }]` declares zero disks.
+  A single IDE drive attaches each with `disk = "system"` and explicit CHS
+  geometry. Ids follow the existing safe medium-id spelling; sizes are positive
+  and must equal `cylinders * heads * sectors * 512`, without overflow. Duplicate,
+  missing, unused and multiply attached declarations are errors. Discovery and
+  fact resolution retain native zero attachments without a content row; runtime
+  zero mounting is a separate implementation stage.
+
+During inheritance, an omitted `disks` list is inherited; an explicit list
+replaces it atomically, retaining the new declaration positions. Selecting a new
+ROM source clears the inherited source, digest, role, size, offset and services
+unless restated. Selecting a new drive source clears its inherited alternative
+selectors and pin, following the existing journal/write override rules. A
+metadata-only override retains the original selector and its defining position.
+
+Binding occurrence ids use resolved hardware positions, such as `firmware.bios`,
+`firmware.option_roms[0]`, `card[1].drives[0]` or
+`card[2].drives[0].media[0]`. Discovery sorts ids by Rust string ordering; facts
+never reorder hardware arrays. The envelope's `machine.` prefix appears in
+source diagnostics, not in ids. Bound occurrences resolve to distinct generated
+logical `assets/...` keys and use the same image reader as path sources.
+
 ### VGA video BIOS
 
 The register-level `vga` uses the existing `firmware.option_roms` schema. A

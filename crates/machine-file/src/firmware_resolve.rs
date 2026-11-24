@@ -17,6 +17,16 @@ pub(crate) fn resolve(
     warnings: &mut Vec<String>,
     memory: &std::collections::BTreeMap<std::path::PathBuf, Vec<u8>>,
 ) -> Result<(), LoadError> {
+    if pc_config::bindings::has_bindings(document) {
+        return Err(LowerError {
+            origin: origins.get("").clone(),
+            field: String::new(),
+            message: "unresolved content bindings; composition is required".into(),
+            pin_origin: None,
+            validation: None,
+        }
+        .into());
+    }
     if roots.is_empty() {
         return Ok(());
     }

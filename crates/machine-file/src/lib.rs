@@ -43,6 +43,7 @@ mod source;
 mod yaml;
 
 pub use origin::YamlOrigins;
+pub use pc_config::bindings;
 pub use pc_config::{
     lower, lower_with_options, parse_toml, pc_names, schema, ImageReader, JournalBase, LowerError,
     MachineFile, Origin, Origins, ParseError,
@@ -702,3 +703,18 @@ mod validate;
 #[cfg(test)]
 #[path = "firmware_tests.rs"]
 mod firmware;
+
+/// Resolve host inheritance and lower mixed path/package sources through one reader.
+/// No package discovery is performed; facts are supplied explicitly by the caller.
+pub fn load_with_bindings<R: ImageReader>(
+    path: impl AsRef<Path>,
+    uses: &[unemu_core_api::BindingUse],
+    content: &dyn unemu_core_api::ContentSource,
+    reader: &mut R,
+    options: assembly::AssemblyOptions,
+) -> Result<assembly::MachineConfig, unemu_core_api::Error> {
+    let (document, origins) = resolve(path).map_err(|e| {
+        unemu_core_api::Error::new(unemu_core_api::ErrorKind::Config, e.to_string())
+    })?;
+    bindings::lower_with_bindings(&document, &origins, uses, content, reader, options)
+}

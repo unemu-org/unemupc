@@ -255,6 +255,7 @@ pub(crate) fn drive_label(drive: &Drive) -> String {
 }
 
 fn validate_layer(document: &MachineFile, origins: &Origins) -> Result<(), LowerError> {
+    pc_config::bindings::validate_sources(document, origins)?;
     if let Some(f) = &document.firmware {
         for (field, rom) in f
             .bios
@@ -372,7 +373,9 @@ fn validate_layer(document: &MachineFile, origins: &Origins) -> Result<(), Lower
                     || drive.journal.is_some()
                     || drive.keep_generations.is_some()
                     || drive.media.is_some()
-                    || drive.empty.is_some())
+                    || drive.empty.is_some()
+                    || drive.disk.is_some()
+                    || drive.inserted.is_some())
             {
                 return Err(error(
                     origins,
@@ -473,11 +476,36 @@ table!(Memory, [conventional_kib, extended_kib], []);
 table!(Firmware, [option_roms], [bios]);
 impl Merge for Rom {
     fn merge(&mut self, child: Self, m: &mut Merger<'_>) {
-        if child.image.is_some() || child.parts.is_some() {
+        if child.image.is_some()
+            || child.parts.is_some()
+            || child.use_id.is_some()
+            || child.rom.is_some()
+        {
             self.provides = None;
             self.offset = None;
             m.out.remove_subtree(&join(&m.to, "offset"));
             m.out.remove_subtree(&join(&m.to, "provides"));
+        }
+        if child.image.is_some()
+            || child.parts.is_some()
+            || child.use_id.is_some()
+            || child.rom.is_some()
+        {
+            self.use_id = None;
+            self.rom = None;
+            self.role = None;
+            self.size = None;
+            self.sha256 = None;
+            for name in ["use", "rom", "role", "size", "sha256"] {
+                m.out.remove_subtree(&join(&m.to, name));
+            }
+        }
+        if child.use_id.is_some() || child.rom.is_some() {
+            self.image = None;
+            self.parts = None;
+            for name in ["image", "parts"] {
+                m.out.remove_subtree(&join(&m.to, name));
+            }
         }
         if child.parts.is_some() {
             self.image = None;
@@ -488,6 +516,10 @@ impl Merge for Rom {
             self.parts = None;
             m.out.remove_subtree(&join(&m.to, "parts"));
         }
+        m.scalar(&mut self.use_id, child.use_id, "use");
+        m.scalar(&mut self.rom, child.rom, "rom");
+        m.scalar(&mut self.role, child.role, "role");
+        m.scalar(&mut self.size, child.size, "size");
         m.scalar(&mut self.parts, child.parts, "parts");
         m.image(&mut self.image, &mut self.sha256, child.image, child.sha256);
         m.scalar(&mut self.offset, child.offset, "offset");
@@ -540,6 +572,28 @@ impl Merge for Geometry {
 }
 impl Merge for Drive {
     fn merge(&mut self, child: Self, m: &mut Merger<'_>) {
+        let new_source = child.image.is_some()
+            || child.media.is_some()
+            || child.disk.is_some()
+            || child.inserted.is_some();
+        if new_source {
+            self.disk = None;
+            self.inserted = None;
+            for name in ["disk", "inserted"] {
+                m.out.remove_subtree(&join(&m.to, name));
+            }
+        }
+        if child.disk.is_some() || child.inserted.is_some() {
+            self.image = None;
+            self.media = None;
+            self.empty = None;
+            self.sha256 = None;
+            for name in ["image", "media", "empty", "sha256"] {
+                m.out.remove_subtree(&join(&m.to, name));
+            }
+        }
+        m.scalar(&mut self.disk, child.disk, "disk");
+        m.scalar(&mut self.inserted, child.inserted, "inserted");
         if child.media.is_some() {
             self.empty = None;
             self.image = None;
@@ -569,7 +623,7 @@ impl Merge for Drive {
         m.scalar(&mut self.unit, child.unit, "unit");
         m.scalar(&mut self.channel, child.channel, "channel");
         m.scalar(&mut self.drive_type, child.drive_type, "type");
-        if child.image.is_some() || child.write.is_some_and(|mode| mode != WriteMode::Journal) {
+        if new_source || child.write.is_some_and(|mode| mode != WriteMode::Journal) {
             // A journal belongs to its base and is irrelevant when writes stop using it.
             self.journal = None;
             self.keep_generations = None;
@@ -577,7 +631,7 @@ impl Merge for Drive {
                 m.out.remove_subtree(&join(&m.to, name));
             }
         }
-        if child.image.is_some() && self.write == Some(WriteMode::Journal) {
+        if new_source && self.write == Some(WriteMode::Journal) {
             self.write = None;
             m.out.remove_subtree(&join(&m.to, "write"));
         }
@@ -626,6 +680,7 @@ fn merge(
         child.firmware.take(),
         "firmware",
     );
+    m.scalar(&mut parent.document.disks, child.disks.take(), "disks");
     parent.document.name = child.name.take();
     parent.document.description = child.description.take();
     parent.document.schema = child.schema;
@@ -865,7 +920,9 @@ fn check_preset(document: &MachineFile, origins: &Origins) -> Result<(), LowerEr
         for (j, drive) in card.drives.iter().flatten().enumerate() {
             if let Some(media) = &drive.media {
                 for (k, medium) in media.iter().enumerate() {
-                    paths.push(format!("card[{i}].drives[{j}].media[{k}].image"));
+                    if !medium.image.is_empty() {
+                        paths.push(format!("card[{i}].drives[{j}].media[{k}].image"));
+                    }
                     if medium.journal.is_some() {
                         paths.push(format!("card[{i}].drives[{j}].media[{k}].journal"));
                     }
@@ -906,13 +963,13 @@ fn complete(resolved: &Resolved) -> Result<(), LowerError> {
         d.firmware
             .as_ref()
             .and_then(|f| f.bios.as_ref())
-            .is_some_and(|r| r.image.is_some() || r.parts.is_some()),
+            .is_some_and(|r| r.image.is_some() || r.parts.is_some() || r.use_id.is_some()),
     );
     if let Some(f) = &d.firmware {
         for (i, rom) in f.option_roms.iter().flatten().enumerate() {
             require(
                 format!("firmware.option_roms[{i}].image"),
-                rom.image.is_some(),
+                rom.image.is_some() || rom.use_id.is_some(),
             );
             require(
                 format!("firmware.option_roms[{i}].base"),
@@ -943,7 +1000,11 @@ fn complete(resolved: &Resolved) -> Result<(), LowerError> {
             let field = format!("{field}.drives[{j}]");
             require(
                 format!("{field}.image"),
-                drive.image.is_some() || drive.media.is_some() || drive.empty == Some(true),
+                drive.image.is_some()
+                    || drive.media.is_some()
+                    || drive.empty == Some(true)
+                    || drive.disk.is_some()
+                    || drive.inserted.is_some(),
             );
             match card.kind {
                 Some(CardKind::Fdc765) => {

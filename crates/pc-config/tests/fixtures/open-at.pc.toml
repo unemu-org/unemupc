@@ -1,0 +1,65 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+schema = 1
+platform = "ibm-pc"
+
+[machine]
+schema = 1
+disks = [{ id = "system", size = 528482304 }]
+
+[machine.board]
+model = "ibm-5170"
+display_switch = "colour"
+
+[machine.board.rtc]
+start = "2000-01-01T00:00:00"
+nvram = "derived"
+
+[machine.cpu]
+model = "80286"
+rate = "8/13"
+fpu = "none"
+
+[machine.memory]
+conventional_kib = 640
+extended_kib = 1024
+
+[machine.firmware.bios]
+use = "bios"
+rom = "system-bios"
+role = "system-bios"
+base = 0xF8000
+
+[[machine.firmware.option_roms]]
+use = "vga"
+rom = "video-bios"
+role = "video-bios"
+base = 0xC0000
+
+[[machine.firmware.option_roms]]
+use = "ide"
+rom = "option-rom"
+role = "option-rom"
+base = 0xC8000
+
+[[machine.card]]
+kind = "vga"
+
+[[machine.card]]
+kind = "ide"
+controller_model = "ata"
+port = 0x1F0
+irq = 14
+
+[[machine.card.drives]]
+channel = "master"
+disk = "system"
+geometry = { cylinders = 1024, heads = 16, sectors = 63 }
+write = "volatile"
+
+[[machine.card]]
+kind = "fdc-765"
+
+[[machine.card.drives]]
+unit = 0
+type = "1.2M"
+empty = true

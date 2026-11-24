@@ -26,6 +26,11 @@ macro_rules! number {
     })*};
 }
 number!(u8, u16, u32);
+impl Field for u64 {
+    fn value(&self) -> Value {
+        Value::Integer(*self as i64)
+    }
+}
 impl Field for usize {
     fn value(&self) -> Value {
         Value::Integer(*self as i64)
@@ -75,7 +80,10 @@ names!(Lane { Even => "even", Odd => "odd" });
 names!(SerialMouseModel { Microsoft => "microsoft", None => "none" });
 fn put<T: Field>(t: &mut Table, key: &str, value: &Option<T>) {
     if let Some(value) = value {
-        t.insert(key.into(), value.value());
+        t.insert(
+            if key == "use_id" { "use" } else { key }.into(),
+            value.value(),
+        );
     }
 }
 macro_rules! table {
@@ -110,7 +118,11 @@ table!(Rom {
     image,
     sha256,
     base,
-    provides
+    use_id,
+    provides,
+    rom,
+    role,
+    size
 });
 table!(Chs {
     cylinders,
@@ -184,6 +196,8 @@ impl Field for Drive {
     fn value(&self) -> Value {
         let mut t = Table::new();
         let projection::Drive {
+            disk: _,
+            inserted: _,
             unit,
             channel,
             drive_type,
@@ -209,6 +223,7 @@ impl Field for Drive {
 /// in its controller-local unit order: the `machine` table of a stored config.
 pub fn machine(document: &MachineFile) -> Table {
     let projection::MachineFile {
+        disks: _,
         schema: _,
         name: _,
         description: _,

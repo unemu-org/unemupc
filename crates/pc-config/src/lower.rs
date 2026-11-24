@@ -1420,6 +1420,16 @@ fn lower_tracked_mode<R: ImageReader>(
     options: assembly::AssemblyOptions,
     mode: Mode,
 ) -> Result<(MachineConfig, AssemblyDiagnostics), LowerError> {
+    crate::bindings::validate_sources(document, origins)?;
+    if crate::bindings::has_bindings(document) {
+        return Err(LowerError {
+            origin: origins.get("").clone(),
+            field: String::new(),
+            message: "unresolved content bindings; composition is required".into(),
+            pin_origin: None,
+            validation: None,
+        });
+    }
     let metadata = mode != Mode::Full;
     let mut context = Context {
         origins,

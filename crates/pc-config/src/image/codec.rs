@@ -177,6 +177,8 @@ fn row<'a>(rows: &'a BTreeMap<Digest, ContentRow>, digest: &Digest) -> Result<&'
 /// A stored drive table names no medium: the slots do.
 pub fn check_media_fields(drive: &toml::Table) -> Result<()> {
     if [
+        "disk",
+        "inserted",
         "image",
         "sha256",
         "media",
@@ -264,7 +266,13 @@ fn bind_with_selection(
     }
     let mut hardware = config.machine.clone();
     let raw_text = toml::to_string(&hardware).map_err(|e| invalid(e.to_string()))?;
-    crate::parse_toml("bundle.toml", &raw_text)?;
+    let document = crate::parse_toml("bundle.toml", &raw_text)?;
+    crate::bindings::validate_sources(&document, &crate::Origins::new("bundle.toml"))?;
+    if crate::bindings::has_bindings(&document) {
+        return Err(invalid(
+            "unresolved content bindings; composition is required",
+        ));
+    }
     if ["extends", "name", "description"]
         .iter()
         .any(|k| hardware.contains_key(*k))

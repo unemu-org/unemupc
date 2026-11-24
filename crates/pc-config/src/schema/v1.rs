@@ -45,6 +45,7 @@ timed_table! {
         pub memory: Option<Memory>,
         pub firmware: Option<Firmware>,
         pub card: Option<Vec<Card>>,
+        pub disks: Option<Vec<ZeroDisk>>,
         #[serde(default, deserialize_with = "values::reject_present")] run: Option<OutsideMachine>,
         #[serde(default, deserialize_with = "values::reject_present")] presentation: Option<OutsideMachine>,
         #[serde(default, deserialize_with = "values::reject_present")] streams: Option<OutsideMachine>,
@@ -117,6 +118,11 @@ pub struct Firmware {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Rom {
+    #[serde(rename = "use")]
+    pub use_id: Option<String>,
+    pub rom: Option<String>,
+    pub role: Option<String>,
+    pub size: Option<u64>,
     /// Skip an EPROM prefix after checking the complete file's digest.
     pub offset: Option<usize>,
     pub parts: Option<Vec<RomPart>>,
@@ -174,6 +180,8 @@ timed_table! {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Drive {
+    pub disk: Option<String>,
+    pub inserted: Option<MediumSelector>,
     pub unit: Option<u8>,
     pub channel: Option<Channel>,
     #[serde(rename = "type")]
@@ -195,7 +203,12 @@ pub struct Drive {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Medium {
+    #[serde(default)]
     pub image: String,
+    #[serde(rename = "use")]
+    pub use_id: Option<String>,
+    pub medium: Option<String>,
+    pub size: Option<u64>,
     pub sha256: Option<Sha256>,
     pub write: Option<WriteMode>,
     pub journal: Option<String>,
@@ -246,4 +259,23 @@ impl<'de> Deserialize<'de> for DisplaySwitch {
             )),
         }
     }
+}
+
+/// Document-owned zero base; no package or external content represents it.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ZeroDisk {
+    pub id: String,
+    pub size: u64,
+}
+
+/// A complete package medium, with optional assertions on its received identity.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MediumSelector {
+    #[serde(rename = "use")]
+    pub use_id: Option<String>,
+    pub medium: Option<String>,
+    pub size: Option<u64>,
+    pub sha256: Option<Sha256>,
 }
