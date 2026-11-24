@@ -137,6 +137,12 @@ Update this when a feature lands, breaks, or gets pulled. Stale status is worse 
   validation and reader/sink failures. Emulation and golden expectations are
   unchanged.
 
+- **2026-11-24 — contract 0.6:** `unemu-core-api` and `unemu-core-files` use
+  release v0.6.0 at `a4ec9009`, and `unemu-host` is at `de86256c` on the same
+  contract. The PC core states 0.6 and implements the optional content
+  bindings (`binding_slots`, `compose`); see
+  [content bindings](design/content-bindings.md).
+
 - **2026-11-23 — PC contract 0.4 migration, pinned at 0.5:** `unemu-core-api` and
   `unemu-core-files` use release v0.5.0 at `316dd2a1` (0.5 only adds optional
   offline media description and export, implemented by the PC core below the

@@ -909,7 +909,7 @@ dependencies = [
 [[package]]
 name = "machine-view"
 version = "0.0.4"
-source = "git+https://github.com/unemu-org/unemu-host?rev=1692a1fcfd6c9900d3074786a54f51c9de3b30f0#1692a1fcfd6c9900d3074786a54f51c9de3b30f0"
+source = "git+https://github.com/unemu-org/unemu-host?rev=de86256cfd9d88aeb48c0d5480fa2838f0c152b8#de86256cfd9d88aeb48c0d5480fa2838f0c152b8"
 dependencies = [
  "cpal",
  "objc2 0.6.5",
@@ -1990,13 +1990,13 @@ checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
 
 [[package]]
 name = "unemu-core-api"
-version = "0.5.0"
-source = "git+https://github.com/unemu-org/unemu-core-api?rev=316dd2a1f429cc3ef37a2bed203e89b2160079ff#316dd2a1f429cc3ef37a2bed203e89b2160079ff"
+version = "0.6.0"
+source = "git+https://github.com/unemu-org/unemu-core-api?rev=a4ec90098e7ca0bc7ce60b2d20af43f140eb3960#a4ec90098e7ca0bc7ce60b2d20af43f140eb3960"
 
 [[package]]
 name = "unemu-core-files"
-version = "0.5.0"
-source = "git+https://github.com/unemu-org/unemu-core-api?rev=316dd2a1f429cc3ef37a2bed203e89b2160079ff#316dd2a1f429cc3ef37a2bed203e89b2160079ff"
+version = "0.6.0"
+source = "git+https://github.com/unemu-org/unemu-core-api?rev=a4ec90098e7ca0bc7ce60b2d20af43f140eb3960#a4ec90098e7ca0bc7ce60b2d20af43f140eb3960"
 dependencies = [
  "unemu-core-api",
 ]
@@ -2021,7 +2021,7 @@ dependencies = [
 [[package]]
 name = "unemu-test-core"
 version = "0.0.4"
-source = "git+https://github.com/unemu-org/unemu-host?rev=1692a1fcfd6c9900d3074786a54f51c9de3b30f0#1692a1fcfd6c9900d3074786a54f51c9de3b30f0"
+source = "git+https://github.com/unemu-org/unemu-host?rev=de86256cfd9d88aeb48c0d5480fa2838f0c152b8#de86256cfd9d88aeb48c0d5480fa2838f0c152b8"
 dependencies = [
  "unemu-core-api",
 ]

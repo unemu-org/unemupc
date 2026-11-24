@@ -400,7 +400,7 @@ fn a_drive_without_a_controller_refuses_changes_as_a_usage_error() {
 fn the_pc_core_describes_its_launch_type_and_refuses_other_types() {
     let core: &dyn Core = &crate::PcCore;
     let description = core.description();
-    assert_eq!(description.implements, ContractVersion::new(0, 5));
+    assert_eq!(description.implements, ContractVersion::new(0, 6));
     assert!(CONTRACT.drives(description.implements));
     assert_eq!(description.id, "unemupc");
     assert_eq!(description.platforms.len(), 1);

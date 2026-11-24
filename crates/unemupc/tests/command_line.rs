@@ -40,7 +40,7 @@ fn standalone_usage_and_notices_name_only_the_pc_core() {
     assert_eq!(version.stdout, about.stdout);
     let text = String::from_utf8(version.stdout).unwrap();
     assert!(text.starts_with(&format!("{} {}\n", description.id, description.version)));
-    assert!(text.contains("contract 0.5\n"));
+    assert!(text.contains("contract 0.6\n"));
     assert!(text.contains("AGPL-3.0-or-later") && text.contains(env!("CARGO_PKG_REPOSITORY")));
     let repository = env!("CARGO_PKG_REPOSITORY");
     let source = match option_env!("UNEMUPC_SOURCE_REV").filter(|rev| !rev.is_empty()) {
