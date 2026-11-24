@@ -454,6 +454,7 @@ pub fn test386(image: Vec<u8>) -> MachineConfig {
         clock: ClockConfig {
             retired_per_pit_clock: machine::RETIRED_PER_PIT_CLOCK,
             retired_per_pit_clock_denominator: 1,
+            turbo: None,
         },
         memory: MemoryConfig {
             address_space_bytes: MIB,

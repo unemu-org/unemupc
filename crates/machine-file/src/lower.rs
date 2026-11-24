@@ -127,3 +127,20 @@ mod metadata_tests {
         assert_eq!(validation.config.images[0].base, 0xC8000);
     }
 }
+
+#[cfg(test)]
+mod clock_input_tests {
+    #[test]
+    fn nominal_clock_and_turbo_parse_in_both_syntaxes() {
+        crate::parse_toml(
+            "clock.toml",
+            "schema=1\n[cpu]\nclock_mhz=4.77\nturbo={clock_mhz=33}\n",
+        )
+        .unwrap();
+        crate::parse_yaml(
+            "clock.yaml",
+            "schema: 1\ncpu:\n  clock_mhz: 4.77\n  turbo: {clock_mhz: 33}\n",
+        )
+        .unwrap();
+    }
+}

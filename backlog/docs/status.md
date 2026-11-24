@@ -1,5 +1,34 @@
 # Status
 
+## Nominal CPU clocks and turbo (2026-11-24)
+
+`cpu.clock_mhz` accepts numeric MHz with exact integer-kHz resolution and
+lowers to a reduced retired-steps/PIT-clock ratio. The approximate CPI is 4
+for 80286/80386DX and 2 for both 80486 DX variants, derived from a stated
+instruction mix and Intel timing tables. `cpu.rate` remains the exact override;
+using both forms in one layer is a positioned error. Generic 386/486 boards
+and the shipped SeaBIOS profiles now default to 33 MHz (242/35 and 484/35).
+The IBM AT's calibrated 8/13 default and its golden expectations are unchanged.
+The older generic-board results below were recorded at the former rate 1/1.
+
+`cpu.turbo = { clock_mhz = number }` configures an alternate clock. The initial
+position is a run-only `CreateRequest` option (`turbo=true`) and standalone
+`unemupc run --machine FILE --turbo` flag. The internal `Machine::set_turbo`
+API changes position between calls without resetting device time or repricing
+past halted time. Live frontend switching would need a versioned run-control
+operation; the contract and GUI are unchanged. Nominal MHz does not add host
+pacing or per-instruction cycle accounting.
+
+**MEASURED**, release, ARM64 macOS host class, CPU pin
+`5a17667764080c2fe7a33d446584a3e175b7923d`: three 10-million-instruction
+samples after warm-up gave minimum real16 throughput 98.772 / 96.295 / 99.158
+million instructions/s for 286 / 386 / 486. Protected throughput was 9.967
+(protected16), 8.082 and 7.908 (protected32), respectively. Thus every listed
+preset fits the real16 register loop, while the protected32 386 loop fits
+through 25 MHz and none of the listed 486 clocks fits that loop. These are
+workload-specific ceilings, not a game-performance promise.
+See [clock mapping, sources, presets and measurement method](design/machine-files.md#nominal-cpu-clocks).
+
 ## FreeDOS on generic ISA boards (2026-11-24)
 
 **MEASURED**, CPU pin `5a17667764080c2fe7a33d446584a3e175b7923d`:

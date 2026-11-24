@@ -13,7 +13,7 @@ nvram = "derived"
 [cpu]
 model = "80486dx"
 fpu = "integrated"
-rate = 1
+clock_mhz = 33
 
 [memory]
 conventional_kib = 640

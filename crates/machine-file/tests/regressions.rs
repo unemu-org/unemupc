@@ -102,7 +102,7 @@ fn rejection_fields_reject_null_presence_in_every_table() {
         false,
         "reserved, not implemented",
     );
-    null_fields::<Cpu>(&["turbo"], false, "reserved, not implemented");
+    null_fields::<Cpu>(&["turbo", "clock_mhz"], false, "");
     null_fields::<Memory>(
         &["shadow", "umb", "upper"],
         false,

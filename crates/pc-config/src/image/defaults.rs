@@ -91,14 +91,16 @@ pub fn materialize(hardware: &mut Table, config: &assembly::MachineConfig) -> Re
         }
         .into(),
     );
-    cpu.insert(
-        "rate".into(),
-        format!(
-            "{}/{}",
-            config.clock.retired_per_pit_clock, config.clock.retired_per_pit_clock_denominator
-        )
-        .into(),
-    );
+    if !cpu.contains_key("clock_mhz") {
+        cpu.insert(
+            "rate".into(),
+            format!(
+                "{}/{}",
+                config.clock.retired_per_pit_clock, config.clock.retired_per_pit_clock_denominator
+            )
+            .into(),
+        );
+    }
     cpu.insert(
         "fpu".into(),
         match config.cpu.fpu {
@@ -237,4 +239,28 @@ fn materialize_rom(rom: &mut Table, image: &assembly::LoadImage, bios: bool) -> 
         );
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn materializing_defaults_preserves_nominal_and_turbo_clocks_without_rate_conflict() {
+        let text =
+            "schema=1\n[board]\nmodel='ibm-5170'\n[cpu]\nclock_mhz=4.77\nturbo={clock_mhz=8}\n";
+        let doc = crate::parse_toml("clock.toml", text).unwrap();
+        let mut hardware = super::super::encode::machine(&doc);
+        let mut config = assembly::bios(vec![0xf4; 32768], Some(vec![0; 1474560]));
+        config.clock = assembly::ClockConfig::from_khz(
+            assembly::CpuChip::I80286,
+            std::num::NonZeroU32::new(4770).unwrap(),
+        );
+        super::materialize(&mut hardware, &config).unwrap();
+        assert!(!hardware["cpu"].as_table().unwrap().contains_key("rate"));
+        let restored =
+            crate::parse_toml("resolved.toml", &toml::to_string(&hardware).unwrap()).unwrap();
+        let cpu = restored.cpu.unwrap();
+        let original = doc.cpu.unwrap();
+        assert_eq!(cpu.clock_mhz, original.clock_mhz);
+        assert_eq!(cpu.turbo, original.turbo);
+    }
 }

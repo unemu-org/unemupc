@@ -680,6 +680,7 @@ picks the right constructor from data instead of the caller picking it by hand.
 ClockConfig {
     retired_per_pit_clock:             u64, // positive numerator A
     retired_per_pit_clock_denominator: u64, // positive denominator B
+    turbo: Option<(u64, u64)>,             // alternate positive A/B
 }
 ```
 
@@ -706,12 +707,17 @@ The selected `8/13 ≈ 0.6154` lies near that centre. Board defaults, the shippe
 IBM AT preset, and the FreeDOS TOML/YAML examples use this ratio; the IDE
 example inherits it from FreeDOS. Explicit machine-file rates override the
 board default. Bare rigs, including the historical no-controller POST rig,
-retain their own rates. No nominal-MHz axis or per-opcode cycle table is implied.
+retain their own rates.
 
-Neither struct carries a frequency axis or a behavioural CPU-type toggle today —
-see [Non-goals](#non-goals) for why, and why keeping the structs is nonetheless
-the point: when a real consumer and a real oracle appear, they arrive as new
-fields here rather than a redesign of everything above.
+Nominal machine-file MHz now lower through `ClockConfig::from_khz` to an
+exact reduced ratio, using assumed CPI 4 for 286/386 and 2 for either 486.
+Generic boards default to 33 MHz: 242/35 for 386, 484/35 for 486. See
+[machine-files.md §Nominal CPU clocks](machine-files.md#nominal-cpu-clocks)
+for the mix, Intel timing sources, numeric rules and presets. The IBM AT
+8/13 calibration includes wait states and refresh; it is deliberately not
+replaced by 6 MHz/CPI 4. `ClockConfig.turbo` holds an optional second ratio;
+`Machine::set_turbo` selects it without resetting device time or repricing
+past halted time. The initial position belongs to run options.
 
 ### `MemoryConfig` — a semantic memory map
 
@@ -1632,10 +1638,9 @@ Resolved here so the trait removal (task-33) is unblocked:
 
 Deliberately out of scope. Do not implement these unprompted.
 
-- **No MHz / frequency axis.** Virtual time is retired instructions
-  (decision-5); a nominal "MHz" measures nothing in this model. `ClockConfig`
-  carries a *ratio*, not a frequency. A frequency axis arrives only if a consumer
-  needs it *and* there is an oracle to validate it against.
+- **No cycle-exact frequency model.** Nominal MHz is an approximate CPI-based
+  convenience conversion to the instruction/PIT ratio; devices and run caps
+  remain driven by deterministic virtual time.
 - **No behavioural CPU-type toggle.** There is no oracle for an 8086/8088
   behavioural mode, and the CPU core models one part. `CpuConfig.chip` is a
   marker with one variant today; a second *behavioural* variant waits for a

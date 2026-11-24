@@ -247,6 +247,65 @@ pub struct CpuRate {
     pub pit_clocks: NonZeroU64,
 }
 
+/// Nominal MHz stored exactly as integer kHz, from 0.001 through 1000 MHz.
+/// The numeric decoder's shortest decimal must have at most three fractional
+/// digits. No rounding is performed and strings are deliberately rejected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ClockMhz(pub std::num::NonZeroU32);
+
+impl<'de> Deserialize<'de> for ClockMhz {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct ClockVisitor;
+        impl Visitor<'_> for ClockVisitor {
+            type Value = ClockMhz;
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str(
+                    "numeric MHz in 0.001..=1000 with at most three fractional decimal digits",
+                )
+            }
+            fn visit_u64<E: de::Error>(self, value: u64) -> Result<Self::Value, E> {
+                value
+                    .checked_mul(1000)
+                    .filter(|n| *n <= 1_000_000)
+                    .and_then(|n| std::num::NonZeroU32::new(n as u32))
+                    .map(ClockMhz)
+                    .ok_or_else(|| E::invalid_value(de::Unexpected::Unsigned(value), &self))
+            }
+            fn visit_i64<E: de::Error>(self, value: i64) -> Result<Self::Value, E> {
+                match u64::try_from(value) {
+                    Ok(n) => self.visit_u64(n),
+                    Err(_) => Err(E::invalid_value(de::Unexpected::Signed(value), &self)),
+                }
+            }
+            fn visit_f64<E: de::Error>(self, value: f64) -> Result<Self::Value, E> {
+                let text = value.to_string();
+                let (whole, fraction) = text.split_once('.').unwrap_or((&text, ""));
+                let khz = (|| {
+                    if fraction.len() > 3
+                        || !whole
+                            .bytes()
+                            .chain(fraction.bytes())
+                            .all(|b| b.is_ascii_digit())
+                    {
+                        return None;
+                    }
+                    let whole = whole.parse::<u32>().ok()?.checked_mul(1000)?;
+                    let part = if fraction.is_empty() {
+                        0
+                    } else {
+                        fraction.parse::<u32>().ok()? * 10_u32.pow(3 - fraction.len() as u32)
+                    };
+                    std::num::NonZeroU32::new(whole.checked_add(part)?)
+                        .filter(|n| n.get() <= 1_000_000)
+                })();
+                khz.map(ClockMhz)
+                    .ok_or_else(|| E::invalid_value(de::Unexpected::Float(value), &self))
+            }
+        }
+        deserializer.deserialize_any(ClockVisitor)
+    }
+}
+
 impl<'de> Deserialize<'de> for CpuRate {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         struct RateVisitor;
@@ -416,7 +475,6 @@ reserved_field! {
     reject_dip_switches => "XT DIP switches need an XT motherboard model",
     reject_chipset => "chipset register overrides need a chipset model",
     reject_speaker => "a speaker model is not implemented",
-    reject_turbo => "runtime CPU rate switching is not implemented",
     reject_shadow => "ROM shadowing is not modelled",
     reject_umb => "upper-memory block configuration is not implemented",
     reject_upper => "selectable upper-memory RAM or open-bus behaviour is not implemented",

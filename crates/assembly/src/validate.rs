@@ -275,7 +275,8 @@ impl MachineConfig {
         self.primary_display().map(|_| ())
     }
     fn check_clock(&self) -> Result<(), ConfigError> {
-        self.clock.cpu_rate().map(|_| ())
+        self.clock.cpu_rate()?;
+        self.clock.turbo_rate().map(|_| ())
     }
     fn check_option_roms(&self) -> Result<(), ConfigError> {
         crate::firmware::validate_option_roms(self)

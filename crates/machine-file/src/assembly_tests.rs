@@ -73,6 +73,7 @@ mod tests {
         config.clock = assembly::ClockConfig {
             retired_per_pit_clock: 1,
             retired_per_pit_clock_denominator: 1,
+            turbo: None,
         };
         config.devices.push(assembly::DeviceConfig::new(
             DeviceId::SysControl,
@@ -112,6 +113,7 @@ mod tests {
             config.clock = assembly::ClockConfig {
                 retired_per_pit_clock: numerator,
                 retired_per_pit_clock_denominator: denominator,
+                turbo: None,
             };
             config.devices.push(assembly::DeviceConfig::new(
                 DeviceId::SysControl,

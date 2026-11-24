@@ -572,6 +572,9 @@ pub fn assemble_preverified(
         .with_cpu_rate(rate_numerator, rate_denominator)
         .with_dma_wirings(dma_wirings)
         .with_dma_channel_wirings(dma_channel_wirings);
+    if let Some((numerator, denominator)) = config.clock.turbo_rate()? {
+        machine = machine.with_turbo_rate(numerator, denominator);
+    }
     if let Some(error) = coprocessor_error {
         let asserted = error.clone();
         machine = machine.with_numeric_error_lines(

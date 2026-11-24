@@ -39,6 +39,7 @@ pub enum Command {
         /// `--trace-exceptions`: the recording of the exception and
         /// interrupt deliveries, the last entries, goes to stderr.
         trace_exceptions: bool,
+        turbo: bool,
         print: Option<String>,
         options: assembly::AssemblyOptions,
     },
@@ -120,9 +121,16 @@ fn machine_words(args: &[OsString], with_store: bool) -> Result<Option<Command>,
         let (mut path, mut max_steps, mut idle_limit, mut print) = (None, None, None, None);
         let mut diag_at = None;
         let mut trace_exceptions = false;
+        let mut turbo = false;
         let mut store = None;
         let mut args = frontend[1..].iter();
         while let Some(arg) = args.next() {
+            if *arg == "--turbo" {
+                if std::mem::replace(&mut turbo, true) {
+                    return Err("unknown or duplicate run option");
+                }
+                continue;
+            }
             if *arg == "--trace-exceptions" {
                 if std::mem::replace(&mut trace_exceptions, true) {
                     return Err("unknown or duplicate run option");
@@ -161,6 +169,7 @@ fn machine_words(args: &[OsString], with_store: bool) -> Result<Option<Command>,
             idle_limit: idle_limit.unwrap_or(pc_harness::BIOS_IDLE_LIMIT),
             diag_at,
             trace_exceptions,
+            turbo,
             print,
             options,
         }));
@@ -213,13 +222,15 @@ pub fn execute_with_loader(
             idle_limit,
             diag_at,
             trace_exceptions,
+            turbo,
             print,
             options,
         } => {
             let loaded = load(&path, options, &rom_dirs, errors).map_err(|e| line(&e))?;
-            run::run_machine(
+            run::run_machine_with_turbo(
                 loaded,
                 (max_steps, idle_limit, diag_at, trace_exceptions),
+                turbo,
                 print.as_deref(),
                 output,
                 errors,
@@ -300,7 +311,7 @@ fn commit_line(commit: Option<&str>) -> String {
 macro_rules! machine_usage {
     ($($tail:literal),* $(,)?) => {
         concat!(
-            "       unemu run --machine FILE [--store DIR | --no-store] [--rom-dir DIR]... [--max-steps N] [--idle-limit N] [--diag-at N] [--trace-exceptions] [--print CARD] [--allow-unlisted-firmware]\n",
+            "       unemu run --machine FILE [--store DIR | --no-store] [--rom-dir DIR]... [--max-steps N] [--idle-limit N] [--diag-at N] [--trace-exceptions] [--turbo] [--print CARD] [--allow-unlisted-firmware]\n",
             "         --diag-at N writes the machine's diagnostic report to stderr when the run reaches step N (the unit of --max-steps), then runs on\n",
             "         --trace-exceptions writes the exceptions and interrupts the guest takes to stderr when the run ends: the last 10000 entries, each with the registers of the interrupted code (the bytes at CS:IP as at the end of each run slice), consecutive identical deliveries folded into one with a count and the last one's registers, and a summary per vector\n", $($tail),*)
     };
@@ -406,6 +417,7 @@ mod tests {
                 idle_limit: 1_000_000,
                 diag_at: None,
                 trace_exceptions: false,
+                turbo: false,
                 print: None,
                 options: assembly::AssemblyOptions::default(),
             }
@@ -434,12 +446,34 @@ mod tests {
                 idle_limit: 0,
                 diag_at: Some(7),
                 trace_exceptions: true,
+                turbo: false,
                 print: Some("screen".into()),
                 options: assembly::AssemblyOptions {
                     allow_unlisted_firmware: true
                 },
             }
         );
+    }
+
+    #[test]
+    fn turbo_flag_is_run_only_and_cannot_be_repeated() {
+        let args = |words: &[&str]| words.iter().map(OsString::from).collect::<Vec<_>>();
+        assert!(matches!(
+            pc(&args(&["run", "--machine", "clock.toml", "--turbo"])),
+            Command::Run { turbo: true, .. }
+        ));
+        assert!(parse(&args(&[
+            "run",
+            "--machine",
+            "clock.toml",
+            "--turbo",
+            "--turbo"
+        ]))
+        .unwrap()
+        .is_err());
+        assert!(parse(&args(&["machine", "check", "clock.toml", "--turbo"]))
+            .unwrap()
+            .is_err());
     }
 
     #[test]

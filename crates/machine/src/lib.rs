@@ -229,8 +229,10 @@ pub struct Machine<C: Cpu> {
     step_limit: NonZeroU64,
     /// HLT or coprocessor WAIT stays suspended across runs until an IRQ can wake it.
     halted: bool,
-    /// Total virtual ticks spent halted, charged to the virtual-time safety cap.
+    /// Halted virtual ticks at the selected rate, charged to the policy cap.
     halted_clocks: u64,
+    /// Keep each rate's ticks so repeated switches cannot discard fractional credit.
+    inactive_halted_clocks: u64,
     /// Consecutive halted virtual ticks since the CPU last ran or woke.
     idle_clocks: u64,
     /// Device IRQ lines wired to PIC inputs, sampled at scheduler boundaries.
@@ -242,6 +244,9 @@ pub struct Machine<C: Cpu> {
     /// CPU rate A/B in completed steps per PIT input clock.
     cpu_rate_numerator: NonZeroU64,
     cpu_rate_denominator: NonZeroU64,
+    base_cpu_rate: (NonZeroU64, NonZeroU64),
+    turbo_cpu_rate: Option<(NonZeroU64, NonZeroU64)>,
+    turbo_enabled: bool,
     /// B times the number of virtual ticks per PIT clock.
     cpu_tick_denominator: u128,
     /// Fractional virtual ticks not yet emitted, in units of 1/A.
@@ -343,11 +348,15 @@ impl<C: Cpu> Machine<C> {
             step_limit: NonZeroU64::new(65_536).unwrap_or(NonZeroU64::MIN),
             halted: false,
             halted_clocks: 0,
+            inactive_halted_clocks: 0,
             idle_clocks: 0,
             irq_lines,
             last_levels,
             cpu_rate_numerator: NonZeroU64::MIN,
             cpu_rate_denominator: NonZeroU64::MIN,
+            base_cpu_rate: (NonZeroU64::MIN, NonZeroU64::MIN),
+            turbo_cpu_rate: None,
+            turbo_enabled: false,
             cpu_tick_denominator: u128::from(TICKS_PER_PIT_CLOCK),
             clock_remainder: 0,
             idle_limit,
@@ -525,11 +534,57 @@ impl<C: Cpu> Machine<C> {
     /// first run; changing rate after time has elapsed has no defined meaning.
     #[must_use]
     pub fn with_cpu_rate(mut self, numerator: NonZeroU64, denominator: NonZeroU64) -> Self {
+        self.base_cpu_rate = (numerator, denominator);
         self.cpu_rate_numerator = numerator;
         self.cpu_rate_denominator = denominator;
         self.cpu_tick_denominator =
             u128::from(self.cpu_rate_denominator.get()) * u128::from(TICKS_PER_PIT_CLOCK);
         self
+    }
+
+    /// Configure the alternate turbo-button rate before the first run.
+    /// Both button positions are throughput ratios; see
+    /// `backlog/docs/design/machine-files.md` §Nominal CPU clocks.
+    #[must_use]
+    pub fn with_turbo_rate(mut self, numerator: NonZeroU64, denominator: NonZeroU64) -> Self {
+        self.turbo_cpu_rate = Some((numerator, denominator));
+        self
+    }
+
+    /// Switch button positions at a completed machine-call boundary.
+    /// Returns false when enabling turbo without a configured alternate clock.
+    /// Device time and accumulated policy time never move backwards. The
+    /// sub-tick phase is rescaled down to the new denominator (loss < one
+    /// virtual tick). Halted instruction-equivalent fractions survive every switch
+    /// exactly. No-op switches preserve both fractions.
+    pub fn set_turbo(&mut self, enabled: bool) -> bool {
+        let rate = if enabled {
+            let Some(rate) = self.turbo_cpu_rate else {
+                return false;
+            };
+            rate
+        } else {
+            self.base_cpu_rate
+        };
+        if self.turbo_enabled == enabled {
+            return true;
+        }
+        if rate != (self.cpu_rate_numerator, self.cpu_rate_denominator) {
+            std::mem::swap(&mut self.halted_clocks, &mut self.inactive_halted_clocks);
+            self.clock_remainder = (u128::from(self.clock_remainder) * u128::from(rate.0.get())
+                / u128::from(self.cpu_rate_numerator.get()))
+                as u64;
+            self.cpu_rate_numerator = rate.0;
+            self.cpu_rate_denominator = rate.1;
+            self.cpu_tick_denominator = u128::from(rate.1.get()) * u128::from(TICKS_PER_PIT_CLOCK);
+        }
+        self.turbo_enabled = enabled;
+        true
+    }
+
+    /// The currently selected turbo-button position.
+    pub fn turbo_enabled(&self) -> bool {
+        self.turbo_enabled
     }
 
     /// Select device timer dispatch before running the machine (§6).
@@ -641,21 +696,40 @@ impl<C: Cpu> Machine<C> {
         self.clock
     }
 
+    /// Whole inactive credit and its fractional part in current-rate units.
+    /// Flooring only this conversion preserves all integer cap comparisons;
+    /// the original ticks remain available for an exact conversion after a switch.
+    fn inactive_halted_credit(&self) -> (u64, u128) {
+        let (a, b) = if self.turbo_enabled {
+            self.base_cpu_rate
+        } else {
+            self.turbo_cpu_rate.unwrap_or(self.base_cpu_rate)
+        };
+        let denominator = u128::from(b.get()) * u128::from(TICKS_PER_PIT_CLOCK);
+        let numerator = u128::from(self.inactive_halted_clocks) * u128::from(a.get());
+        (
+            (numerator / denominator).min(u128::from(u64::MAX)) as u64,
+            (numerator % denominator) * self.cpu_tick_denominator / denominator,
+        )
+    }
+
     /// Total virtual time in instruction-equivalent units (§6).
     ///
-    /// For CPU rate A/B, this is the active count plus
-    /// `floor(halted_ticks * A / (B * ticks_per_PIT))`, saturating at `u64::MAX`.
-    /// The floor applies to accumulated halted ticks, so fractional instruction equivalents survive
-    /// separate halts and runner calls. Halted clocks do not consume the running
+    /// This is the active count plus the floor of the sum of halted instruction
+    /// equivalents at both rates, saturating at `u64::MAX`. Each rate contributes
+    /// `halted_ticks * A / (B * ticks_per_PIT)`; fractional credits survive separate
+    /// halts, runner calls and turbo switches. Halted clocks do not consume the running
     /// CPU's fractional virtual-tick remainder, measured in units of 1/A. Unlike
     /// [`Cpu::retired`], this advances during HLT too, so run caps and scheduled
     /// targets bound busy and idle time.
     /// Active time counts completed steps, including individual REP iterations.
     pub fn virtual_time(&self) -> u64 {
-        let halted = u128::from(self.halted_clocks) * u128::from(self.cpu_rate_numerator.get())
+        let (inactive, credit) = self.inactive_halted_credit();
+        let halted = (u128::from(self.halted_clocks) * u128::from(self.cpu_rate_numerator.get())
+            + credit)
             / self.cpu_tick_denominator;
         let active = self.completed_steps;
-        (u128::from(active) + halted).min(u128::from(u64::MAX)) as u64
+        (u128::from(active) + u128::from(inactive) + halted).min(u128::from(u64::MAX)) as u64
     }
 
     /// The configured idle limit (halted PIT clocks before quiescence).
@@ -859,10 +933,11 @@ impl<C: Cpu> Machine<C> {
                         if let Some(deadline) = self.next_deadline()? {
                             clocks = clocks.min(deadline.0 - self.clock.0);
                         }
+                        let (inactive, inactive_credit) = self.inactive_halted_credit();
                         if let Some(cap) = cap {
                             let a = u128::from(self.cpu_rate_numerator.get());
                             let b = self.cpu_tick_denominator;
-                            let credit = u128::from(self.halted_clocks) * a % b;
+                            let credit = (u128::from(self.halted_clocks) * a + inactive_credit) % b;
                             let room = u128::from(cap - self.virtual_time())
                                 .checked_mul(b)
                                 .and_then(|ticks| ticks.checked_sub(credit))
@@ -870,10 +945,13 @@ impl<C: Cpu> Machine<C> {
                             clocks =
                                 clocks.min(u64::try_from(room.div_ceil(a)).unwrap_or(u64::MAX));
                         }
-                        let maximum_halted = (u128::from(u64::MAX - self.completed_steps) + 1)
+                        let maximum_halted =
+                            (u128::from(u64::MAX - self.completed_steps.saturating_add(inactive))
+                                + 1)
                             .checked_mul(self.cpu_tick_denominator)
                             .ok_or_else(|| scheduler_error("clock interval exhausted"))?
-                            - 1;
+                                - 1
+                                - inactive_credit;
                         let halted_room = (maximum_halted
                             / u128::from(self.cpu_rate_numerator.get()))
                         .checked_sub(u128::from(self.halted_clocks))
@@ -1641,6 +1719,159 @@ mod tests {
             Some(1),
         )
         .with_step_limit(NonZeroU64::MIN)
+    }
+
+    #[test]
+    fn turbo_rescales_phase_and_keeps_past_halted_time() {
+        let mut machine = machine_with(Vec::new())
+            .with_cpu_rate(NonZeroU64::new(3).unwrap(), NonZeroU64::new(2).unwrap())
+            .with_turbo_rate(NonZeroU64::new(7).unwrap(), NonZeroU64::new(3).unwrap());
+        machine.charge_steps(1).unwrap();
+        let old_phase = machine.clock_remainder;
+        machine.halted_clocks = TICKS_PER_PIT_CLOCK * 100;
+        let before = machine.virtual_time();
+        let clock = machine.clock();
+        assert!(machine.set_turbo(true));
+        assert_eq!(machine.virtual_time(), before);
+        assert_eq!(machine.clock(), clock);
+        assert_eq!(machine.clock_remainder, old_phase * 7 / 3);
+        let phase = machine.clock_remainder;
+        assert!(machine.set_turbo(true));
+        assert_eq!(machine.clock_remainder, phase);
+        machine.halted_clocks = TICKS_PER_PIT_CLOCK * 30;
+        let before = machine.virtual_time();
+        assert!(machine.set_turbo(false));
+        assert_eq!(machine.virtual_time(), before);
+        machine.charge_steps(3).unwrap();
+        assert_eq!(machine.clock().0 - clock.0, 2 * TICKS_PER_PIT_CLOCK);
+    }
+
+    #[test]
+    fn turbo_toggles_preserve_fractional_halted_credit_and_caps() {
+        let mut machine = machine_with(Vec::new())
+            .with_cpu_rate(
+                NonZeroU64::new(11).unwrap(),
+                NonZeroU64::new(52_500).unwrap(),
+            )
+            .with_turbo_rate(
+                NonZeroU64::new(11).unwrap(),
+                NonZeroU64::new(26_250).unwrap(),
+            );
+        machine.bus = Bus::new(Vec::new(), DecodeMap::default());
+        machine.cpu = instruction_cpu(Vec::new(), true);
+        machine.halted = true;
+        let mut elapsed = 0;
+        for interval in 1..=2000 {
+            let clocks = if machine.turbo_enabled() { 2000 } else { 4000 };
+            elapsed += clocks;
+            machine.set_idle_limit(Some(elapsed));
+            assert_eq!(machine.run_bounded(None).unwrap(), RunOutcome::Halted);
+            let expected = interval * 88 / 105;
+            assert_eq!(machine.virtual_time(), expected, "interval {interval}");
+            assert!(machine.set_turbo(!machine.turbo_enabled()));
+            assert_eq!(machine.virtual_time(), expected, "toggle {interval}");
+            assert_eq!(machine.clock(), VClock::from_pit(elapsed));
+        }
+        let before = machine.clock();
+        machine.set_idle_limit(Some(elapsed + 10_000));
+        let cap = machine.virtual_time() + 1;
+        assert_eq!(
+            machine.run_bounded(Some(cap)).unwrap(),
+            RunOutcome::RetiredCapReached
+        );
+        let expected_ticks = PIT.ticks(cap * 52_500 - 2000 * 44_000).div_ceil(11);
+        assert_eq!(machine.clock().0 - before.0, expected_ticks);
+        assert_eq!(machine.virtual_time(), cap);
+    }
+
+    #[test]
+    fn turbo_halted_caps_combine_coprime_denominators_in_both_positions() {
+        for final_turbo in [false, true] {
+            let mut machine = machine_with(Vec::new())
+                .with_cpu_rate(NonZeroU64::new(2).unwrap(), NonZeroU64::new(3).unwrap())
+                .with_turbo_rate(NonZeroU64::new(3).unwrap(), NonZeroU64::new(7).unwrap());
+            machine.bus = Bus::new(Vec::new(), DecodeMap::default());
+            machine.cpu = instruction_cpu(Vec::new(), true);
+            machine.halted = true;
+            let mut expected_credit = 0;
+            for interval in 1..=2000 {
+                expected_credit += if machine.turbo_enabled() { 9 } else { 14 };
+                machine.set_idle_limit(Some(interval));
+                assert_eq!(machine.run_bounded(None).unwrap(), RunOutcome::Halted);
+                assert_eq!(machine.virtual_time(), expected_credit / 21);
+                assert!(machine.set_turbo(!machine.turbo_enabled()));
+                assert_eq!(machine.virtual_time(), expected_credit / 21);
+            }
+            assert!(machine.set_turbo(final_turbo));
+            let cap = machine.virtual_time() + 1;
+            let credit_per_tick = if final_turbo { 9 } else { 14 };
+            let ticks = PIT
+                .ticks(cap * 21 - expected_credit)
+                .div_ceil(credit_per_tick);
+            let before = machine.clock();
+            machine.set_idle_limit(Some(2100));
+            assert_eq!(
+                machine.run_bounded(Some(cap)).unwrap(),
+                RunOutcome::RetiredCapReached
+            );
+            assert_eq!(machine.clock().0 - before.0, ticks);
+            assert_eq!(machine.virtual_time(), cap);
+        }
+    }
+
+    #[test]
+    fn cpu_reset_keeps_turbo_selection_and_timing_state() {
+        let cpu = cpu::X86JitCpu::new_real16_bare(
+            0x10_0000,
+            0,
+            0,
+            cpu::x86jit_backend::RealSegments::flat(0),
+        )
+        .unwrap();
+        let mut machine = Machine::new(cpu, bus_with_capture(), Box::new(NoIc), Vec::new(), None)
+            .with_cpu_rate(NonZeroU64::new(3).unwrap(), NonZeroU64::new(2).unwrap())
+            .with_turbo_rate(NonZeroU64::new(7).unwrap(), NonZeroU64::new(3).unwrap());
+        machine.halted_clocks = PIT.ticks(1);
+        assert!(machine.set_turbo(true));
+        machine.charge_steps(8).unwrap();
+        machine.halted_clocks = PIT.ticks(1);
+        let before = (
+            machine.clock(),
+            machine.virtual_time(),
+            machine.clock_remainder,
+            machine.halted_clocks,
+            machine.inactive_halted_clocks,
+        );
+        machine.reset_cpu().unwrap();
+        assert!(machine.turbo_enabled());
+        assert_eq!(
+            (
+                machine.cpu_rate_numerator.get(),
+                machine.cpu_rate_denominator.get()
+            ),
+            (7, 3)
+        );
+        assert_eq!(
+            (
+                machine.clock(),
+                machine.virtual_time(),
+                machine.clock_remainder,
+                machine.halted_clocks,
+                machine.inactive_halted_clocks
+            ),
+            before
+        );
+        assert!(machine.set_turbo(false));
+        assert_eq!(machine.virtual_time(), before.1);
+    }
+
+    #[test]
+    fn turbo_without_an_alternate_rate_is_rejected_without_change() {
+        let mut machine = machine_with(Vec::new());
+        assert!(!machine.set_turbo(true));
+        assert!(!machine.turbo_enabled());
+        assert!(machine.set_turbo(false));
+        assert_eq!(machine.clock(), VClock::ZERO);
     }
 
     #[test]

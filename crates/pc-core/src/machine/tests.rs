@@ -1051,6 +1051,8 @@ keep_generations = 3
         for options in [
             vec![("unknown", "true")],
             vec![("speaker-trace", "yes")],
+            vec![("turbo", "yes")],
+            vec![("turbo", "true"), ("turbo", "false")],
             vec![("speaker-trace", "true"), ("speaker-trace", "false")],
         ] {
             let storage = Rc::new(MemoryStorage::new());
@@ -1312,6 +1314,42 @@ keep_generations = 3
                 .unwrap();
             retry.finish().unwrap();
         }
+    }
+
+    #[test]
+    fn launch_turbo_option_selects_only_the_initial_button_position() {
+        let (bytes, source) = fixture();
+        let text = String::from_utf8(bytes).unwrap().replace(
+            "[machine.board]",
+            "[machine.cpu]\nrate=1\nturbo={clock_mhz=8}\n[machine.board]",
+        );
+        let run = |turbo| {
+            let options = [("allow-unlisted-firmware", "true"), ("turbo", turbo)];
+            let mut machine = crate::PcCore
+                .create_machine(
+                    &request(text.as_bytes(), &source, Rc::new(MemoryStorage::new()))
+                        .with_options(&options),
+                )
+                .unwrap();
+            assert_eq!(machine.assembled.machine.turbo_enabled(), turbo == "true");
+            machine.run(RunLimit::steps(100)).unwrap();
+            let clock = machine.assembled.machine.clock();
+            machine.run(RunLimit::until(Ticks(1000))).unwrap();
+            assert!((1000..=1001).contains(&machine.assembled.machine.clock().0));
+            machine.finish().unwrap();
+            clock
+        };
+        assert!(run("true") < run("false"));
+        let (bytes, source) = fixture();
+        let options = [("allow-unlisted-firmware", "true"), ("turbo", "true")];
+        let error = crate::PcCore
+            .create_machine(
+                &request(&bytes, &source, Rc::new(MemoryStorage::new())).with_options(&options),
+            )
+            .err()
+            .unwrap();
+        assert_eq!(error.kind, ErrorKind::Usage);
+        assert!(error.message.contains("requires cpu.turbo.clock_mhz"));
     }
 
     #[test]

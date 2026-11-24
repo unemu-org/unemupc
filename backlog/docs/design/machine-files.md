@@ -728,17 +728,22 @@ format, recovery diagnostics, host failures and offline tools follow
 |---|---|---|---|---|
 | `model` | string | from the board on 286/386; required on 486 | `"80286"`, `"80386dx"`, `"80486dx"`, `"80486dx-cpuid"` | `CpuConfig.chip` |
 | `fpu` | string | `"integrated"` on 486; `"none"` otherwise | `"none"` or `"80287"` on `ibm-5170`; `"none"` on 386; `"integrated"` on 486 | `CpuConfig.fpu`; derived CMOS 14h bit 1 follows the choice |
+| `clock_mhz` | number | 33 on generic boards; unset on IBM AT | yes | Approximate CPU throughput from nominal MHz; see below. |
+| `turbo` | `{ clock_mhz = number }` | absent | yes | Alternate button position; selected through a run option, never stored as initial state. |
 | `rate` | `"A/B"` string or a positive integer `A` | board default (`"8/13"` on `ibm-5170`) | yes | `ClockConfig` A/B. Both parts must be positive. It is a ratio of completed steps per PIT input clock, not a frequency. |
 
 An omitted `rate` comes from `BoardModel::default_clock` in
 `crates/assembly/src/board.rs`: `ibm-5170` uses the 8/13 throughput calibrated
 against the IBM AT BIOS speed/refresh check. See
 [machine configuration](machine-config.md#cpuconfig-and-clockconfig--minimal-but-the-right-home).
-An explicit rate overrides that board default.
+An explicit rate overrides that board default. `rate` and `clock_mhz` in the
+same layer are mutually exclusive; the error names the `clock_mhz` value and
+its source line. A child layer selecting one form replaces the inherited
+other form. Turbo is inherited independently.
 
 `model = "8088"` is rejected: "cpu model 8088 needs an 8088 instruction model,
 which the CPU core does not have". A model that does not match the board is
-rejected. `turbo` is reserved. `fpu = "none"` leaves the optional 80287 socket
+rejected. `fpu = "none"` leaves the optional 80287 socket
 empty; `fpu = "80287"` selects the core's existing present x87 engine, which
 does not claim generation-specific 80287 fidelity. Other names receive a typed
 `ParseError` with the exact message ``unsupported cpu.fpu `80387`; allowed values: `none`, `80287`, `integrated` ``
@@ -760,6 +765,214 @@ EM/TS/MP retain the architectural #NM controls. A present 80287 uses external
 ERROR# routing through the board IRQ13 latch; F0h releases BUSY and clears the
 latch without clearing numeric status. F1h reset and F8h–FFh bus transactions
 remain unmodelled; see [coprocessor controls](machine-config.md#coprocessor-controls).
+
+### Nominal CPU clocks
+
+`cpu.clock_mhz` is a convenience label for approximate instruction throughput.
+It does not add per-opcode cycles or wall time to execution. TOML and YAML
+accept numeric integers and decimals in **0.001..=1000 MHz**, at 0.001 MHz
+resolution. After the syntax decoder, the number's shortest decimal spelling
+must have at most three fractional digits. Trailing zeroes and exponent
+notation normalize numerically (`33.000` and `3.3e1` mean 33); quoted strings,
+booleans, null, non-finite numbers, zero, negatives and excess precision such
+as 4.7701 are errors. Values are stored as integer kHz; there is **no rounding**.
+The syntax decoder uses binary64 for decimal input, but conversion to kHz
+parses its shortest decimal text with integer arithmetic. All subsequent
+clock arithmetic is rational. Resolved machine artifacts retain both clock
+positions through encode/decode.
+
+**ASSUMED / approximate CPI**, deliberately independent of the executed code:
+
+| Instruction mix | Share | 80286 clocks | 80386DX clocks | i486 clocks |
+|---|---:|---:|---:|---:|
+| ADD register, register | 40% | 2 | 2 | 1 |
+| MOV register, memory | 20% | 5 | 4 | 1 |
+| MOV memory, register | 20% | 3 | 2 | 1 |
+| Jcc, half taken | 20% | (7+3)/2 | (8+3)/2 | (3+1)/2 |
+| Weighted mean | | 3.4 | 3.1 | 1.2 |
+| Selected CPI (ceiling to an integer) | | **4** | **4** | **2** |
+
+The mix is an assumed typical integer program, not a workload survey. The
+conservative upward rounding is the only CPI rounding. It leaves some room
+for instructions omitted from this small mix; it is not a cache, bus or
+wait-state model. The 386 taken branch assumes `m=1` for the next instruction.
+The 486 timings assume cache hits and no address-generation interlock.
+Both `80486dx` and `80486dx-cpuid` use CPI 2. Floating point, REP iteration
+accounting, memory stalls and instruction-specific latencies are not calibrated.
+
+**READ — timing sources:** Intel, [80286 and 80287 Programmer's Reference
+Manual (1987)](https://bitsavers.trailing-edge.com/components/intel/80286/210498-005_80286_and_80287_Programmers_Reference_Manual_1987.pdf),
+Appendix B, “The 80286 Instruction Set”, ADD, MOV and conditional jumps;
+Intel, [80386 Programmer's Reference Manual (1986)](https://pdos.csail.mit.edu/6.828/2018/readings/i386.pdf),
+§17.2.2.3 “Clocks” and Chapter 17 ADD, MOV, Jcc entries;
+Intel, [i486 Processor Programmer's Reference Manual (1990)](https://bitsavers.org/components/intel/80486/i486_Processor_Programmers_Reference_Manual_1990.pdf),
+Chapter 26 instruction-set reference, ADD, MOV and Jcc entries (also tabulated
+in Intel i486 Microprocessor, November 1989, §10.1 instruction encoding and
+clock-count summary). The mix and rounded CPI are our modelling assumptions,
+not Intel's performance claim.
+
+The board oscillator remains `device::clock::OSC = 315/22 MHz`, divided by 12
+for PIT input: **105,000,000/88 Hz**, about 1.193182 MHz. For integer kHz K:
+
+```
+steps/second = K * 1000 / CPI
+rate A/B = (K * 1000 * 88) / (CPI * 105,000,000)
+```
+
+Reduce A/B by the greatest common divisor. No frequency or rate rounding is
+performed; integer phase carries across CPU calls. `cpu.rate` remains the
+exact low-level override for independently calibrated workloads.
+
+| Common part / throughput class | `clock_mhz` | CPU model | Reduced rate A/B | Million steps/s |
+|---|---:|---|---|---:|
+| 286 nominal example | 4.77 | 80286 | 1749/1750 | 1.1925 |
+| 286 nominal example | 6 | 80286 | 44/35 | 1.5 |
+| 386DX-16 | 16 | 80386dx | 352/105 | 4 |
+| 386DX-20 | 20 | 80386dx | 88/21 | 5 |
+| 386DX-25 | 25 | 80386dx | 110/21 | 6.25 |
+| 386DX-33 | 33 | 80386dx | 242/35 | 8.25 |
+| 386DX-40 | 40 | 80386dx | 176/21 | 10 |
+| 486SX-25 throughput class | 25 | either 486 DX model | 220/21 | 12.5 |
+| 486SX-33 / 486DX-33 throughput class | 33 | either 486 DX model | 484/35 | 16.5 |
+| DX2-50 throughput class | 50 | either 486 DX model | 440/21 | 25 |
+| DX2-66 throughput class | 66 | either 486 DX model | 968/35 | 33 |
+| DX4-100 throughput class | 100 | either 486 DX model | 880/21 | 50 |
+
+Numbers suffice as presets: aliases would carry no additional timing data.
+The SX, DX2 and DX4 labels describe only integer throughput, not new CPU
+models, clock multipliers, cache arrangements or FPU choices. Both generic
+boards and their shipped SeaBIOS profiles select **33 MHz**. The 486 board
+models a DX, so a DX-33 is the default rather than silently naming it a DX2.
+
+An unset IBM AT still means **8/13**, about 0.7343 million steps/s. This
+calibration includes the board's effective wait-state/refresh behaviour and
+is not equivalent to the nominal 6 MHz/CPI-4 label. Setting `clock_mhz=6`
+explicitly selects 1.5 million steps/s; it is not a replacement for the AT's
+BIOS calibration. IBM AT fixtures and golden expectations stay unchanged.
+
+Turbo is an alternate clock, for example:
+
+```toml
+[cpu]
+model = "80386dx"
+clock_mhz = 16
+turbo = { clock_mhz = 33 }
+```
+
+Power-on selects the base clock. `unemupc run --machine FILE --turbo` and
+`CreateRequest.options = [("turbo", "true")]` select the alternate position
+for that run. `false` is the default. Enabling turbo without its table is an
+error. `Machine::set_turbo(bool)` switches internally between machine calls;
+`turbo_enabled()` reports the position. Alternate clocks may also be slower,
+matching a button's physical alternate position without assuming its polarity.
+No host pacing is implied by nominal MHz.
+
+Switching preserves the emitted device clock and completed steps. The running
+sub-tick phase `r/A` is converted to `floor(r*A_new/A_old)/A_new` (loss less
+than one virtual tick per actual rate change). Halted ticks are retained
+separately at each rate, and policy time floors only their combined instruction
+equivalents. Fractional halted credit survives any number of switches exactly;
+future halted time uses the selected rate.
+This prevents retrospective changes to run caps. Repeating the selected
+position preserves both remainders. The selected position, elapsed time and
+fractional credits survive CPU reset; rebuilding a machine starts again at the
+requested run position.
+
+The frontend contract currently has no live option-update operation. A live
+button would need a versioned run-control operation carrying a boolean turbo
+position, applied at a completed machine-call boundary and returning success
+or an unsupported/unconfigured error. No contract operation or GUI control is
+added here.
+
+The project-owned `cpu_speed_golden` guest counts INC/JMP iterations between
+4096-clock IRQ0 edges, excludes its setup interval, and checks the fixed
+counts plus the formula (ten ISR steps per interval). It covers 16, 25 and
+33 MHz and repeatable on/off switching at fixed completed-step boundaries,
+including different caller chunk sizes. Its CPU pin is
+`5a17667764080c2fe7a33d446584a3e175b7923d`.
+
+### Measured speed ceilings
+
+**MEASURED 2026-11-24**, ARM64 macOS development-host class (`uname -sm`:
+Darwin arm64), release build, CPU pin
+`5a17667764080c2fe7a33d446584a3e175b7923d`. No private host identity is used.
+The headless `pc-harness` example `cpu_speed_ceiling` runs the project-owned
+`cpu-ceiling.asm` ROM: INC, ADD, XOR, DEC and JMP on registers, interrupts
+disabled. Motherboard devices remain attached and clocked; no display is
+captured. Protected entry uses LGDT/LMSW and a far jump; the probe verifies
+MSW.PE before timing. The 286 runs protected16 and the 386/486 protected32.
+Each case warms up 100,000 instructions, then times three successive
+10,000,000-retired-instruction intervals with host `Instant`, outside the
+emulator execution path. Compilation and assembly are excluded. Both guest
+loops and their generated bytes are project-owned and reproducible with NASM.
+
+| Board / configured clock | Real16 million instructions/s (min–max) | Protected million instructions/s (min–max) |
+|---|---:|---:|
+| IBM 5170 / calibrated 8/13 | 98.772–100.417 | 9.967–10.008 (16-bit) |
+| Generic 386 ISA / 33 MHz | 96.295–96.882 | 8.082–8.102 (32-bit) |
+| Generic 486 ISA / 33 MHz | 99.158–100.528 | 7.908–7.944 (32-bit) |
+
+**DERIVED from the minimum measured rates:** the real16 loop has headroom
+for every listed preset, including 386DX-40 (10 million steps/s) and DX4-100
+(50 million steps/s). In the protected loop, the IBM AT calibration and
+nominal 6/8 MHz settings fit; the 386 fits 16/20/25 MHz but 33 MHz requires
+8.25 million steps/s, just above the measured ceiling, and 40 MHz requires
+10 million. None of the listed 486 presets fits this protected32 loop:
+even 25 MHz requests 12.5 million steps/s. This is a ceiling for these tight
+loops on this shared host, not a guarantee for BIOS boot, games, memory-heavy
+code or floating point. The nominal clock controls virtual throughput even
+when the host cannot keep real time; no wall-clock pacing is introduced.
+
+Reproduce with `cargo run --offline --release -p pc-harness --example cpu_speed_ceiling`
+inside the project devShell (shared hosts use their mandated Cargo wrapper).
+Assemble `tests/fixtures/cpu-ceiling.asm` under `crates/pc-harness/` with
+`nasm -f bin`, adding `-DPROTECTED` for protected16 and both `-DPROTECTED`
+and `-DPROTECTED32` for protected32. `cpu-speed.asm` uses `nasm -f bin`.
+
+### Clock-related golden changes
+
+Only the generic ISA configurations change clock rate. The IBM AT runtime
+traces, retired counts, screen hashes and hardware fingerprints retain their
+existing expected values. The hardware fingerprint helper omits the newly
+added absent `turbo: None` debug field, so that adding an optional clock does
+not change the identity of an unconfigured IBM AT.
+
+**MEASURED at CPU pin `5a17667764080c2fe7a33d446584a3e175b7923d`:**
+
+| Golden observation | Former rate-one value | 386DX-33 | Both 486 DX-33 variants | Reason |
+|---|---:|---:|---:|---|
+| `i386_pm_test_golden` retired | 8,120 | 31,781 | — | More instructions in IRQ0 wait loops per PIT tick. |
+| SeaVGABIOS INT 10h mode 3/13h probe retired | 6,326,518 | 8,528,672 | 11,102,827 | SeaBIOS timer waits and boot loops retire more steps; both pixel hashes are unchanged. |
+| FreeDOS floppy prompt retired | 8,518,775 | 10,718,776 | 13,218,823 | Timer waits and prompt polling at the new rate. |
+| FreeDOS with IDE prompt retired | 8,516,488 | 10,716,489 | 13,316,536 | Timer waits, ATA boot setup and prompt polling at the new rate. |
+| FreeDOS DIR C: returned VGA prompt retired | 11,191,270 | 13,491,318 | 16,391,365 | Faster clock, ATA work and keyboard injection after the initial serial prompt finishes. |
+
+The generic test budgets scale the former rate-one caps by A/B, rounded up,
+to retain the same virtual-time allowance. Initial display polls may precede
+VGA text-mode initialization and wait for text rather than failing on a pixel
+frame. COM1 can still be shifting the prompt after VGA stores finish; the
+probe now waits a bounded 100 ms of virtual time for queued serial characters
+before typing a command. Retired goldens are captured at the VGA prompt
+before that drain. FreeDOS's screen includes the RTC time printed during startup; the
+new throughput changes that time and therefore its full-screen hashes:
+
+| Screen | Former SHA-256 | 386DX-33 SHA-256 | Both 486 DX-33 variants SHA-256 |
+|---|---|---|---|
+| Floppy prompt | `23ae5be81a6c6b1c0059f930424a545d63ec92d548d3f1031b86919e1abf8ef5` | `0fbdd8acac3037c89d098ff1a21d43bd767b0ca7a81c18b1ecaebb70907282b2` | `8456147fac982428ea6abeff04a22770f703af09e4ecfb82f087034826177a7e` |
+| IDE prompt | `4a873e897c0d8e8f3d49a6ae2a507f8d5af59b4b507f5a312ce0242c16c9c9de` | `998d3feaae41ac8dd1c9ae964923cc87d4b6f1e353c45c02646780db971920d5` | `84c6ed34f1a68f63adcaf3dd7e25b1ba7d0ead0f299307e80b207ebc8bfdfc7e` |
+| DIR C: returned prompt | `b133385b48060a0c721bfdc1f4f572525bea81eb94303d74b25d9a5e0f24b323` | `ea7570aa1cfd5cd6419330d97d46169a947519686e2d92cb26ec099e77315165` | `69417229e1b3356358125a6f9fdbfe8ebb65112b7847f18f32d6b13912bc59be` |
+
+The six generic repository-file hardware fingerprints change because the
+clock ratio is part of hardware identity:
+
+| Machine | Former fingerprint | New fingerprint |
+|---|---|---|
+| `generic-386-freedos.toml` | `9f1c1f819169673c59131c097b33720b71d3f3bb151fee25d42e489ee9b2338c` | `8e5108608b54b5dc7995ca6d0fe2e7d47669c6a50d7c9732ea2027fa2993a212` |
+| `generic-386-ide.toml` | `49d6dcf2620f0fceb502015e04f19257874d6dffeb207d0ac7de577c6a7263db` | `8e3d00fb265c98f756cb78af21875862cc487c3123a8a3494315fb3388fee788` |
+| `generic-386-seabios.toml` | `fb5592babbaa5a31093d1501e6a070dc6af8ee4634cf713f4446a8a4425a6265` | `61cf0bc019ca5f066c88f38db91de63492fc27b3ea225f95882daa06305b51d0` |
+| `generic-486-freedos.toml` | `e71c732d666f2ecb48e4a7655554f9d3227a4db10efc3950aa23c99d7fda988d` | `15d8146732683afe9e9ff865d82aafab9441f35000d378cdafb914893e6cb94e` |
+| `generic-486-ide.toml` | `565fc6eb2eca9b325cdd75bf59eadd826308be6efdb3f41dd602dd274339683b` | `ee6e31860a9cb03a4339c3b7696f6f969ffe867d2c9e8ad8954a8bf355dd1efa` |
+| `generic-486-seabios.toml` | `18df36806e3236a87a678d52be3e5e5bf8809ba4475f2280d6ad8491899eaf9d` | `d43e0b355235b30aec8244dec0efb47cd7d2c843d38c10a68466329740c2f54a` |
 
 ### `[memory]`
 
@@ -1885,7 +2098,6 @@ spike owns the board-model and firmware entries.
 | `[board]` | `a20 = "kbc" \| "port-92" \| "both"`, `kbc = "at" \| "ps2"`, `keyboard = "xt-83" \| "at-84" \| "mf2-101"`, `keyboard_layout`, `dip_switches` (XT), `chipset` (a table of chipset registers), `speaker` |
 | `[board.rtc]` | `start = "host"` (rejected: this is the run option `--rtc-start host`) |
 | `[cpu] model` | `8086`, `8088`, `v20`, `80386sx`, `80486`, `pentium`, `pentium-ii`, `pentium-iii` |
-| `[cpu]` | `turbo = { rate, initial = "on" \| "off" }` |
 | `[memory]` | `shadow`, `umb`, `upper = "ram" \| "open-bus"` |
 | `[firmware]` | `basic = { image, base }` (ROM BASIC); `provides` values `video`, `serial`, `network-boot` |
 | `[[card]] kind`, video | `hercules`, `cga`, `ega`, `svga-et4000`, `svga-s3-trio64`, `voodoo`, `voodoo2`, `banshee` |

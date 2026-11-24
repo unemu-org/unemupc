@@ -81,13 +81,23 @@ pub struct Rtc {
 }
 
 timed_table! {
-    /// CPU selection and instruction-to-PIT ratio, never a cycle frequency.
+    /// CPU selection and approximate nominal clock or exact instruction rate.
     pub struct Cpu {
         pub model: Option<CpuModel>,
         pub rate: Option<CpuRate>,
+        #[serde(default, deserialize_with = "values::reject_present")]
+        pub clock_mhz: Option<ClockMhz>,
         pub fpu: Option<FpuModel>,
-        #[serde(default, deserialize_with = "values::reject_turbo")] turbo: Option<Reserved>,
+        #[serde(default, deserialize_with = "values::reject_present")]
+        pub turbo: Option<Turbo>,
     }
+}
+
+/// Alternate button position; a clock is required when the table is present.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Turbo {
+    pub clock_mhz: ClockMhz,
 }
 
 /// RAM size overrides; alignment and board limits belong to config validation.

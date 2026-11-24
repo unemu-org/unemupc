@@ -59,14 +59,25 @@ impl BoardModel {
     /// The 6 MHz AT model is calibrated to 8/13 steps per PIT clock against
     /// IBM Personal Computer AT Technical Reference, BIOS TEST1 checkpoint 11
     /// (speed/refresh clocks); this is not a hardware instruction-cycle table.
-    /// See machine-config.md §CpuConfig and ClockConfig for the measured window.
+    /// Generic ISA boards use an approximate 33 MHz throughput: the modelled
+    /// 486 is a DX, so its default does not imply a DX2 multiplier.
+    /// See machine-config.md §CpuConfig and ClockConfig for the calibration.
     pub fn default_clock(self) -> crate::ClockConfig {
         match self {
             Self::Ibm5170 => crate::ClockConfig {
                 retired_per_pit_clock: 8,
                 retired_per_pit_clock_denominator: 13,
+                turbo: None,
             },
-            Self::Bare | Self::Generic386Isa | Self::Generic486Isa => crate::ClockConfig::default(),
+            Self::Generic386Isa => crate::ClockConfig::from_khz(
+                crate::CpuChip::I80386,
+                std::num::NonZeroU32::new(33_000).unwrap_or(std::num::NonZeroU32::MIN),
+            ),
+            Self::Generic486Isa => crate::ClockConfig::from_khz(
+                crate::CpuChip::I80486Dx,
+                std::num::NonZeroU32::new(33_000).unwrap_or(std::num::NonZeroU32::MIN),
+            ),
+            Self::Bare => crate::ClockConfig::default(),
         }
     }
 

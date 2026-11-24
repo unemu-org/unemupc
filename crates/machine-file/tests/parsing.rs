@@ -413,7 +413,6 @@ fn reserved_fields_values_and_outside_options_are_recognised() {
         ("[board]", "dip_switches", "[]", (3, 16)),
         ("[board]", "chipset", "{}", (3, 11)),
         ("[board]", "speaker", "true", (3, 11)),
-        ("[cpu]", "turbo", "{}", (3, 9)),
         ("[memory]", "shadow", "true", (3, 10)),
         ("[memory]", "umb", "true", (3, 7)),
         ("[memory]", "upper", "\"ram\"", (3, 9)),

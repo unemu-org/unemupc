@@ -39,8 +39,10 @@ view!(Board {
 view!(Cpu {
     model: Option<super::CpuModel>,
     rate: Option<super::CpuRate>,
+    clock_mhz: Option<super::ClockMhz>,
+    turbo: Option<super::Turbo>,
     fpu: Option<super::FpuModel>,
-} ignore { turbo, mhz, frequency, clock_hz, cycles, cycle_exact, wait_states, bus_mhz, memory_wait_states, timing });
+} ignore { mhz, frequency, clock_hz, cycles, cycle_exact, wait_states, bus_mhz, memory_wait_states, timing });
 
 view!(Memory {
     conventional_kib: Option<u32>,

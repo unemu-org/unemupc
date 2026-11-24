@@ -19,7 +19,7 @@ mod fixtures;
 const CPU_REV: &str = "5a17667764080c2fe7a33d446584a3e175b7923d";
 const IMAGE: &str = "i386-pm-test/i386-pm-test.bin";
 const CAP: u64 = 500_000;
-const GOLDEN_RETIRED: u64 = 8_120;
+const GOLDEN_RETIRED: u64 = 31_781;
 const EXPECTED: &str = "i386-pm-test\n\
 reset dh=03 ok\n\
 flags 12-15 0000/7000 ok\n\

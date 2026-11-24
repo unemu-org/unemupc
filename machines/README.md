@@ -6,7 +6,15 @@ register-level VGA and COM1. Both have 640 KiB conventional plus 15 MiB
 extended RAM. The board supplies 128-byte CMOS, port 92h, fw_cfg with
 `etc/sercon-port`, and the 402h debug console. Build the pinned firmware
 with `vendor/seabios/fetch.sh` in the firmware devShell. The diskless
-profiles reach `No bootable device.` and retain their existing goldens.
+profiles reach `No bootable device.`. Both select `cpu.clock_mhz = 33`: a
+386DX-33 class (8.25 million steps/s) or 486DX-33 class (16.5 million steps/s).
+These are approximate CPI-based throughput labels; the CPU models stay
+`80386dx`, `80486dx` and `80486dx-cpuid`. Set `cpu.turbo = { clock_mhz = 8 }`
+for an alternate clock and select it with `unemupc run --machine FILE --turbo`.
+The button can select either a slower or faster alternate clock. `cpu.rate`
+remains the exact override and conflicts with `clock_mhz` in the same layer.
+The IBM AT default remains its calibrated 8/13 rate. See
+[clock rules and presets](../backlog/docs/design/machine-files.md#nominal-cpu-clocks).
 
 `generic-386-freedos.toml` and `generic-486-freedos.toml` extend those
 profiles with the pinned FreeDOS 1.44 MB floppy in A:. Their `-ide.toml`

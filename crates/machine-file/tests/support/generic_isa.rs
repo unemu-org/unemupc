@@ -9,6 +9,18 @@ use assembly::{BoardModel, CmosRam, CpuChip, DeviceId, DeviceKind, FirmwareStatu
 use cpu::Cpu;
 use std::path::PathBuf;
 
+fn budget(chip: CpuChip, previous_steps: u64) -> u64 {
+    let board = if chip == CpuChip::I80386 {
+        BoardModel::Generic386Isa
+    } else {
+        BoardModel::Generic486Isa
+    };
+    let clock = board.default_clock();
+    // Keep the old rate-one virtual-time allowance when nominal MHz increases
+    // the instructions completed during SeaBIOS's fixed timer waits.
+    (previous_steps * clock.retired_per_pit_clock).div_ceil(clock.retired_per_pit_clock_denominator)
+}
+
 fn shipped(chip: CpuChip) -> Option<assembly::MachineConfig> {
     assert!(
         include_str!("../../../../Cargo.lock").contains("5a17667764080c2fe7a33d446584a3e175b7923d")
@@ -352,7 +364,7 @@ pub fn seabios_reaches_diskless_post_end(chip: CpuChip) {
     let mut machine = machine_file::assemble_with_observation(&config, &policy).unwrap();
     machine.machine.enable_delivery_log().unwrap();
     let started = std::time::Instant::now();
-    let result = machine.machine.run_bounded(Some(10_000_000));
+    let result = machine.machine.run_bounded(Some(budget(chip, 10_000_000)));
     let serial = machine
         .observation
         .drain_bytes(DeviceId::Uart, device::ByteStreamKind::SerialTx)
@@ -450,7 +462,9 @@ pub fn seabios_keyboard_reset_reaches_resume(chip: CpuChip) {
     let mut assembled = machine_file::assemble_with_observation(&config, &policy).unwrap();
     assembled.machine.enable_delivery_log().unwrap();
     let started = std::time::Instant::now();
-    let result = assembled.machine.run_bounded(Some(10_000_000));
+    let result = assembled
+        .machine
+        .run_bounded(Some(budget(chip, 10_000_000)));
     result.unwrap();
     let post = assembled
         .observation
@@ -474,13 +488,19 @@ pub fn seabios_keyboard_reset_reaches_resume(chip: CpuChip) {
         .port_write(0x64, 1, 0xFE)
         .unwrap();
     assert_eq!(
-        assembled.machine.run_bounded(Some(10_000_000)).unwrap(),
+        assembled
+            .machine
+            .run_bounded(Some(budget(chip, 10_000_000)))
+            .unwrap(),
         machine::RunOutcome::ResetRequested
     );
     let mut log = Vec::new();
     loop {
-        let outcome = assembled.machine.run_bounded(Some(20_000_000)).unwrap();
-        assert!(assembled.machine.cpu().retired() <= 20_000_000);
+        let outcome = assembled
+            .machine
+            .run_bounded(Some(budget(chip, 20_000_000)))
+            .unwrap();
+        assert!(assembled.machine.cpu().retired() <= budget(chip, 20_000_000));
         log.extend(
             assembled
                 .observation
@@ -531,7 +551,9 @@ pub fn seabios_int15_memory_matches_e820(chip: CpuChip) {
         let mut assembled = machine_file::assemble(&config).unwrap();
         assembled.machine.enable_delivery_log().unwrap();
         let started = std::time::Instant::now();
-        let outcome = assembled.machine.run_bounded(Some(10_000_000));
+        let outcome = assembled
+            .machine
+            .run_bounded(Some(budget(chip, 10_000_000)));
         eprintln!(
             "{} INT 15h {extended} KiB extended: {outcome:?}; retired: {}; wall: {:?}",
             chip.name(),
@@ -697,7 +719,7 @@ pub fn seabios_int10_modes_have_golden_frames(chip: CpuChip) {
     let mut assembled = machine_file::assemble_with_observation(&config, &policy).unwrap();
     let started = std::time::Instant::now();
     let mut marker = [0; 2];
-    for cap in (10_000..=10_000_000).step_by(10_000) {
+    for cap in (10_000..=budget(chip, 10_000_000)).step_by(10_000) {
         assembled.machine.run_bounded(Some(cap)).unwrap();
         assembled
             .machine
@@ -728,7 +750,10 @@ pub fn seabios_int10_modes_have_golden_frames(chip: CpuChip) {
         started.elapsed()
     );
     assert_eq!(
-        assembled.machine.run_bounded(Some(10_000_000)).unwrap(),
+        assembled
+            .machine
+            .run_bounded(Some(budget(chip, 10_000_000)))
+            .unwrap(),
         machine::RunOutcome::Halted
     );
     assembled
@@ -746,7 +771,14 @@ pub fn seabios_int10_modes_have_golden_frames(chip: CpuChip) {
         assert_eq!(*index, offset as u8, "mode 13h pixel {offset}");
     }
     let graphics_hash = assembly::test_support::graphics_frame_sha256(&graphics);
-    assert_eq!(assembled.machine.cpu().retired(), 6_326_518);
+    assert_eq!(
+        assembled.machine.cpu().retired(),
+        if chip == CpuChip::I80386 {
+            8_528_672
+        } else {
+            11_102_827
+        }
+    );
     assert_eq!(
         graphics_hash,
         "825d409a82c363538f60248d866bb8462c28eb7ebdb0499bbd0188c6d0740f27"
@@ -876,7 +908,8 @@ pub fn seabios_storage_configuration(chip: CpuChip) {
 
 fn freedos_text(assembled: &assembly::AssembledMachine) -> String {
     let video::Frame::Text(grid) = assembled.capture_text(DeviceId::Vga).unwrap().frame else {
-        panic!("expected VGA text");
+        // Earlier instruction polls can precede SeaVGABIOS's text-mode setup.
+        return String::new();
     };
     let text = grid.rows_as_strings().join("\n");
     if text.contains("A:\\>") {
@@ -888,6 +921,41 @@ fn freedos_text(assembled: &assembly::AssembledMachine) -> String {
 fn text_sha256(text: &str) -> String {
     use sha2::Digest;
     format!("{:x}", sha2::Sha256::digest(text.as_bytes()))
+}
+
+/// PC16550D datasheet, transmitter operation and character timing.
+fn serial_until(
+    assembled: &mut assembly::AssembledMachine,
+    chip: CpuChip,
+    needle: &[u8],
+) -> Vec<u8> {
+    use device::clock::{ClockDomain, Ratio, TICKS_PER_PIT_CLOCK};
+    let clocks = ClockDomain::from_hz(Ratio::new(1000, 1))
+        .ticks(1)
+        .div_ceil(TICKS_PER_PIT_CLOCK);
+    let idle = assembled.machine.idle_limit();
+    assembled.machine.set_idle_limit(Some(clocks));
+    let mut bytes = Vec::new();
+    // VGA stores are immediate, whereas COM1 still has a timed shift register.
+    // Allow up to 100 ms of guest time for the final queued characters.
+    for _ in 0..100 {
+        bytes.extend(
+            assembled
+                .observation
+                .drain_bytes(DeviceId::Uart, device::ByteStreamKind::SerialTx)
+                .unwrap(),
+        );
+        if bytes.windows(needle.len()).any(|window| window == needle) {
+            assembled.machine.set_idle_limit(idle);
+            return bytes;
+        }
+        let cap = assembled.machine.virtual_time() + budget(chip, clocks);
+        assembled.machine.run_bounded(Some(cap)).unwrap();
+    }
+    panic!(
+        "serial output did not finish: {}",
+        String::from_utf8_lossy(&bytes)
+    );
 }
 
 /// SeaBIOS rel-1.17.0, floppy.c floppy_read and ata.c ata_scan; ATA-2,
@@ -922,7 +990,7 @@ pub fn seabios_freedos_reaches_prompt(chip: CpuChip, ide: bool) {
     let started = std::time::Instant::now();
     let mut entered = false;
     let mut prompt = None;
-    for cap in (100_000..=20_000_000).step_by(100_000) {
+    for cap in (100_000..=budget(chip, 20_000_000)).step_by(100_000) {
         let result = assembled.machine.run_bounded(Some(cap));
         if let Err(machine::MachineError::Cpu(error)) = &result {
             eprintln!(
@@ -962,22 +1030,25 @@ pub fn seabios_freedos_reaches_prompt(chip: CpuChip, ide: bool) {
     );
     assert_eq!(
         text_sha256(&screen),
-        if ide {
-            "4a873e897c0d8e8f3d49a6ae2a507f8d5af59b4b507f5a312ce0242c16c9c9de"
-        } else {
-            "23ae5be81a6c6b1c0059f930424a545d63ec92d548d3f1031b86919e1abf8ef5"
+        match (chip == CpuChip::I80386, ide) {
+            (true, false) => "0fbdd8acac3037c89d098ff1a21d43bd767b0ca7a81c18b1ecaebb70907282b2",
+            (true, true) => "998d3feaae41ac8dd1c9ae964923cc87d4b6f1e353c45c02646780db971920d5",
+            (false, false) => "8456147fac982428ea6abeff04a22770f703af09e4ecfb82f087034826177a7e",
+            (false, true) => "84c6ed34f1a68f63adcaf3dd7e25b1ba7d0ead0f299307e80b207ebc8bfdfc7e",
         }
     );
     assert!(screen.contains("FreeDOS kernel 2044"));
     assert!(screen.contains("FreeCom version 0.86"));
     assert_eq!(
         assembled.machine.cpu().retired(),
-        if ide { 8_516_488 } else { 8_518_775 }
+        match (chip == CpuChip::I80386, ide) {
+            (true, false) => 10_718_776,
+            (true, true) => 10_716_489,
+            (false, false) => 13_218_823,
+            (false, true) => 13_316_536,
+        }
     );
-    let serial = assembled
-        .observation
-        .drain_bytes(DeviceId::Uart, device::ByteStreamKind::SerialTx)
-        .unwrap();
+    let serial = serial_until(&mut assembled, chip, b"A:\\>");
     let debug = assembled
         .observation
         .drain_bytes(DeviceId::DebugConsole, device::ByteStreamKind::DebugConsole)
@@ -1002,10 +1073,11 @@ pub fn seabios_freedos_reaches_prompt(chip: CpuChip, ide: bool) {
             0x1c, 0x9c,
         ],
     );
-    for dir_cap in ((cap + 100_000)..=20_000_000).step_by(100_000) {
+    for dir_cap in ((cap + 100_000)..=budget(chip, 20_000_000)).step_by(100_000) {
         assembled.machine.run_bounded(Some(dir_cap)).unwrap();
         let text = freedos_text(&assembled);
         if text.contains("MARKER") && text.lines().any(|line| line.trim() == "A:\\>") {
+            let retired = assembled.machine.cpu().retired();
             eprintln!(
                 "{} DIR C: retired: {}; wall: {:?}; text SHA-256: {}\n{text}",
                 chip.name(),
@@ -1019,16 +1091,24 @@ pub fn seabios_freedos_reaches_prompt(chip: CpuChip, ide: bool) {
                 .any(|line| line.split_whitespace().take(3).eq(["MARKER", "TXT", "29"])));
             assert_eq!(
                 text_sha256(&text),
-                "b133385b48060a0c721bfdc1f4f572525bea81eb94303d74b25d9a5e0f24b323"
+                if chip == CpuChip::I80386 {
+                    "ea7570aa1cfd5cd6419330d97d46169a947519686e2d92cb26ec099e77315165"
+                } else {
+                    "69417229e1b3356358125a6f9fdbfe8ebb65112b7847f18f32d6b13912bc59be"
+                }
             );
-            let serial = assembled
-                .observation
-                .drain_bytes(DeviceId::Uart, device::ByteStreamKind::SerialTx)
-                .unwrap();
+            let serial = serial_until(&mut assembled, chip, b"A:\\>");
             let serial = String::from_utf8_lossy(&serial);
             assert!(serial.contains("MARKER"));
             assert!(serial.contains("A:\\>"));
-            assert_eq!(assembled.machine.cpu().retired(), 11_191_270);
+            assert_eq!(
+                retired,
+                if chip == CpuChip::I80386 {
+                    13_491_318
+                } else {
+                    16_391_365
+                }
+            );
             return;
         }
     }

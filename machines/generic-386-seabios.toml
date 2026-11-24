@@ -12,7 +12,7 @@ nvram = "derived"
 
 [cpu]
 model = "80386dx"
-rate = 1
+clock_mhz = 33
 
 [memory]
 conventional_kib = 640

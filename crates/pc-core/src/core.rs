@@ -20,7 +20,7 @@ pub(crate) mod mount;
 #[path = "export.rs"]
 mod export;
 
-static OPTIONS: [OptionDescription; 2] = [
+static OPTIONS: [OptionDescription; 3] = [
     OptionDescription::new(
         "allow-unlisted-firmware",
         "Allow firmware outside the catalogue (true or false)",
@@ -28,6 +28,10 @@ static OPTIONS: [OptionDescription; 2] = [
     OptionDescription::new(
         "speaker-trace",
         "Record speaker diagnostics (true or false)",
+    ),
+    OptionDescription::new(
+        "turbo",
+        "Start with the alternate CPU clock selected (true or false)",
     ),
 ];
 
@@ -209,6 +213,7 @@ impl PcCore {
         check_type(request.platform, request.config)?;
         let mut options = assembly::AssemblyOptions::default();
         let mut trace = false;
+        let mut turbo = false;
         let mut seen = std::collections::BTreeSet::new();
         for &(key, value) in request.options {
             if !seen.insert(key) {
@@ -220,6 +225,7 @@ impl PcCore {
             let target = match key {
                 "allow-unlisted-firmware" => &mut options.allow_unlisted_firmware,
                 "speaker-trace" => &mut trace,
+                "turbo" => &mut turbo,
                 _ => {
                     return Err(Error::new(
                         ErrorKind::Usage,
@@ -239,6 +245,12 @@ impl PcCore {
         let content = mount::ContentCache::open(request.content, &required)?;
         let lowered = pc_config::launch::lower(&launch, &content, options)
             .map_err(|error| content.error().unwrap_or_else(|| config_error(error)))?;
+        if turbo && lowered.machine.clock.turbo.is_none() {
+            return Err(Error::new(
+                ErrorKind::Usage,
+                "PC option turbo=true requires cpu.turbo.clock_mhz",
+            ));
+        }
         let policy = assembly::ObservationPolicy {
             routes: [assembly::DeviceId::Mda, assembly::DeviceId::Vga]
                 .into_iter()
@@ -279,20 +291,33 @@ impl PcCore {
                 }
             }
         }
-        let assembled = assembly::assemble_mounted(&mounted, &policy, options, mount.clone())
+        let mut assembled = assembly::assemble_mounted(&mounted, &policy, options, mount.clone())
             .map_err(|error| {
-                mount.error().unwrap_or_else(|| {
-                    Error::new(
-                        match error {
-                            assembly::AssemblyError::Journal { .. }
-                            | assembly::AssemblyError::NvramJournal { .. } => ErrorKind::Storage,
-                            _ => ErrorKind::Config,
-                        },
-                        error.to_string(),
-                    )
-                })
-            })?;
-        let mut machine = crate::PcMachine::from_assembled(&lowered.machine, assembled)?;
+            mount.error().unwrap_or_else(|| {
+                Error::new(
+                    match error {
+                        assembly::AssemblyError::Journal { .. }
+                        | assembly::AssemblyError::NvramJournal { .. } => ErrorKind::Storage,
+                        _ => ErrorKind::Config,
+                    },
+                    error.to_string(),
+                )
+            })
+        })?;
+        if !assembled.machine.set_turbo(turbo) {
+            return Err(Error::new(
+                ErrorKind::Usage,
+                "PC option turbo=true requires cpu.turbo.clock_mhz",
+            ));
+        }
+        let mut active = lowered.machine.clone();
+        if turbo {
+            if let Some((numerator, denominator)) = active.clock.turbo {
+                active.clock.retired_per_pit_clock = numerator;
+                active.clock.retired_per_pit_clock_denominator = denominator;
+            }
+        }
+        let mut machine = crate::PcMachine::from_assembled(&active, assembled)?;
         machine.contract_failure = Some(mount.failure());
         Ok(machine)
     }

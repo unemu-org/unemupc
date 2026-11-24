@@ -102,6 +102,9 @@ pub const MACHINE_KEYS: &[Row] = &[
     ("machine.cpu", BASELINE),
     ("machine.cpu.model", BASELINE),
     ("machine.cpu.rate", BASELINE),
+    ("machine.cpu.clock_mhz", NEXT_RELEASE),
+    ("machine.cpu.turbo", NEXT_RELEASE),
+    ("machine.cpu.turbo.clock_mhz", NEXT_RELEASE),
     ("machine.cpu.fpu", BASELINE),
     ("machine.memory", BASELINE),
     ("machine.memory.conventional_kib", BASELINE),
@@ -576,11 +579,8 @@ mod tests {
             struct_fields::<schema::NvramImage>(),
             &[&["sha256", "write", "journal", "keep_generations"]],
         );
-        check(
-            "machine.cpu",
-            struct_fields::<schema::Cpu>(),
-            &[TIMING, &["turbo"]],
-        );
+        check("machine.cpu", struct_fields::<schema::Cpu>(), &[TIMING]);
+        check("machine.cpu.turbo", struct_fields::<schema::Turbo>(), &[]);
         check(
             "machine.memory",
             struct_fields::<schema::Memory>(),

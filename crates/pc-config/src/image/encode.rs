@@ -46,6 +46,18 @@ impl Field for CpuRate {
         format!("{}/{}", self.steps, self.pit_clocks).into()
     }
 }
+impl Field for ClockMhz {
+    fn value(&self) -> Value {
+        Value::Float(f64::from(self.0.get()) / 1000.0)
+    }
+}
+impl Field for Turbo {
+    fn value(&self) -> Value {
+        let mut table = Table::new();
+        table.insert("clock_mhz".into(), self.clock_mhz.value());
+        table.into()
+    }
+}
 impl<const MAX: u16> Field for NumberOrNone<MAX> {
     fn value(&self) -> Value {
         match self {
@@ -105,7 +117,13 @@ table!(Board {
     rtc,
     mouse
 });
-table!(Cpu { model, rate, fpu });
+table!(Cpu {
+    model,
+    rate,
+    clock_mhz,
+    turbo,
+    fpu
+});
 table!(Memory {
     conventional_kib,
     extended_kib

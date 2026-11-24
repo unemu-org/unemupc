@@ -104,6 +104,18 @@ pub fn run_machine(
     output: &mut impl Write,
     errors: &mut impl Write,
 ) -> anyhow::Result<u8> {
+    run_machine_with_turbo(loaded, limits, false, print, output, errors)
+}
+
+/// Run a prepared machine with an initial turbo-button position.
+pub fn run_machine_with_turbo(
+    loaded: machine_file::LoadedMachine,
+    limits: (u64, u64, Option<u64>, bool),
+    turbo: bool,
+    print: Option<&str>,
+    output: &mut impl Write,
+    errors: &mut impl Write,
+) -> anyhow::Result<u8> {
     use assembly::{DeviceId, ObservationPolicy, ObservationRequest, OutputKind, RunPolicy};
     let (max_steps, idle_limit, diag_at, trace_exceptions) = limits;
     let printable =
@@ -145,6 +157,10 @@ pub fn run_machine(
         });
     }
     let mut assembled = loaded.assemble(&observation)?;
+    anyhow::ensure!(
+        assembled.machine.set_turbo(turbo),
+        "--turbo requires cpu.turbo.clock_mhz"
+    );
     for warning in &assembled.unlisted_firmware {
         writeln!(errors, "{warning}")?;
     }

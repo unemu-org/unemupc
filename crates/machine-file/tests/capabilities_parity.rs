@@ -128,7 +128,9 @@ fn fingerprint(mut config: MachineConfig) -> String {
             source_digest(&mut medium.image, &mut digest);
         }
     }
-    digest.update(format!("{config:?}"));
+    // An absent alternate clock preserves the existing hardware fingerprint;
+    // a configured turbo ratio still participates in the debug projection.
+    digest.update(format!("{config:?}").replace(", turbo: None", ""));
     format!("{:x}", digest.finalize())
 }
 
@@ -213,12 +215,12 @@ fn repository_machine_file_parity() {
         ("machines/at-games.toml".into(), "803c59aaa00a7b9c78a66a52ea37193d7bde6e5bb63a4077322e5f3e52e02c74".into()),
         // The open AT BIOS's mono display switch.
         ("machines/at-ide.toml".into(), "e42872c37de7d3674033a09efaf304ff1e47f95392af3baa9f2ed2553ab8a60d".into()),
-        ("machines/generic-386-freedos.toml".into(), "9f1c1f819169673c59131c097b33720b71d3f3bb151fee25d42e489ee9b2338c".into()),
-        ("machines/generic-386-ide.toml".into(), "49d6dcf2620f0fceb502015e04f19257874d6dffeb207d0ac7de577c6a7263db".into()),
-        ("machines/generic-386-seabios.toml".into(), "fb5592babbaa5a31093d1501e6a070dc6af8ee4634cf713f4446a8a4425a6265".into()),
-        ("machines/generic-486-freedos.toml".into(), "e71c732d666f2ecb48e4a7655554f9d3227a4db10efc3950aa23c99d7fda988d".into()),
-        ("machines/generic-486-ide.toml".into(), "565fc6eb2eca9b325cdd75bf59eadd826308be6efdb3f41dd602dd274339683b".into()),
-        ("machines/generic-486-seabios.toml".into(), "18df36806e3236a87a678d52be3e5e5bf8809ba4475f2280d6ad8491899eaf9d".into()),
+        ("machines/generic-386-freedos.toml".into(), "8e5108608b54b5dc7995ca6d0fe2e7d47669c6a50d7c9732ea2027fa2993a212".into()),
+        ("machines/generic-386-ide.toml".into(), "8e3d00fb265c98f756cb78af21875862cc487c3123a8a3494315fb3388fee788".into()),
+        ("machines/generic-386-seabios.toml".into(), "61cf0bc019ca5f066c88f38db91de63492fc27b3ea225f95882daa06305b51d0".into()),
+        ("machines/generic-486-freedos.toml".into(), "15d8146732683afe9e9ff865d82aafab9441f35000d378cdafb914893e6cb94e".into()),
+        ("machines/generic-486-ide.toml".into(), "ee6e31860a9cb03a4339c3b7696f6f969ffe867d2c9e8ad8954a8bf355dd1efa".into()),
+        ("machines/generic-486-seabios.toml".into(), "d43e0b355235b30aec8244dec0efb47cd7d2c843d38c10a68466329740c2f54a".into()),
         ("machines/presets/ibm-5170.toml".into(), "resolve:<repo>/machines/presets/ibm-5170.toml:16: firmware.bios.image: required fields are missing: firmware.bios.image (<repo>/machines/presets/ibm-5170.toml:16); inheritance chain: <repo>/machines/presets/ibm-5170.toml".into()),
     ];
     assert_eq!(observed, expected);

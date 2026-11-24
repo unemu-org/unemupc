@@ -256,6 +256,17 @@ pub(crate) fn drive_label(drive: &Drive) -> String {
 
 fn validate_layer(document: &MachineFile, origins: &Origins) -> Result<(), LowerError> {
     pc_config::bindings::validate_sources(document, origins)?;
+    if document
+        .cpu
+        .as_ref()
+        .is_some_and(|cpu| cpu.rate.is_some() && cpu.clock_mhz.is_some())
+    {
+        return Err(error(
+            origins,
+            "cpu.clock_mhz",
+            "cpu.rate and cpu.clock_mhz are mutually exclusive",
+        ));
+    }
     if let Some(f) = &document.firmware {
         for (field, rom) in f
             .bios
@@ -471,7 +482,25 @@ macro_rules! table {
 }
 table!(Board, [model, post_port, mouse, display_switch], [rtc]);
 table!(Rtc, [start], [nvram]);
-table!(Cpu, [model, rate, fpu], []);
+impl Merge for Cpu {
+    fn merge(&mut self, child: Self, m: &mut Merger<'_>) {
+        // A child selecting a different clock form replaces the inherited
+        // selection. Two forms in the same layer remain a positioned error.
+        if child.clock_mhz.is_some() && child.rate.is_none() {
+            self.rate = None;
+            m.out.remove_subtree(&join(&m.to, "rate"));
+        }
+        if child.rate.is_some() && child.clock_mhz.is_none() {
+            self.clock_mhz = None;
+            m.out.remove_subtree(&join(&m.to, "clock_mhz"));
+        }
+        m.scalar(&mut self.model, child.model, "model");
+        m.scalar(&mut self.rate, child.rate, "rate");
+        m.scalar(&mut self.clock_mhz, child.clock_mhz, "clock_mhz");
+        m.scalar(&mut self.turbo, child.turbo, "turbo");
+        m.scalar(&mut self.fpu, child.fpu, "fpu");
+    }
+}
 table!(Memory, [conventional_kib, extended_kib], []);
 table!(Firmware, [option_roms], [bios]);
 impl Merge for Rom {

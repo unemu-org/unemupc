@@ -1615,11 +1615,6 @@ fn lower_tracked_mode<R: ImageReader>(
             ),
         ));
     }
-    let mut clock = board.default_clock();
-    if let Some(rate) = document.cpu.as_ref().and_then(|cpu| cpu.rate) {
-        clock.retired_per_pit_clock = rate.steps.get();
-        clock.retired_per_pit_clock_denominator = rate.pit_clocks.get();
-    }
     if board == BoardModel::Generic486Isa
         && document.cpu.as_ref().and_then(|cpu| cpu.model).is_none()
     {
@@ -1640,6 +1635,28 @@ fn lower_tracked_mode<R: ImageReader>(
         v1::CpuModel::I80486Dx => CpuChip::I80486Dx,
         v1::CpuModel::I80486DxCpuid => CpuChip::I80486DxCpuid,
     };
+    let cpu = document.cpu.as_ref();
+    if cpu.is_some_and(|c| c.rate.is_some() && c.clock_mhz.is_some()) {
+        return Err(context.error(
+            "cpu.clock_mhz",
+            "cpu.rate and cpu.clock_mhz are mutually exclusive",
+        ));
+    }
+    let mut clock = board.default_clock();
+    if let Some(mhz) = cpu.and_then(|c| c.clock_mhz) {
+        clock = assembly::ClockConfig::from_khz(chip, mhz.0);
+    }
+    if let Some(rate) = cpu.and_then(|c| c.rate) {
+        clock.retired_per_pit_clock = rate.steps.get();
+        clock.retired_per_pit_clock_denominator = rate.pit_clocks.get();
+    }
+    if let Some(turbo) = cpu.and_then(|c| c.turbo.as_ref()) {
+        let alternate = assembly::ClockConfig::from_khz(chip, turbo.clock_mhz.0);
+        clock.turbo = Some((
+            alternate.retired_per_pit_clock,
+            alternate.retired_per_pit_clock_denominator,
+        ));
+    }
     let display_switch = match document
         .board
         .as_ref()
