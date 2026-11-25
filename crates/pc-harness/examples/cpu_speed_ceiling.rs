@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Host-only headless throughput measurement. Intel 80286 and 80287
 //! Programmer's Reference Manual, System Initialization (protected-mode entry).
+//! Intel 80386 Programmer's Reference Manual §5.1 (segment translation) and §5.2
+//! (page translation) define the additional 32-bit cases.
 //! See `backlog/docs/design/machine-files.md` §Measured speed ceilings.
 
 use assembly::{AssemblyOptions, BoardModel};
-use cpu::Cpu;
+use cpu::{Cpu, CpuReg};
 use machine::RunOutcome;
 use std::time::Instant;
 #[path = "../tests/support/speed.rs"]
@@ -12,7 +14,7 @@ mod speed;
 
 fn main() {
     assert!(
-        include_str!("../../../Cargo.lock").contains("8ebba63712ad34cb51208302e65597189594b583")
+        include_str!("../../../Cargo.lock").contains("ab193c1591e3876db0e5042282f1bc1871b7d75c")
     );
     for board in [
         BoardModel::Ibm5170,
@@ -38,10 +40,20 @@ fn main() {
             protected,
         ];
         if board != BoardModel::Ibm5170 {
-            cases.push((
-                "paged32",
-                include_bytes!("../tests/fixtures/cpu-ceiling-paged32.bin").as_slice(),
-            ));
+            cases.extend_from_slice(&[
+                (
+                    "paged32",
+                    include_bytes!("../tests/fixtures/cpu-ceiling-paged32.bin").as_slice(),
+                ),
+                (
+                    "flat32",
+                    include_bytes!("../tests/fixtures/cpu-ceiling-flat32.bin").as_slice(),
+                ),
+                (
+                    "flat-paged32",
+                    include_bytes!("../tests/fixtures/cpu-ceiling-flat-paged32.bin").as_slice(),
+                ),
+            ]);
         }
         for (mode, rom) in cases {
             let config = speed::board(rom, board);
@@ -56,16 +68,31 @@ fn main() {
                 rig.machine.run_bounded(Some(100_000)).unwrap(),
                 RunOutcome::RetiredCapReached
             );
-            assert_eq!(
-                rig.machine
-                    .cpu()
-                    .diagnostic_state()
-                    .system
-                    .unwrap()
-                    .protected(),
-                mode != "real16"
-            );
-            if mode == "paged32" {
+            let state = rig.machine.cpu().diagnostic_state();
+            let system = state.system.unwrap();
+            assert_eq!(system.protected(), mode != "real16");
+            assert_eq!(system.paging(), mode.contains("paged32"));
+            if mode.starts_with("flat") {
+                assert_eq!(system.cpl, 0);
+                assert!(!system.virtual_8086);
+                for segment in state.segments {
+                    assert!(!segment.unusable);
+                    assert_eq!(segment.base, 0, "{mode}: segment must be flat");
+                    assert_eq!(segment.limit, u32::MAX);
+                    assert_eq!(
+                        segment.attributes & 0xC000,
+                        0xC000,
+                        "32-bit, page granularity"
+                    );
+                    assert_eq!(segment.attributes & 0xF0, 0x90, "present, ring 0 code/data");
+                }
+                assert_ne!(state.segments[1].attributes & 8, 0, "CS executable");
+                for index in [0, 2, 3] {
+                    assert_eq!(state.segments[index].attributes & 0xA, 2, "writable data");
+                }
+                assert!((0xF8000..0xFFFF0).contains(&rig.machine.cpu().reg(CpuReg::Rip)));
+            }
+            if system.paging() {
                 let mut pde = [0; 4];
                 rig.machine.cpu().read_mem(0x1000, &mut pde).unwrap();
                 assert_ne!(u32::from_le_bytes(pde) & 0x20, 0, "paging must set PDE.A");
@@ -81,6 +108,7 @@ fn main() {
                 );
                 let elapsed = start.elapsed().as_secs_f64();
                 let retired = rig.machine.cpu().retired() - before;
+                assert_eq!(retired, 10_000_000);
                 println!(
                     "{} {mode} sample={sample}: retired={retired} seconds={elapsed:.6} MIPS={:.3}",
                     board.id(),

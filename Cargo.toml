@@ -53,7 +53,7 @@ sha2 = "0.10"
 # Every build and golden trace runs against a known CPU. A bare path dependency breaks
 # nix build and CI. To develop against a local x86jit checkout, add a gitignored
 # [patch] override instead of editing this line.
-x86jit-core = { version = "0.3", git = "https://github.com/unemu-org/x86jit", rev = "8ebba63712ad34cb51208302e65597189594b583", default-features = false }
+x86jit-core = { version = "0.3", git = "https://github.com/unemu-org/x86jit", rev = "ab193c1591e3876db0e5042282f1bc1871b7d75c", default-features = false }
 # The contract between front ends and emulator cores, at the commit of release
 # v0.2.0. Every core and front end in one build must link the same copy, so the
 # pin is an exact revision, moved together with every pinned core. A bare path

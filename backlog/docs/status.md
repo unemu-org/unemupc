@@ -107,6 +107,19 @@ controlled, so this does not isolate a CPU regression. The benchmark keeps its g
 10-million-instruction sample size. See
 [all rates, wall times and baseline comparison](design/machine-files.md#measured-speed-ceilings).
 
+**MEASURED 2026-11-25**, release, ARM64 macOS host class, CPU pin
+`ab193c1591e3876db0e5042282f1bc1871b7d75c`: new flat32 fixtures use
+base-zero, 4 GiB CS/DS/ES/SS at CPL 0, with PG=0 or identity-mapped PG=1.
+All original cases remain. The example asserts the cached segment state,
+PE/PG and exact ten-million-instruction intervals: **36 samples** in all.
+Unpaged flat32 measures **37.333–37.409 MIPS** on the 386 and
+**23.923–24.535 MIPS** on the early 486; flat paged32 measures
+**3.227–3.442 / 2.962–3.261 MIPS**. Original protected32 is
+7.706–8.291 / 7.663–7.809 MIPS. Its F8000h-based 64 KiB code segment
+cannot engage the Flat32 interpreter class. The original 486 paged case
+has a wide 1.065–2.632 MIPS spread; shared-host load was not controlled.
+See [all current rates, assertions and reproduction](design/machine-files.md#measured-speed-ceilings).
+
 ## FreeDOS on generic ISA boards (2026-11-24)
 
 **MEASURED**, CPU pin `5a17667764080c2fe7a33d446584a3e175b7923d`:
@@ -162,6 +175,24 @@ the VGA linker discards the system-BIOS port-debug variable. Both source
 limitations are documented in vendor/seabios/README.md; neither changes
 successful video initialization. FreeDOS qualification is recorded above.
 The serial-only counts in the older board entries below are historical.
+
+## test386 completion on the 386 (2026-11-25)
+
+**MEASURED**, CPU pin `ab193c1591e3876db0e5042282f1bc1871b7d75c`:
+the unchanged 80386 diagnostic reaches **POST FF**, **79,664,383** retired
+instructions, completion HLT at **00D0:FE7C** (next EIP FE7Dh).
+The former ARPL stop is resolved: equal RPLs in read-only DS now leave the
+selector unchanged, clear ZF and continue without a fault. The golden pins
+both sides of ARPL, the full POST stream and completion state. The execution
+budget increases to 100 million steps to finish the arithmetic section.
+
+Both 486 variants retain the **486-correct** paging row-11 stop and
+**1,413,097** retired instructions. No board fix or fixture patch was needed.
+POST EE's arithmetic results require manual output comparison; completion
+does not validate them. The fixture's immediate OUT truncates configured
+402h to port 02h, so the debug console stays empty. ROM128-only tests remain
+excluded. See [current coverage and findings](design/protected-mode-gaps.md#test386-completion-on-the-386-2026-11-25)
+and the [fixture contract](../../vendor/test386/README.md).
 
 ## test386 full-machine validation (2026-11-24)
 

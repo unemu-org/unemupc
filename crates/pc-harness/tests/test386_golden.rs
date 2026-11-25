@@ -17,8 +17,8 @@ use device::ByteStreamKind;
 #[path = "support/fixtures.rs"]
 mod fixtures;
 
-const CPU_REV: &str = "8ebba63712ad34cb51208302e65597189594b583";
-const CAP: u64 = 5_000_000;
+const CPU_REV: &str = "ab193c1591e3876db0e5042282f1bc1871b7d75c";
+const CAP: u64 = 100_000_000;
 const PAGING_STOP_POST: &[u8] = &[
     0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x08, 0x09, 0x20, 0x21, 0x22, 0x0B, 0x0C, 0x0D, 0x0E,
     0x0F, 0x10, 0x11,
@@ -105,8 +105,8 @@ fn run(chip: CpuChip) {
     .unwrap();
     assembled.machine.enable_delivery_log().unwrap();
     let started = std::time::Instant::now();
-    // Inspect each failure cause before the shared error HLT, so reaching
-    // that same halt for another reason cannot satisfy the golden.
+    // A final halt alone cannot distinguish completion from an unrelated
+    // failure; sample paging behavior and the conditional ARPL write as well.
     let mut cap = 0;
     let mut checkpoints = vec![
         (1_413_080, 0xA05C, 0x49F000),
@@ -122,6 +122,7 @@ fn run(chip: CpuChip) {
     ];
     if chip == CpuChip::I80386 {
         checkpoints.push((1_429_159, 0xB51C, 0));
+        checkpoints.push((1_429_160, 0xB522, 0));
     }
     for (target, ip, eax) in checkpoints {
         while assembled.machine.cpu().retired() < target {
@@ -177,6 +178,20 @@ fn run(chip: CpuChip) {
                 .unwrap();
             assert_eq!(u16::from_le_bytes(selector), 0xFFF2);
         }
+        if target == 1_429_160 {
+            assert_eq!(assembled.machine.cpu().diagnostic_state().flags & 0x40, 0);
+            let mut selector = [0; 2];
+            assembled
+                .machine
+                .cpu()
+                .read_mem(0x4B000, &mut selector)
+                .unwrap();
+            assert_eq!(u16::from_le_bytes(selector), 0xFFF2);
+            assert_eq!(
+                assembled.machine.cpu().diagnostic_state().segments[3].attributes,
+                0x91
+            );
+        }
         eprintln!(
             "{} checkpoint: retired={target}; IP={ip:04x}; EAX={eax:08x}",
             chip.name()
@@ -221,27 +236,34 @@ fn run(chip: CpuChip) {
     let is_386 = chip == CpuChip::I80386;
     let mut expected_post = PAGING_STOP_POST.to_vec();
     if is_386 {
-        expected_post.extend_from_slice(&[0x12, 0x13, 0x14, 0x15, 0x16, 0x17]);
+        expected_post.extend_from_slice(&[
+            0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0xE0, 0xEE, 0xFF,
+        ]);
     }
     assert_eq!(
         post, expected_post,
         "test386 progress changed; review and advance the golden"
     );
-    assert_eq!(text, "", "printing follows the current stops");
-    assert_eq!(retired, if is_386 { 1_429_164 } else { 1_413_097 });
+    // The pinned printChar uses an immediate OUT: its configured 402h port
+    // truncates to 02h, so the arithmetic transcript cannot reach the console.
+    assert_eq!(text, "");
+    assert_eq!(retired, if is_386 { 79_664_383 } else { 1_413_097 });
     assert_eq!(outcome.unwrap(), machine::RunOutcome::Halted);
     let state = assembled.machine.cpu().diagnostic_state();
-    assert_eq!(state.code_linear, 0xFFE8A);
+    assert_eq!(state.code_linear, if is_386 { 0xFFE7D } else { 0xFFE8A });
     assert_eq!(state.before_code.value(), Some(0xF4));
     let system = state.system.unwrap();
     assert_eq!(system.cr0, if is_386 { 0x8000_0001 } else { 0xE000_0011 });
     assert!(system.protected());
     assert!(!system.virtual_8086);
     assert_eq!(system.cpl, 0);
-    assert_eq!(assembled.machine.cpu().reg(CpuReg::Rip), 0xFE8A);
+    assert_eq!(
+        assembled.machine.cpu().reg(CpuReg::Rip),
+        if is_386 { 0xFE7D } else { 0xFE8A }
+    );
     assert_eq!(
         assembled.machine.cpu().reg(CpuReg::Rsi),
-        if is_386 { 0 } else { 0x9DF7 }
+        if is_386 { 0xF9DB } else { 0x9DF7 }
     );
     for (address, expected) in [
         (0x1004, if is_386 { 0x3023u32 } else { 0x3025 }),
@@ -255,55 +277,23 @@ fn run(chip: CpuChip) {
             .unwrap();
         assert_eq!(u32::from_le_bytes(bytes), expected);
     }
+    if is_386 {
+        assert_eq!(post.last(), Some(&0xFF), "completion POST code");
+        assert_eq!(assembled.machine.cpu().reg(CpuReg::Rax) & 0xFF, 0xFF);
+        return;
+    }
     let recent = assembled.machine.recent_deliveries().unwrap();
     let machine::DeliveryEntry::Deliveries { last: fault, .. } = recent.entries.last().unwrap()
     else {
         panic!("expected the final fault record");
     };
     eprintln!("last delivery: {fault}");
-    if is_386 {
-        assert_eq!(
-            (fault.vector, fault.error_code, fault.cs, fault.ip),
-            (13, Some(0), 0xD0, 0xB51C)
-        );
-        assert_eq!(fault.retired, 1_429_159);
-        assert_eq!(
-            fault.bytes.map(|byte| byte.value()),
-            [
-                Some(0x63),
-                Some(0x1D),
-                Some(0),
-                Some(0),
-                Some(2),
-                Some(0),
-                Some(0x60),
-                Some(0x9C)
-            ]
-        );
-        let regs = fault.regs.unwrap();
-        assert_eq!(
-            (regs.eax, regs.ebx, regs.ecx, regs.edx),
-            (0, 2, u32::MAX, 0xFFFF0080)
-        );
-        assert_eq!(
-            (regs.ds, regs.es, regs.ss, regs.esp),
-            (0x1C, 0x24, 0x118, 0xFFFF)
-        );
-        let mut selector = [0; 2];
-        assembled
-            .machine
-            .cpu()
-            .read_mem(0x4B000, &mut selector)
-            .unwrap();
-        assert_eq!(u16::from_le_bytes(selector), 0xFFF2);
-    } else {
-        assert_eq!(
-            (fault.vector, fault.error_code, fault.cs, fault.ip),
-            (14, Some(7), 0xAB, 0x9F88)
-        );
-        assert_eq!(fault.retired, 1_413_070);
-        assert_eq!(fault.regs.unwrap().edx, 7);
-    }
+    assert_eq!(
+        (fault.vector, fault.error_code, fault.cs, fault.ip),
+        (14, Some(7), 0xAB, 0x9F88)
+    );
+    assert_eq!(fault.retired, 1_413_070);
+    assert_eq!(fault.regs.unwrap().edx, 7);
     assert!(!fault.virtual_8086_before);
 }
 

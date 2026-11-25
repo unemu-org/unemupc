@@ -4,7 +4,8 @@
 [barotto/test386.asm](https://github.com/barotto/test386.asm), pinned at commit
 `cfd052d1e64d5375dea5a681c1eadeed64ceda2c`. It is a diagnostic ROM that exercises
 an Intel 386 and reports progress by writing a checkpoint ("POST") byte to port
-`0x80` at each stage, with direct ASCII output at `0x402`.
+`0x80` at each stage. The configuration requests ASCII at `0x402`, but the
+pinned print routine truncates that immediate port to `0x02` (see below).
 
 ## Provenance and licence
 
@@ -42,6 +43,32 @@ claimed. The 64 KiB ROM occupies F0000h–FFFFFh with the board's high reset cop
 at FFFF0000h–FFFFFFFFh. Tests fill E0000h–EFFFFh with FFh to satisfy the
 board's 128 KiB decode. Tests use the explicit unlisted-fixture assembly option,
 leaving shipped firmware catalogue and scan policy intact. No SeaBIOS runs.
+
+## Current measured result (2026-11-25)
+
+At CPU pin `ab193c1591e3876db0e5042282f1bc1871b7d75c`, the 80386DX
+completes with POST
+`00 01 02 03 04 05 06 08 09 20 21 22 0b 0c 0d 0e 0f 10 11 12 13 14 15 16 17 18 19 1a 1b 1c e0 ee ff`,
+**79,664,383** retired instructions and the completion HLT at **00D0:FE7C**
+(next EIP FE7Dh). The previous five-million-step budget ended during EE;
+the golden now permits 100 million steps. Both 486 variants retain their
+486-correct row-11 stop, stream and **1,413,097** retired instructions
+recorded below. No board change or ROM patch was needed.
+
+The ARPL at `src/test386.asm:1487`, 00D0:B51C, now continues to B522h
+without a fault: FFF2h and BX=2 have equal RPLs, so read-only DS is accepted,
+the selector stays unchanged and ZF clears. Checkpoints pin both sides.
+The full stream and FFh completion are asserted separately from the 486 stops.
+
+POST 18–1C covers BOUND, XCHG, ENTER, LEAVE and VERR/VERW. E0 skips
+TEST_UNDEF=0; EE runs arithmetic/logical cases whose output upstream asks
+the user to compare manually. FFh proves execution completion, not that
+manual comparison. `src/print_p.asm:81–82` encodes `out OUT_PORT,al` with
+an eight-bit immediate: the pinned bytes at C104h are `E6 02`, so configured
+402h becomes DMA port 02h. Zero debug-console bytes are expected throughout;
+no arithmetic transcript is claimed. ROM128-only checks remain excluded.
+
+## Historical result (2026-11-24)
 
 At CPU pin `6a38ae4964555495c2b5c82ef72fea34e686c0b4` (2026-11-24),
 the 80386DX completes all 74 paging rows and the subsequent PTE.D check,

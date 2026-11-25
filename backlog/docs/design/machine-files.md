@@ -980,12 +980,51 @@ paged gain comes from the CPU changes alone. The wide 486 paged spread is
 reported as measured, not smoothed away. The benchmark's nominal clock
 ratios and 10-million-instruction sample size are unchanged.
 
+**MEASURED 2026-11-25 with flat segment cases**, ARM64 macOS host class
+(`Darwin arm64`), release, CPU pin
+`ab193c1591e3876db0e5042282f1bc1871b7d75c`:
+
+| Board | Real16 MIPS (min–max) | Original protected MIPS (min–max) | Original paged32 MIPS (min–max) | Flat32, PG=0 MIPS (min–max) | Flat paged32, PG=1 MIPS (min–max) |
+|---|---:|---:|---:|---:|---:|
+| IBM 5170 | 92.981–94.750 | 9.887–9.999 (16-bit) | unavailable on 286 | unavailable on 286 | unavailable on 286 |
+| Generic 386 ISA | 91.709–92.489 | 7.706–8.291 (32-bit) | 3.163–3.433 | **37.333–37.409** | **3.227–3.442** |
+| Generic 486 ISA (early DX) | 90.377–92.560 | 7.663–7.809 (32-bit) | 1.065–2.632 | **23.923–24.535** | **2.962–3.261** |
+
+All **36 samples** retire exactly 10,000,000 instructions after a
+100,000-step warmup. The four original ROMs rebuild byte-for-byte unchanged.
+Their protected32 code segment remains based at F8000h with a 64 KiB limit,
+so it cannot enter the CPU's Flat32 interpreter class. Both new fixtures
+instead load CS/DS/ES/SS with base zero, inclusive limit FFFFFFFFh and
+32-bit code/stack attributes, at CPL 0. A 32-bit far jump enters the ROM at
+its flat linear address F8000h plus the entry offset; no RAM code copy is
+needed. The register loop and nominal guest clocks are unchanged.
+
+The example asserts all four cached bases and limits, present ring-0
+code/data attributes, CS.D/SS.B, CPL, PE, PG and the full loop EIP before
+timing. A mutation replacing the flat ROM with the original protected32
+ROM fails the limit assertion (FFFFh versus FFFFFFFFh). PG=0 satisfies the
+Flat32 class conditions; PG=1 retains the checked paging path. The flat
+paged fixture builds identity mappings for the first MiB in RAM at
+1000h/2000h, including the ROM and stack; both paged cases assert PDE.A
+following warmup.
+
+Flat32 sample wall times are 0.267564, 0.267863, 0.267316 s on the 386
+and 0.416143, 0.407583, 0.418013 s on the 486. Flat paged32 times are
+2.928107, 3.099183, 2.905305 s and 3.376415, 3.066769, 3.070002 s,
+respectively. The original 486 paged32 times are 9.387537, 4.487987,
+3.799765 s; the full spread is retained. Shared-host load was not controlled,
+so these samples do not isolate the cause of that spread or a paging
+regression. The flat register loop demonstrates a higher unpaged ceiling;
+it does not predict game performance or general protected-mode throughput.
+
 Reproduce with `cargo run --offline --release -p pc-harness --example cpu_speed_ceiling`
 inside the project devShell (shared hosts use their mandated Cargo wrapper).
 Assemble `tests/fixtures/cpu-ceiling.asm` under `crates/pc-harness/` with
 `nasm -f bin`, adding `-DPROTECTED` for protected16 and both `-DPROTECTED`
 and `-DPROTECTED32` for protected32; additionally use `-DPAGED32` for
-`cpu-ceiling-paged32.bin`. `cpu-speed.asm` uses `nasm -f bin`.
+`cpu-ceiling-paged32.bin`. Add `-DFLAT32` to the protected32 flags for
+`cpu-ceiling-flat32.bin`, and also `-DPAGED32` for
+`cpu-ceiling-flat-paged32.bin`. `cpu-speed.asm` uses `nasm -f bin`.
 
 ### Clock-related golden changes
 

@@ -91,6 +91,49 @@ remain `be15dc9ad686ee5c33d21165e6ee837a1c6875b0acf5cae0935b7e2faaf7bc7c`
 (raw) and `e5018f57f57db4c8a8dcdcc9e1c2770d21d4970267646ec71bce33c32c853dbd`
 (VCPI). Shipped machine files and board/device behavior are unchanged.
 
+## test386 completion on the 386 (2026-11-25)
+
+**MEASURED**, CPU pin `ab193c1591e3876db0e5042282f1bc1871b7d75c`,
+unchanged upstream commit and ROM hash from the historical run below:
+the 80386DX now completes with the full POST stream
+`00 01 02 03 04 05 06 08 09 20 21 22 0b 0c 0d 0e 0f 10 11 12 13 14 15 16 17 18 19 1a 1b 1c e0 ee ff`.
+It retires **79,664,383** instructions and halts at **00D0:FE7C**
+(next EIP FE7Dh), CR0=80000001h, CPL=0, VM=0. The previous five-million
+execution budget ended during POST EE; the golden now allows 100 million
+steps and asserts the complete stream, FFh completion and exact retired count.
+No board or CPU source change was needed in this repository.
+
+POST 17 now completes ARPL, followed by BOUND (18), XCHG (19), ENTER
+(1A), LEAVE (1B) and VERR/VERW (1C). E0 skips the disabled TEST_UNDEF
+checks; EE executes upstream's arithmetic/logical cases, which require
+manual output comparison rather than self-checking. FFh proves completion,
+not independently validated arithmetic output. ROM128-only task-switch and
+16-bit V86-gate tests remain excluded.
+
+### CPU FINDINGS at the current pin
+
+**MEASURED: the prior ARPL stop is resolved.** At retired **1,429,159**,
+`src/test386.asm:1483–1487`, **00D0:B51C**, bytes
+**`63 1D 00 00 02 00`**, the read-only DS is 001Ch, base 2B000h,
+limit FFFFFh, attributes 0091h. Memory at 4B000h is FFF2h and BX=2:
+the destination RPL already equals the source. Expected and actual now
+agree: no write or exception, ZF=0, next EIP=B522h at retired
+**1,429,160**. The golden samples both sides of the instruction and checks
+that the selector and read-only cache remain unchanged. This supersedes the
+CPU-policy mismatch recorded below.
+
+**MEASURED: both 486 stops remain 486-correct**, with the same row-11
+#PF(7), POST stream, **1,413,097** retired instructions, fault registers,
+PDE/PTE values and error HLT documented below. The 386 completion does not
+justify changing the 486 assertions or the diagnostic image.
+
+**READ: fixture output limitation, no board defect.**
+`src/print_p.asm:81–82` uses `out OUT_PORT,al`, whose immediate port is
+only eight bits. Although configuration requests 402h, the pinned image at
+**00D0:C104** contains **`E6 02`**, output to DMA port 02h. Thus zero bytes
+at the debug console's 402h are expected even after completion; no arithmetic
+transcript is captured or compared. The fixture remains unchanged.
+
 ## test386 full-machine validation (2026-11-24)
 
 **MEASURED**, CPU pin `6a38ae4964555495c2b5c82ef72fea34e686c0b4`, upstream

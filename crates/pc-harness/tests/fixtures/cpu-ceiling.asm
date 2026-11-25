@@ -3,6 +3,14 @@
 ; entering protected mode. A 16-bit protected loop also works on the 286.
 ; Intel 80386 Programmer's Reference Manual §5.2 Page Translation defines
 ; the optional identity-mapped paged32 case; see machine-files.md §Measured speed ceilings.
+; The §5.1 segment model uses the ROM's linear address with full-size segments,
+; so the same instruction mix can exercise the unpaged flat execution class.
+%ifdef PAGED32
+    %define DATA32
+%endif
+%ifdef FLAT32
+    %define DATA32
+%endif
 bits 16
 org 0
 start:
@@ -12,16 +20,26 @@ start:
     smsw ax
     or ax, 1
     lmsw ax
+%ifdef FLAT32
+    jmp dword 8:(0xf8000+count)
+%else
     jmp 8:count
+%endif
 %endif
 count:
 %ifdef PROTECTED32
     bits 32
 %endif
-%ifdef PAGED32
+%ifdef DATA32
     mov ax, 0x10
     mov ds, ax
     mov es, ax
+%endif
+%ifdef FLAT32
+    mov ss, ax
+    mov esp, 0x90000
+%endif
+%ifdef PAGED32
     xor eax, eax
     mov edi, 0x1000
     mov ecx, 2048
@@ -50,6 +68,9 @@ count_loop:
 align 8
 gdt:
     dq 0
+%ifdef FLAT32
+    dq 0x00CF9A000000FFFF
+%else
     ; 64 KiB executable segment based at F8000h, present, ring 0.
     dw 0xffff, 0x8000
 %ifdef PROTECTED32
@@ -57,7 +78,8 @@ gdt:
 %else
     db 0x0f, 0x9a, 0, 0
 %endif
-%ifdef PAGED32
+%endif
+%ifdef DATA32
     dq 0x00CF92000000FFFF
 %endif
 gdtr:
