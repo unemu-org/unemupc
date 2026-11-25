@@ -1,5 +1,27 @@
 # Status
 
+## Local Windows 95 setup launcher (2026-11-25)
+
+**MEASURED**, x86jit `4bf91c8d`: the ignored `user_media_win95_stage1`
+boots the supplied MS-DOS 7.1 floppy read-only on generic-486-isa, 80486DX,
+16 MiB RAM, SeaBIOS/SeaVGABIOS and PS/2 mouse. It selects the no-CD-ROM boot
+option and injects setup from the temporary FAT16 IDE disk at 130,127,767
+retired instructions (40.55 s). Setup stops before its first screen on
+`LegacyEntryFacility`: protected/unpaged CPL 3, CR0=00000011h,
+CS:EIP=0367:00003D87h, linear=000342E7h, `MOV ES,BX` (`8E C3`),
+at 249,085,227 retired instructions (82.03 s). No CPU workaround or device
+fix was made. The first setup screen and product-key prompt remain unqualified.
+
+The disk builder now handles directory trees, chosen CHS/size, active FAT16
+partitions and generated MSBATCH.INF; the DOOM preset keeps its geometry.
+Synthetic tests cover backend-safe short names, exact validation errors,
+subdirectory dot links, LFN absence and nested/generated-file reproducibility.
+ATA payloads are omitted from port diagnostics to protect batch-file keys.
+IDE writes stay in a hash-bound journal with a retained stage checkpoint.
+Inputs, keys, hashes, frames and commercial text stay outside the repository.
+See [variables, stage limits, source evidence and per-device findings](user-media.md#windows-95)
+and the [gap survey](design/windows95-on-486.md).
+
 ## Optional 80387 on the generic 386 ISA board (2026-11-25)
 
 `generic-386-isa` accepts `cpu.fpu = "80387"` as well as its unchanged
