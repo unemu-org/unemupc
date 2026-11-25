@@ -23,8 +23,13 @@ impl WorkloadProfile {
 
 #[cfg(feature = "host-profile")]
 mod enabled {
-    use device::profile::{HostProfiler, ProfileEvent, ProfileExit, ProfileHook, ProfilePhase};
-    use std::{cell::RefCell, rc::Rc, time::Instant};
+    use device::profile::{
+        HostProfiler, ProfileEvent, ProfileExit, ProfileHook, ProfilePhase, ProfileSpace,
+    };
+    use std::{cell::RefCell, collections::BTreeMap, rc::Rc, time::Instant};
+
+    /// How many ports and MMIO pages the report lists, the busiest first.
+    const HISTOGRAM_TOP: usize = 16;
 
     #[derive(Clone, Debug, Default)]
     pub struct Counts {
@@ -36,6 +41,25 @@ mod enabled {
         pub single: u64,
         pub exits: [u64; 7],
         pub events: [u64; 8],
+        /// Accesses per port: [served, returned].
+        pub ports: BTreeMap<u16, [u64; 2]>,
+        /// MMIO accesses per 4 KiB page: [served, returned].
+        pub pages: BTreeMap<u64, [u64; 2]>,
+    }
+
+    /// The busiest `HISTOGRAM_TOP` entries as `key:served/returned`, by total.
+    fn top<K: Copy>(histogram: &BTreeMap<K, [u64; 2]>, name: impl Fn(K) -> String) -> String {
+        let mut entries: Vec<_> = histogram
+            .iter()
+            .map(|(key, counts)| (*key, *counts))
+            .collect();
+        entries.sort_by_key(|(_, [served, returned])| std::cmp::Reverse(served + returned));
+        entries
+            .iter()
+            .take(HISTOGRAM_TOP)
+            .map(|(key, [served, returned])| format!("{}:{served}/{returned}", name(*key)))
+            .collect::<Vec<_>>()
+            .join(",")
     }
 
     struct State {
@@ -99,6 +123,15 @@ mod enabled {
         fn event(&self, event: ProfileEvent) {
             self.0.borrow_mut().counts.events[event as usize] += 1;
         }
+
+        fn access(&self, space: ProfileSpace, address: u64, served: bool) {
+            let mut state = self.0.borrow_mut();
+            let counts = match space {
+                ProfileSpace::Port => state.counts.ports.entry(address as u16).or_default(),
+                ProfileSpace::Mmio => state.counts.pages.entry(address >> 12 << 12).or_default(),
+            };
+            counts[usize::from(!served)] += 1;
+        }
     }
 
     pub struct WorkloadProfile {
@@ -155,6 +188,12 @@ mod enabled {
             c.retired, c.steps, c.retired as f64 / c.calls.max(1) as f64,
             c.budget as f64 / c.calls.max(1) as f64, c.single, c.exits,
             &c.events[ProfileEvent::ServedPortIo as usize..], &c.events[..ProfileEvent::ServedPortIo as usize]);
+            eprintln!(
+                "HOST PROFILE {}{suffix} ports(served/returned)={} mmio_pages(served/returned)={}",
+                self.label,
+                top(&c.ports, |port| format!("{port:X}h")),
+                top(&c.pages, |page| format!("{page:X}h")),
+            );
         }
     }
 
@@ -236,6 +275,16 @@ mod enabled {
                     for exit in [ProfileExit::PortIo, ProfileExit::Halt, ProfileExit::Budget] {
                         assert!(c.exits[exit as usize] > 0, "{exit:?}");
                     }
+                    // The histograms count every access the totals count.
+                    fn sum<K>(histogram: &BTreeMap<K, [u64; 2]>, column: usize) -> u64 {
+                        histogram.values().map(|counts| counts[column]).sum()
+                    }
+                    assert_eq!(sum(&c.ports, 0), served(ProfileEvent::ServedPortIo));
+                    assert_eq!(sum(&c.ports, 1), c.exits[ProfileExit::PortIo as usize]);
+                    assert_eq!(sum(&c.pages, 0), served(ProfileEvent::ServedMmio));
+                    assert_eq!(sum(&c.pages, 1), c.exits[ProfileExit::Mmio as usize]);
+                    assert_eq!(c.ports[&0x80].iter().sum::<u64>(), 1);
+                    assert_eq!(c.ports[&0x81].iter().sum::<u64>(), 1);
                     if in_process {
                         assert!(served(ProfileEvent::ServedPortIo) > 0);
                         assert!(served(ProfileEvent::ServedMmio) > 0);

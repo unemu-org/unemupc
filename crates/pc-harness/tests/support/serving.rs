@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! One workload run twice in lockstep, with the machine serving port 80h and
-//! the display window while the CPU runs and with every access returning
-//! from the CPU (`backlog/docs/design/scheduler.md` §In-process device
-//! access). At every poll both must report the same outcome, retired count,
+//! One workload run twice in lockstep, with the machine serving the ranges
+//! in `machine::SERVED_RANGES` while the CPU runs and with every access
+//! returning from the CPU (`backlog/docs/design/scheduler.md` §In-process
+//! device access). At every poll both must report the same outcome, retired count,
 //! completed steps, virtual time and device clock, the same observed bytes,
 //! the same display frames and the same device traces (every register
 //! access with its virtual time); at the end the same device snapshots, RAM

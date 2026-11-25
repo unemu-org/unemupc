@@ -249,9 +249,9 @@ fn synthetic_planar_scrolling_and_page_flips_have_pinned_frame_hashes() {
     assert_eq!(hashes, FRAME_HASHES);
 }
 
-/// The scrolling run, display-memory and port-80h heavy, with both served
-/// in process and with every access returning: the same machine, frames and
-/// traces at every 100-step poll.
+/// The scrolling run, display-memory, VGA-register and port-80h heavy, with
+/// all of them served in process and with every access returning: the same
+/// machine, frames and traces at every 100-step poll.
 #[test]
 fn synthetic_scrolling_serving_in_process_matches_every_access_returning() {
     let compared = serving::compare(
@@ -270,5 +270,6 @@ fn synthetic_scrolling_serving_in_process_matches_every_access_returning() {
     assert_eq!(compared.outcome, machine::RunOutcome::RetiredCapReached);
     assert_eq!(compared.polls, 1600);
     assert_eq!(compared.outputs[0].len(), 14);
-    assert!(compared.served_accesses.ports > 0 && compared.served_accesses.mmio > 0);
+    // Its VGA register accesses are served too.
+    assert!(compared.served_accesses.ports > 10_000 && compared.served_accesses.mmio > 0);
 }

@@ -27,6 +27,8 @@ use assembly::{
 use video::Frame;
 #[path = "support/fixtures.rs"]
 mod fixtures;
+#[path = "support/host_profile.rs"]
+mod host_profile;
 #[path = "support/serving.rs"]
 mod serving;
 #[path = "support/session.rs"]
@@ -223,8 +225,9 @@ fn the_code_trail_and_reports_leave_the_freedos_boot_golden_unchanged() {
     assert!(diagnosed.trail_samples > 0);
 }
 
-/// The open-BIOS FreeDOS boot with port 80h and the display window served
-/// in process and with every access returning, polled as
+/// The open-BIOS FreeDOS boot with the machine's served ports and the
+/// display window served in process and with every access returning,
+/// polled as
 /// `run_freedos_config` polls it: the same machine, screens, POST stream,
 /// serial output and traces at every poll up to FreeCOM's date prompt.
 #[ignore = "slow: boots FreeDOS twice on the open BIOS, in lockstep"]
@@ -247,7 +250,9 @@ fn serving_in_process_leaves_the_freedos_boot_golden_unchanged() {
                 (DeviceId::Post, device::ByteStreamKind::PostCheckpoints),
             ],
             displays: vec![DeviceId::Vga, DeviceId::Mda],
-            profile: None,
+            profile: Some(|rig, label| {
+                Box::new(host_profile::WorkloadProfile::from_env(rig, || label))
+            }),
         },
         assembled,
         |assembled| mda(assembled).contains(pc_harness::DOS_DATE_PROMPT),
@@ -255,7 +260,8 @@ fn serving_in_process_leaves_the_freedos_boot_golden_unchanged() {
     // The numbers of `freedos_boot_golden`.
     let served = &compared.served.machine;
     assert_eq!(compared.outcome, machine::RunOutcome::RetiredCapReached);
-    assert!(compared.served_accesses.ports > 0 && compared.served_accesses.mmio > 0);
+    // The BIOS's port 61h refresh polling and 8042 status reads are served.
+    assert!(compared.served_accesses.ports > 800_000 && compared.served_accesses.mmio > 0);
     assert_eq!(
         (cpu::Cpu::retired(served.cpu()), served.virtual_time()),
         (8_800_473, 10_000_000)

@@ -199,14 +199,18 @@ The authoritative loop is
    wired IRQ transitions before the next acceptance check. Errors retain the
    completed prefix's device time. Exact active caps win over a new INTA.
 
-Accesses to port 80h and the display window A0000h–BFFFFh are served while
-the CPU runs (`Cpu::run_steps_serving`, `machine::SERVED_RANGES`): the
-handler performs steps 3 and 4 for the access in the loop's order and the run
-continues. It declines to the ordinary stop whenever equality is not proven
-(an access whose step reaches the next deadline, DMA parties, bus faults,
-port writes under a memory-map hook), and ends the run at the next boundary
-for an A20 change, a reset request or a request pending at the PIC, and at
-a deadline moved earlier.
+Accesses to the interrupt controllers, the timer, the keyboard controller
+and port 61h, port 80h, the display adapters' registers and the display
+window A0000h–BFFFFh are served while the CPU runs
+(`Cpu::run_steps_serving`, `machine::SERVED_RANGES`): the handler performs
+steps 3 and 4 for the access in the loop's order and the run continues. It
+declines to the ordinary stop whenever equality is not proven (an access
+whose step reaches the next deadline, DMA parties, bus faults, port writes
+under a memory-map hook), never visits a device's timer (an access that
+moves a deadline into its own step ends the run and the loop charges that
+step), and ends the run at the next boundary for an A20 change, a reset
+request or a request pending at the PIC (unless the run already stops at
+the first boundary able to accept it), and at a deadline moved earlier.
 `Machine::set_in_process_devices(false)` restores a return for every access.
 See [scheduler §In-process device access](design/scheduler.md#in-process-device-access).
 

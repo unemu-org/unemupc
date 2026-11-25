@@ -474,7 +474,22 @@ impl X86JitCpu {
         let end = base + size;
         self.dma_regions
             .retain(|(range, _)| range.start != base || range.end != end);
+        self.served_map_changed(base, end);
         Ok(())
+    }
+
+    /// The memory map changed over `[start, end)`: served MMIO ranges cover
+    /// only the trapped parts the map had when they registered, so register
+    /// them again at the next run start that accepts it (the core refuses
+    /// registration changes while an access is outstanding).
+    fn served_map_changed(&mut self, start: u64, end: u64) {
+        let overlaps = |range: &crate::ServedRange| {
+            matches!(range, crate::ServedRange::Mmio(addrs)
+                if *addrs.start() < end && start <= *addrs.end())
+        };
+        if self.served.wanted.iter().any(overlaps) {
+            self.served.dirty = true;
+        }
     }
 
     fn map_region(
@@ -490,6 +505,7 @@ impl X86JitCpu {
         // Vm's host loader API bypasses region kinds. Keep the successful maps
         // here so DMA cycles obey the guest map without involving any devices.
         self.dma_regions.push((base..base + size as u64, kind));
+        self.served_map_changed(base, base + size as u64);
         Ok(())
     }
 

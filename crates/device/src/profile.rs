@@ -48,6 +48,13 @@ pub enum ProfileEvent {
     ServedMmio,
 }
 
+/// The address space of an access counted by [`HostProfiler::access`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ProfileSpace {
+    Port,
+    Mmio,
+}
+
 /// Host-owned diagnostics, excluded from hardware snapshots and virtual time.
 ///
 /// Implementations must be passive and nonblocking, like `ByteSink` (see
@@ -58,6 +65,12 @@ pub trait HostProfiler {
     fn leave(&self, phase: ProfilePhase);
     fn cpu_run(&self, retired: u64, steps: u64, budget: u64, exit: ProfileExit);
     fn event(&self, event: ProfileEvent);
+    /// One guest port or MMIO access at `address`: `served` while the CPU
+    /// ran, or returned from the CPU as a stop. For a per-address histogram;
+    /// the default ignores it.
+    fn access(&self, space: ProfileSpace, address: u64, served: bool) {
+        let _ = (space, address, served);
+    }
 }
 
 /// Optional callback binding. The default performs no host calls or allocation.
@@ -92,6 +105,12 @@ impl ProfileHook {
     pub fn event(&self, event: ProfileEvent) {
         if let Some(observer) = &self.0 {
             observer.event(event);
+        }
+    }
+
+    pub fn access(&self, space: ProfileSpace, address: u64, served: bool) {
+        if let Some(observer) = &self.0 {
+            observer.access(space, address, served);
         }
     }
 }

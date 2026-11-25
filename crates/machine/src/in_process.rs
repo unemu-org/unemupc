@@ -11,10 +11,22 @@
 //! same virtual time, with the same helpers, and lets the run continue. It
 //! declines ([`AccessResult::Fallback`]) before changing anything whenever it
 //! cannot prove the result equal: an access whose own step would reach the
-//! next device deadline (whose ticks may need DMA, which needs the CPU), one
+//! next device deadline (whose visits may need DMA, which needs the CPU), one
 //! that reaches a DMA requester or controller, one the bus would fault, a
 //! port write on a machine whose memory-map hook must see every port write
 //! with the CPU in hand, and a transfer owned by an exception delivery.
+//!
+//! The handler never visits a device's timer. The steps before an access
+//! lie inside a deadline-free interval, so charging them only moves the
+//! clocks, and a port access's own step is charged the same way unless the
+//! access moved a deadline into it (a timer reprogrammed to fire within the
+//! step). Then the run ends right after the access and the loop charges
+//! that step itself, visiting each deadline at its own time with DMA
+//! serviced between them, and settles the accessed devices. So no DMA can
+//! become due inside a served access, which would need a timer visit or an
+//! access to a DMA party: not between two deadlines of one step, and not
+//! during an MMIO access, whose instruction completes before the loop could
+//! service it. The machine serves only under the deadline engine.
 //!
 //! What only the loop can do with the CPU after an access ends the run at
 //! the next boundary instead (after an MMIO access's instruction completes),
@@ -22,9 +34,16 @@
 //! stop: sync the A20 gate, notice a reset request, and acknowledge a request
 //! pending at the interrupt controller, with the loop's own readiness check
 //! (the CPU core's interrupt-ready stop is stricter about held single-step
-//! traps and waiting events). A deadline the access moves earlier than the
-//! run's budget ends the run there. The next deadline's step is kept between
-//! accesses, so an access costs one deadline query, made after it.
+//! traps and waiting events). A run that began with interrupts disabled and
+//! a request pending stops by itself at the first boundary able to accept
+//! it once an instruction sets IF, which is where the loop's check would
+//! first acknowledge it, so it needs no such stop. A run that began with IF
+//! set but the CPU not ready (in the shadow of MOV SS or STI) does: the
+//! loop's check can acknowledge at the boundary after the shadowed
+//! instruction while the CPU, holding that instruction's single-step trap,
+//! delivers the trap first and does not stop. A deadline the access moves
+//! earlier than the run's budget ends the run there. The next deadline's
+//! step is kept between accesses.
 
 use std::cell::Cell;
 use std::num::NonZeroU64;
@@ -38,13 +57,24 @@ use crate::{
     DmaChannelWiring, DmaWiring, IrqLine, MachineError, SchedulerEngine,
 };
 
-/// The accesses served while the CPU runs: the diagnostic checkpoint port
-/// 80h, which firmware writes at every POST step, and the display memory
-/// window A0000h–BFFFFh (IBM Personal Computer AT Technical Reference,
-/// Section 1, System Board, I/O Address Map and System Memory Map). Every
+/// The accesses served while the CPU runs (IBM Personal Computer AT
+/// Technical Reference, Section 1, System Board, I/O Address Map and System
+/// Memory Map): the interrupt controllers (20h–21h, A0h–A1h), the timer
+/// (40h–43h), the keyboard controller and system control port B (60h–64h),
+/// the diagnostic checkpoint port 80h, the display adapters' registers
+/// (3B0h–3DFh: VGA, monochrome and color adapters) and the display memory
+/// window A0000h–BFFFFh. A range names addresses, not devices: each access
+/// is offered to the machine's handler, which serves it only when it can
+/// prove the result equal, whatever device decodes it
+/// (`backlog/docs/design/scheduler.md` §In-process device access). Every
 /// other port and trapped window still returns from the CPU.
-pub const SERVED_RANGES: [ServedRange; 2] = [
+pub const SERVED_RANGES: [ServedRange; 7] = [
+    ServedRange::Ports(0x20..=0x21),
+    ServedRange::Ports(0x40..=0x43),
+    ServedRange::Ports(0x60..=0x64),
     ServedRange::Ports(0x80..=0x80),
+    ServedRange::Ports(0xA0..=0xA1),
+    ServedRange::Ports(0x3B0..=0x3DF),
     ServedRange::Mmio(0xA0000..=0xBFFFF),
 ];
 
@@ -73,8 +103,17 @@ pub(crate) struct ServedRun {
     /// instruction.
     pub sync_a20: bool,
     /// DMA became due, which needs the CPU's memory: the loop settles
-    /// before it services the run's stop.
+    /// before it services the run's stop. Kept as a guard: the eligibility
+    /// rules and [`InProcess::own_step`] leave no way for it to happen.
     pub settle: bool,
+    /// The run ended right after an access whose remaining work the loop
+    /// does itself, as after the ordinary stop: it charges the access's own
+    /// step (a port access's), visiting every deadline in it with DMA
+    /// serviced between them, then settles the accessed devices.
+    pub finish: bool,
+    /// That access failed on the bus: the loop settles every device before
+    /// the accessed ones, as after a failed ordinary stop.
+    pub failed: bool,
     /// The error that ended the run, which the loop returns.
     pub error: Option<MachineError>,
     /// Accesses served in this run.
@@ -91,7 +130,6 @@ pub(crate) struct InProcess<'a> {
     pub clock: &'a mut VClock,
     pub completed_steps: &'a mut u64,
     pub clock_remainder: &'a mut u64,
-    pub engine: SchedulerEngine,
     pub cpu_rate_numerator: NonZeroU64,
     pub cpu_tick_denominator: u128,
     pub irq_lines: &'a [IrqLine],
@@ -103,6 +141,11 @@ pub(crate) struct InProcess<'a> {
     pub reset_signal: Option<&'a Cell<bool>>,
     /// A memory-map hook is attached; it must run after every port write.
     pub memory_map: bool,
+    /// The run stops by itself at the first boundary that can accept a
+    /// maskable interrupt, and began with IF clear, a request pending at the
+    /// controller and none queued in the CPU: a request a served access
+    /// leaves pending needs no stop of its own (see the module docs).
+    pub irq_stop_armed: bool,
     /// The run's step budget.
     pub budget: u64,
     /// The step of this run at which the clock reaches the next device
@@ -127,20 +170,13 @@ impl InProcess<'_> {
         forward_irq_levels(self.bus, self.pic, self.irq_lines, self.last_levels);
     }
 
-    /// `Machine::charge_steps`, with the loop's DMA settle left to the loop:
-    /// [`Self::access`] charges only inside a deadline-free interval, where
-    /// no device ticks and no DMA becomes due; should DMA become due anyway,
-    /// the loop settles right after the run.
-    fn charge(&mut self, steps: u64) -> Result<(), MachineError> {
-        self.charge_with(steps, false)
-    }
-
-    /// [`Self::charge`]; `quiet` when the caller knows from
-    /// [`Self::deadline_at`] that no device is due before the target and
-    /// every device's next event is cached: `Machine::advance_to` would then
-    /// only move the clocks (`Bus::tick_due` visits nothing due, refills no
-    /// cache, and IRQ sampling finds no change), so only the clocks move.
-    fn charge_with(&mut self, steps: u64, quiet: bool) -> Result<(), MachineError> {
+    /// `Machine::charge_steps` inside a deadline-free interval: the caller
+    /// knows from [`Self::deadline_at`] that no device is due before the
+    /// target and every device's next event is cached, so
+    /// `Machine::advance_to` would only move the clocks (`Bus::tick_due`
+    /// visits nothing due and refills no answer, IRQ sampling finds no change
+    /// since the last sample, and no DMA becomes due).
+    fn advance(&mut self, steps: u64) -> Result<(), MachineError> {
         *self.completed_steps = self
             .completed_steps
             .checked_add(steps)
@@ -154,29 +190,51 @@ impl InProcess<'_> {
             self.cpu_tick_denominator,
         )?;
         *self.clock_remainder = remainder;
-        if quiet && self.engine == SchedulerEngine::Deadline {
-            if *self.clock < target {
-                *self.clock = target;
-                self.bus.advance_quiet(target);
-            }
-            return Ok(());
-        }
-        // `Machine::advance_to`.
-        while *self.clock < target {
-            let at = next_device_deadline(self.engine, self.bus, *self.clock)?
-                .map_or(target, |at| at.min(target));
-            *self.clock = at;
-            match self.engine {
-                #[cfg(any(test, feature = "reference-scheduler"))]
-                SchedulerEngine::PerClock => self.bus.tick_all(at),
-                SchedulerEngine::Deadline => {
-                    self.bus.tick_due(at);
-                }
-            }
-            self.sample_irq_lines();
-            self.outcome.settle |= self.dma_pending();
+        if *self.clock < target {
+            *self.clock = target;
+            self.bus.advance_quiet(target);
         }
         Ok(())
+    }
+
+    /// Charge a served port access's own step as the loop does right after
+    /// the access, when no device is due within the step; false, with
+    /// nothing charged, when the access moved a deadline into its own step
+    /// or a counter or the deadline query fails. The loop then charges the
+    /// step itself ([`ServedRun::finish`]): it visits each deadline at its
+    /// own time and services DMA between them, which only it can do, since
+    /// DMA needs the CPU's memory.
+    fn own_step(&mut self) -> bool {
+        let Ok((target, remainder)) = step_target(
+            *self.clock,
+            1,
+            *self.clock_remainder,
+            self.cpu_rate_numerator,
+            self.cpu_tick_denominator,
+        ) else {
+            return false;
+        };
+        // The query `Machine::advance_to` makes first, with every answer
+        // the access invalidated computed again.
+        match next_device_deadline(SchedulerEngine::Deadline, self.bus, *self.clock) {
+            Ok(Some(deadline)) if deadline <= target => return false,
+            Err(_) => return false,
+            Ok(_) => {}
+        }
+        let Some(completed) = self.completed_steps.checked_add(1) else {
+            return false;
+        };
+        *self.completed_steps = completed;
+        *self.clock_remainder = remainder;
+        self.outcome.charged += 1;
+        if *self.clock < target {
+            *self.clock = target;
+            self.bus.advance_quiet(target);
+            // `Machine::advance_to` samples once the clock moves, before the
+            // accessed devices settle; the access may have moved a line.
+            self.sample_irq_lines();
+        }
+        true
     }
 
     /// Whether the access may be served here at all; see the module docs.
@@ -222,7 +280,7 @@ impl InProcess<'_> {
     /// deadline, `u64::MAX` for none; `None` when the query fails, which the
     /// loop then reports at its own point.
     fn deadline_from_now(&mut self) -> Option<u64> {
-        match next_device_deadline(self.engine, self.bus, *self.clock) {
+        match next_device_deadline(SchedulerEngine::Deadline, self.bus, *self.clock) {
             Ok(None) => Some(u64::MAX),
             Ok(Some(deadline)) => Some(self.outcome.charged.saturating_add(steps_until(
                 deadline,
@@ -254,13 +312,8 @@ impl cpu::DeviceAccessHandler for InProcess<'_> {
             return AccessResult::Fallback;
         }
         // `eligible` proved the clock stays short of the next deadline.
-        let quiet = self.engine == SchedulerEngine::Deadline;
-        if let Err(error) = self.charge_with(charge - u64::from(port), quiet) {
+        if let Err(error) = self.advance(charge - u64::from(port)) {
             return self.fail(error);
-        }
-        if self.outcome.settle {
-            // Charged as the loop would; it settles, then services the stop.
-            return AccessResult::Fallback;
         }
         let result = match (access.space, access.write) {
             (AccessSpace::Port, true) => self
@@ -283,11 +336,17 @@ impl cpu::DeviceAccessHandler for InProcess<'_> {
             self.outcome.served.mmio += 1;
         }
         #[cfg(feature = "host-profile")]
-        self.bus.profile().event(if port {
-            device::profile::ProfileEvent::ServedPortIo
-        } else {
-            device::profile::ProfileEvent::ServedMmio
-        });
+        {
+            use device::profile::{ProfileEvent, ProfileSpace};
+            let profile = self.bus.profile();
+            let (event, space) = if port {
+                (ProfileEvent::ServedPortIo, ProfileSpace::Port)
+            } else {
+                (ProfileEvent::ServedMmio, ProfileSpace::Mmio)
+            };
+            profile.event(event);
+            profile.access(space, access.address, true);
+        }
         // What the loop does after the access, in its order.
         let mut stop = false;
         if port && access.write {
@@ -298,25 +357,29 @@ impl cpu::DeviceAccessHandler for InProcess<'_> {
         }
         self.bus.invalidate_deadlines();
         self.deadline_at = None;
-        let charged = if port { self.charge(1) } else { Ok(()) };
-        if result.is_err() {
-            self.bus.settle();
+        let value = match result {
+            Ok(value) => value,
+            Err(error) => {
+                // The run ends here; the loop charges the own step and
+                // settles, as after a failed ordinary stop.
+                self.outcome.finish = true;
+                self.outcome.failed = true;
+                return self.fail(error.into());
+            }
+        };
+        if port && !self.own_step() {
+            self.outcome.finish = true;
+            control.stop_at(access.steps);
+            return AccessResult::Handled(value);
         }
         self.bus.settle_accessed();
         self.sample_irq_lines();
         self.outcome.settle |= self.dma_pending();
         stop |= self.outcome.settle;
-        let value = match result {
-            Ok(value) => value,
-            Err(error) => return self.fail(error.into()),
-        };
-        if let Err(error) = charged {
-            return self.fail(error);
-        }
         stop |= self.reset_signal.is_some_and(Cell::get);
         // A request at the controller: the loop's own acceptance check runs
         // at the boundary after this access, as after the ordinary stop.
-        stop |= self.pic.poll().is_some();
+        stop |= !self.irq_stop_armed && self.pic.poll().is_some();
         // A failed query also stops here: the loop repeats it after its
         // reset and cap checks, where the ordinary stop's loop would fail.
         self.deadline_at = self.deadline_from_now();

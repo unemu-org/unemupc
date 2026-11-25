@@ -704,6 +704,9 @@ fn a_diagnostic_report_shows_a_guest_that_masked_the_keyboard_and_halted() {
     let mut machine = PcMachine::from_assembled(&config, observed(&config, DeviceId::Mda))
         .expect("the machine starts");
     machine.enable_code_trail();
+    // The trail samples where the CPU returned; a served port write returns
+    // nowhere, so this machine returns for every access.
+    machine.assembled().machine.set_in_process_devices(false);
     assert_eq!(
         machine.run(RunLimit::until(Ticks(100_000))),
         Ok(Stop::Halted)

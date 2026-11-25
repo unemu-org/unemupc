@@ -459,3 +459,65 @@ fn a_handler_panic_keeps_its_message_in_the_error() {
         "{error}"
     );
 }
+
+#[test]
+fn a_window_trapped_after_the_ranges_registered_is_served_from_the_next_run() {
+    // MOV AX,B800h; MOV ES,AX; MOV BYTE ES:[0],41h; HLT. Only A0000h-AFFFFh
+    // is trapped when the first run registers the served window; B0000h is
+    // trapped later, as a board's memory-map change between runs would.
+    let code = [
+        0xB8, 0x00, 0xB8, 0x8E, 0xC0, 0x26, 0xC6, 0x06, 0x00, 0x00, 0x41, 0xF4,
+    ];
+    let mut cpu = machine_cpu(&code, 0xB0000);
+    let mut offered = Vec::new();
+    let mut handler = Handler(|access: &DeviceAccess, _: &mut AccessControl| {
+        offered.push(seen(access));
+        AccessResult::Handled(0)
+    });
+    let run = cpu
+        .run_steps_serving(1, StepRunOptions::default(), &mut handler)
+        .unwrap();
+    assert_eq!(run.steps, 1);
+    cpu.map_mmio(0xB0000, 0x10000).unwrap();
+    let run = cpu
+        .run_steps_serving(1000, StepRunOptions::default(), &mut handler)
+        .unwrap();
+    assert_eq!(run.stop, CpuStepStop::Exit(CpuStop::Halt));
+    assert_eq!(
+        offered,
+        [Seen {
+            space: AccessSpace::Mmio,
+            write: true,
+            address: 0xB8000,
+            size: 1,
+            value: 0x41,
+            steps: 1,
+        }]
+    );
+}
+
+#[test]
+fn a_window_no_longer_trapped_leaves_the_served_ranges() {
+    // MOV AX,B000h; MOV ES,AX; MOV BYTE ES:[0],41h; HLT, with B0000h-BFFFFh
+    // trapped at the first run and RAM once the map changes: the store then
+    // reaches RAM, and registering the ranges again from the changed map
+    // (the core refuses a registration over memory that is not trapped)
+    // keeps the run going.
+    let code = [
+        0xB8, 0x00, 0xB0, 0x8E, 0xC0, 0x26, 0xC6, 0x06, 0x00, 0x00, 0x41, 0xF4,
+    ];
+    let mut cpu = machine_cpu(&code, 0xC0000);
+    let mut handler = Handler(|_: &DeviceAccess, _: &mut AccessControl| AccessResult::Handled(0));
+    cpu.run_steps_serving(1, StepRunOptions::default(), &mut handler)
+        .unwrap();
+    cpu.unmap(WINDOW, 0x20000).unwrap();
+    cpu.map_mmio(WINDOW, 0x10000).unwrap();
+    cpu.map_ram(0xB0000, 0x10000).unwrap();
+    let run = cpu
+        .run_steps_serving(1000, StepRunOptions::default(), &mut handler)
+        .unwrap();
+    assert_eq!(run.stop, CpuStepStop::Exit(CpuStop::Halt));
+    let mut byte = [0];
+    cpu.read_mem(0xB0000, &mut byte).unwrap();
+    assert_eq!(byte, [0x41]);
+}

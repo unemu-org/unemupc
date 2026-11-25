@@ -832,9 +832,12 @@ made 1.35 million MMIO returns per 50 million instructions and test386 3.55
 million port returns per 80 million, 18 to 59 instructions per return. The
 CPU core can instead call the embedder synchronously for chosen ranges and
 continue the run (x86jit `DeviceIo`, its spec.md §5.4). The machine uses it
-for the accesses in `machine::SERVED_RANGES`: the diagnostic checkpoint port
-80h and the display window A0000h–BFFFFh. Other ports and windows (PIT,
-PIC, 8042 among them) still return; they are later work.
+for the accesses in `machine::SERVED_RANGES`: the interrupt controllers
+(20h–21h, A0h–A1h), the timer (40h–43h), the keyboard controller with system
+control port B (60h–64h), the diagnostic checkpoint port 80h, the display
+adapters' registers (3B0h–3DFh) and the display window A0000h–BFFFFh. A
+range names addresses, not devices; whatever decodes an address is served
+only under the rules below. Other ports and windows still return.
 
 The seam is backend-neutral (`cpu::device_access`): the machine declares
 ranges with `Cpu::set_served_ranges` and runs `Cpu::run_steps_serving` with a
@@ -865,7 +868,7 @@ IRQ lines. It declines before changing anything when equality cannot be
 proven:
 
 - the access's steps would reach the next device deadline (the last step of
-  a run bounded by it), whose ticks can need DMA through the CPU's memory;
+  a run bounded by it), whose visits can need DMA through the CPU's memory;
 - a cycle reaches a DMA requester or controller or one of their access
   dependents (a word OUT to 80h reaches the page register at 81h), or a
   requester already reports DMA pending;
@@ -882,43 +885,91 @@ signal (the loop checks it first), and a request pending at the PIC (the
 loop's own acceptance check runs there, as after the ordinary stop). The
 core's interrupt-request level is not used for the last: its ready stop also
 waits for a held single-step trap, a waiting event and an unreported
-external numeric error, so it would acknowledge later than the loop. A
-deadline the access moves earlier than the run's budget becomes the run's
-stop position, and a failed deadline query also stops the run, so the loop
+external numeric error, so it would acknowledge later than the loop. A run
+that began with IF clear, a request pending at the PIC and none queued in
+the CPU stops by itself at the first boundary able to accept it
+(`StepRunOptions::stop_when_irq_ready`) once an instruction sets IF; the
+loop's check cannot acknowledge before that boundary either, so a served
+access in such a run does not end it for a request. Without this, every
+served access in a CLI section with the timer request pending (the BIOS's
+port 61h delay loops, retrace polls) ended its run. A run that began with
+IF set but the CPU not ready, in the shadow of MOV SS or STI, still ends at
+the boundary after each served access with a request pending: with TF set,
+the loop's check can acknowledge at the boundary after the shadowed
+instruction while the CPU holds that instruction's single-step trap,
+delivers it first and does not stop, so the IRQ would be acknowledged only
+after the trap handler's IRET. `machine/tests/in_process_devices.rs` runs
+traced loops through MOV SS and STI shadows and POPF at a dozen timer
+phases both ways. A deadline the access moves earlier than the run's
+budget becomes the run's stop position, and a failed deadline query also stops the run, so the loop
 reports it after its reset and cap checks. The coprocessor acknowledgement
 the loop polls after every return comes only from port F0h, which is never
 served. After the run the loop charges only the steps the handler did not,
 then services the stop as before; after a failed served access it also syncs
 a changed A20 line and polls that acknowledgement, as after a failed stop.
 
-An access costs one deadline query, made after it: the step at which the
-clock reaches the next deadline is kept (from the loop's budget query for a
-run's first access), so the check before an access is a comparison, and the
-charge before it only moves the machine and bus clocks
-(`Bus::advance_quiet`): nothing is due and every device's answer is cached.
-`Machine::served_accesses` counts served port and MMIO accesses without the
-host-profile feature.
+The handler never visits a device's timer. The step at which the clock
+reaches the next deadline is kept (from the loop's budget query for a run's
+first access), so the check before an access is a comparison, and the charge
+before it only moves the machine and bus clocks (`Bus::advance_quiet`):
+nothing is due and every device's answer is cached. A port access's own step
+is charged after the access the same way, after one deadline query with
+every answer the access invalidated computed again, and the IRQ lines are
+sampled as the loop's advance samples them before the accessed devices
+settle. When the access moved a deadline into its own step (a timer
+reprogrammed to fire within it, possible when a step spans several virtual
+ticks), or a query fails, the handler charges nothing more: the run ends
+right after the access and the loop charges that step itself, visiting each
+deadline at its own time with DMA serviced between them, then settles the
+accessed devices, as after the ordinary stop. A failed bus access ends the
+run the same way, with the whole bus settled first. Because nothing is
+visited and no DMA party is reached, no DMA can become due inside a served
+access: not between two deadlines of one step, and not during an MMIO
+access, whose instruction completes before the loop could service it. The
+handler still checks for a pending request after every access and ends the
+run if it finds one. The machine serves only under the deadline engine; the
+per-clock reference engine visits every device at every charge, which the
+quiet charges do not reproduce, so with it every access returns.
 
-Serving a register device that can move or raise deadlines (PIT, PIC, 8042)
-needs work this stage does not do, because these hold only for the ranges
-served now:
+The delivery tap names an IRQ delivery's controller input from the vector
+bases read when the loop acknowledged it (once per acknowledgement while a
+delivery log exists), either way: a served write to the controllers (an
+ICW2 in the interrupt handler) can change the bases before the slice ends,
+and with every access returning, port writes in the slices of a
+single-step trap or an NMI delivered ahead of the queued IRQ could too.
 
-- one charge never ticks through several deadlines: the handler's charge
-  after an access does not service DMA between them, as the loop does;
-- DMA that becomes due during a served MMIO access is serviced after that
-  instruction's step instead of before it;
-- the delivery tap reads the controllers' vector bases when it drains a
-  slice, which is right only while PIC ports always end a slice;
-- MMIO registrations are computed from the trap layout once and never
-  follow a later remap;
-- the code trail samples slice boundaries, so it differs with serving on.
+MMIO registrations cover the trapped parts of the served windows; any map
+change that overlaps a served MMIO range registers the ranges again from the
+current map at the next run start that accepts a change.
+
+The code trail samples the boundaries at which the CPU returned, so with
+serving on it has fewer samples and other entries than with every access
+returning. That is expected: the trail shows where the CPU stood when it
+returned, and for one setting it is the same on every run, so a stop report
+stays reproducible. With serving on, a served port access is not a trail
+boundary: a guest polling the 8042 status port appears in the trail where
+its runs end (device deadlines, accesses that return, HLT), which still lands
+inside the polling loop, but not after every IN. Recording the served
+accesses would not give the same entries: the trail sample is the CS:IP
+after the instruction, and the core reports only the instruction's start,
+so the machine would have to decode the instruction (and know CX for a
+string instruction). The diagnostic-report test that pins a trail through
+every OUT (`unemu-pc-core`) runs its machine with serving off.
+
+One access costs two deadline queries when it is a port access, as it did
+through the loop's advance: one after the access, which recomputes every
+answer, and one after the accessed devices settle, which recomputes only
+theirs. `Machine::served_accesses` counts served port and MMIO accesses
+without the host-profile feature.
 
 Observation runs after every CPU return as before. Fewer returns mean longer
 slices, never longer runs: a run is still at most its budget, so the
 delivery log's capacity bound (one delivery per step, `DELIVERY_LOG_MAX`
 against the default 65,536-step limit) is unchanged. The host-profile events
 `ServedPortIo` and `ServedMmio` count served accesses next to the return
-counts.
+counts, and `HostProfiler::access` gives a profiler every access by port or
+MMIO address with whether it was served or returned, for a per-port and
+per-page histogram (the `pc-harness` host profile prints the busiest ones).
 
 `Machine::set_in_process_devices` (on by default) switches serving off, so
 one workload can run both ways. The `support/serving.rs` lockstep comparison

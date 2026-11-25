@@ -384,11 +384,12 @@ fn test386_legacy_scheduler_rig_captures_configured_post() {
     );
 }
 
-/// The 386 run with port 80h served in process and with every access
-/// returning: the same machine at every poll and at the halt. Its port
-/// traffic is mostly the console write that truncates to port 02h, which is
-/// never served; only its few POST codes are, so it exercises serving only
-/// lightly while pinning a long protected-mode run.
+/// The 386 run with the machine's served ranges served in process and with
+/// every access returning: the same machine at every poll and at the halt.
+/// Its port traffic is mostly the console write that truncates to port 02h,
+/// a register of the DMA controller, which is never served; only its few
+/// POST codes and keyboard-controller reads are, so it exercises serving
+/// only lightly while pinning a long protected-mode run.
 #[test]
 #[ignore = "slow: test386 on the 386 board twice, in lockstep"]
 fn test386_i386_serving_in_process_matches_every_access_returning() {

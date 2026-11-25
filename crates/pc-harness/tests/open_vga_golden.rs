@@ -686,10 +686,11 @@ fn open_vga_bios_mode_0d_scrolling_and_mode_13h_reach_scanout() {
     assembled.finish_persistence().unwrap();
 }
 
-/// The mode 0Dh/13h scanout run with the display window and port 80h
-/// served in process and with every access returning: the same machine,
-/// frames and traces at every poll, through POST, the video BIOS and the
-/// boot sector's planar and chain-4 drawing.
+/// The mode 0Dh/13h scanout run with the display window and the machine's
+/// served ports (timer, interrupt and keyboard controllers, port 61h, the
+/// VGA registers, port 80h) served in process and with every access
+/// returning: the same machine, frames and traces at every poll, through
+/// POST, the video BIOS and the boot sector's planar and chain-4 drawing.
 #[test]
 #[ignore = "slow: open AT BIOS/VGA/XTIDE POST and the mode 0Dh/13h boot sector, twice in lockstep"]
 fn open_vga_scanout_serving_in_process_matches_every_access_returning() {
@@ -724,7 +725,8 @@ fn open_vga_scanout_serving_in_process_matches_every_access_returning() {
         |_| false,
     );
     assert_eq!(compared.outcome, RunOutcome::Halted);
-    assert!(compared.served_accesses.mmio > 0);
+    // Port 61h and VGA register accesses are served, with the window.
+    assert!(compared.served_accesses.ports > 500_000 && compared.served_accesses.mmio > 0);
     assert_eq!(
         compared.served.machine.cpu().retired(),
         SCROLL_GOLDEN_RETIRED

@@ -311,7 +311,8 @@ fn open_bios_mode_twelve_palette_writes_with_pas_set_show_sixteen_colours() {
 }
 
 /// The Mode X run, display-memory heavy (planar fills, latch copies, page
-/// flips), with the window served in process and with every access
+/// flips) and port heavy (retrace polls at 3DAh, port 61h, 8042 status),
+/// with the window and those ports served in process and with every access
 /// returning: the same machine, frames and traces at every poll.
 #[test]
 #[ignore = "slow golden: open AT/VGA BIOS POST and 60 Mode X flips, twice in lockstep"]
@@ -360,6 +361,8 @@ fn open_bios_modex_serving_in_process_matches_every_access_returning() {
     );
     assert_eq!(compared.outcome, RunOutcome::Halted);
     assert!(compared.served_accesses.mmio > 100_000);
+    // Port 61h, the 3DAh retrace polls and the 8042 status reads.
+    assert!(compared.served_accesses.ports > 1_000_000);
     assert_eq!(
         String::from_utf8(compared.outputs[0].clone()).unwrap(),
         format!(

@@ -234,10 +234,14 @@ fn rig(in_process: bool) -> Rig {
 }
 
 fn traced_rig(in_process: bool, trace: bool) -> Rig {
+    program_rig(in_process, program(trace))
+}
+
+fn program_rig(in_process: bool, program: Vec<(u32, Vec<u8>)>) -> Rig {
     let mut cpu = X86JitCpu::new_i286_bare(0x100000, 0, 0x7C00, RealSegments::flat(0)).unwrap();
     cpu.map_ram(0, WINDOW).unwrap();
     cpu.map_mmio(WINDOW, 0x20000).unwrap();
-    for (addr, bytes) in program(trace) {
+    for (addr, bytes) in program {
         cpu.write_mem(u64::from(addr), &bytes).unwrap();
     }
     let pic = SharedPic::new();
@@ -438,4 +442,330 @@ fn a_request_raised_under_single_step_is_acknowledged_where_the_loop_would() {
             );
         }
     }
+}
+
+/// The code trail samples the boundaries at which the CPU returned, so it
+/// has fewer samples with serving on; for one setting it is the same on
+/// every run, so a stop report stays reproducible.
+#[test]
+fn the_code_trail_with_serving_on_is_the_same_on_every_run() {
+    let trail = |mut rig: Rig| {
+        rig.machine.run_bounded(Some(1_000_000)).unwrap();
+        let trail = rig.machine.code_trail().unwrap();
+        (trail.entries(), trail.samples())
+    };
+    let served = trail(rig(true));
+    assert_eq!(trail(rig(true)), served);
+    let exits = trail(rig(false));
+    assert_eq!(trail(rig(false)), exits);
+    assert!(served.1 < exits.1, "{} {}", served.1, exits.1);
+}
+
+/// The IRQ0 handler of [`renaming_program`] at 0:8000h: EOI, then the
+/// controller initialised again with the other vector base (08h or 50h,
+/// toggled in [0504h]), then IRET (Intel 8259A datasheet, Initialization
+/// Command Words).
+const RENAMING_HANDLER: &[u8] = &[
+    0x50, // PUSH AX
+    0xFF, 0x06, 0x00, 0x05, // INC WORD [0500h]
+    0xB0, 0x20, 0xE6, 0x20, // EOI
+    0xB0, 0x13, 0xE6, 0x20, // ICW1: single, edge triggered, ICW4
+    0xA0, 0x04, 0x05, // MOV AL,[0504h]
+    0x34, 0x58, // XOR AL,58h: 08h <-> 50h
+    0xA2, 0x04, 0x05, // MOV [0504h],AL
+    0xE6, 0x21, // ICW2: the new base
+    0xB0, 0x01, 0xE6, 0x21, // ICW4
+    0xB0, 0xFE, 0xE6, 0x21, // unmask IRQ0
+    0x58, 0xCF, // POP AX; IRET
+];
+
+/// Twenty IRQ0 interrupts from the 8254 (Intel 8254 datasheet, Mode 2),
+/// each handled by [`RENAMING_HANDLER`] under vector 08h or 50h.
+fn renaming_program() -> Vec<(u32, Vec<u8>)> {
+    let main = vec![
+        0xFA, // CLI
+        0xB0, 0x13, 0xE6, 0x20, // ICW1
+        0xB0, 0x08, 0xE6, 0x21, // ICW2: vectors 08h-0Fh
+        0xB0, 0x01, 0xE6, 0x21, // ICW4
+        0xB0, 0xFE, 0xE6, 0x21, // unmask IRQ0
+        0xB0, 0x34, 0xE6, 0x43, // 8254 counter 0, mode 2
+        0xB0, 0xC8, 0xE6, 0x40, 0xB0, 0x00, 0xE6, 0x40, // divisor 200
+        0xFB, // STI
+        // loop:
+        0xFF, 0x06, 0x02, 0x05, // INC WORD [0502h]
+        0x83, 0x3E, 0x00, 0x05, 0x14, // CMP WORD [0500h],20
+        0x72, 0xF5, // JB loop
+        0xFA, 0xF4, // CLI; HLT
+    ];
+    vec![
+        (0x7C00, main),
+        (0x8000, RENAMING_HANDLER.to_vec()),
+        (0x20, vec![0x00, 0x80, 0, 0]),
+        (0x50 * 4, vec![0x00, 0x80, 0, 0]),
+        (0x504, vec![0x08]),
+    ]
+}
+
+/// An IRQ is named by its controller input from the vector bases in
+/// effect when it was acknowledged, also when the handler's served port
+/// writes give the controller a new base before the slice ends.
+#[test]
+fn an_irq_is_named_from_the_bases_it_was_taken_under() {
+    let run = |in_process: bool| {
+        let mut cpu = X86JitCpu::new_i286_bare(0x100000, 0, 0x7C00, RealSegments::flat(0)).unwrap();
+        cpu.map_ram(0, WINDOW).unwrap();
+        for (addr, bytes) in renaming_program() {
+            cpu.write_mem(u64::from(addr), &bytes).unwrap();
+        }
+        let pic = SharedPic::new();
+        let port = |ports: std::ops::RangeInclusive<u16>, device| PortRange {
+            ports,
+            device,
+            width: PortWidth::Byte,
+        };
+        let bus = Bus::new(
+            vec![Box::new(pic.clone()), Box::new(Pit8253::new())],
+            DecodeMap {
+                ports: vec![port(0x20..=0x21, 0), port(0x40..=0x43, 1)],
+                mmio: Vec::new(),
+            },
+        );
+        let lines = vec![IrqLine {
+            device: 1,
+            output: 0,
+            irq: 0,
+        }];
+        let mut machine =
+            Machine::new(cpu, bus, Box::new(pic), lines, None).with_in_process_devices(in_process);
+        machine.enable_delivery_log().unwrap();
+        machine.set_irq_bases_of(Box::new(|bus: &Bus| {
+            let master = bus
+                .device(0)
+                .and_then(|pic| devices::Pic8259::diagnostic_from_snapshot(&pic.save()))
+                .map(|pic| pic.vector_base);
+            [master, None]
+        }));
+        assert_eq!(
+            machine.run_bounded(Some(1_000_000)).unwrap(),
+            RunOutcome::Halted
+        );
+        let mut ram = vec![0; 0x10000];
+        machine.cpu().read_mem(0, &mut ram).unwrap();
+        (
+            machine.recent_deliveries().unwrap(),
+            machine.cpu().retired(),
+            ram,
+            machine.served_accesses(),
+        )
+    };
+    let (exits, retired, ram, _) = run(false);
+    let (served, served_retired, served_ram, count) = run(true);
+    assert!(count.ports > 20 * 4, "{count:?}");
+    let irqs: Vec<_> = exits
+        .entries
+        .iter()
+        .filter_map(|entry| match entry {
+            machine::DeliveryEntry::Deliveries { last, .. }
+                if last.kind == cpu::DeliveryKind::Irq =>
+            {
+                Some((last.vector, last.irq))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(irqs.len(), 20, "{irqs:?}");
+    assert!(irqs.iter().all(|&(_, irq)| irq == Some(0)), "{irqs:?}");
+    assert!(irqs.iter().any(|&(vector, _)| vector == 0x50), "{irqs:?}");
+    assert_eq!(served.entries, exits.entries);
+    assert_eq!((served_retired, served_ram), (retired, ram));
+}
+
+/// A timer request pending behind CLI while the guest polls served ports,
+/// then taken after STI, also when the next access sits in the STI or
+/// MOV SS shadow (Intel 80286 Programmer's Reference Manual, §9.5,
+/// Interrupt Priorities; Intel 8259A datasheet, Interrupt Sequence).
+fn masked_program() -> Vec<(u32, Vec<u8>)> {
+    let main = vec![
+        0xFA, // CLI
+        0xB0, 0x13, 0xE6, 0x20, // ICW1
+        0xB0, 0x08, 0xE6, 0x21, // ICW2: vectors 08h-0Fh
+        0xB0, 0x01, 0xE6, 0x21, // ICW4
+        0xB0, 0xFE, 0xE6, 0x21, // unmask IRQ0
+        0xB0, 0x34, 0xE6, 0x43, // 8254 counter 0, mode 2
+        0xB0, 0x32, 0xE6, 0x40, 0xB0, 0x00, 0xE6, 0x40, // divisor 50
+        0xB9, 0xF4, 0x01, // MOV CX,500
+        0xE4, 0x80, // poll: IN AL,80h
+        0xE2, 0xFC, // LOOP poll
+        0xFB, // STI
+        0xE4, 0x80, // IN AL,80h in the STI shadow
+        0xB9, 0xF4, 0x01, // MOV CX,500
+        // again:
+        0xFA, // CLI
+        0xE4, 0x80, 0xE4, 0x80, // IN AL,80h twice
+        0x8C, 0xD0, 0x8E, 0xD0, // MOV AX,SS; MOV SS,AX
+        0xE4, 0x80, // IN AL,80h in the MOV SS shadow
+        0xFB, // STI
+        0xE4, 0x80, // IN AL,80h in the STI shadow
+        0xE2, 0xF0, // LOOP again
+        0xFA, 0xF4, // CLI; HLT
+    ];
+    let irq0 = vec![
+        0x50, // PUSH AX
+        0xFF, 0x06, 0x00, 0x05, // INC WORD [0500h]
+        0xB0, 0x20, 0xE6, 0x20, // EOI
+        0x58, 0xCF, // POP AX; IRET
+    ];
+    vec![
+        (0x7C00, main),
+        (0x8000, irq0),
+        (0x20, vec![0x00, 0x80, 0, 0]),
+    ]
+}
+
+#[test]
+fn a_request_pending_behind_cli_is_acknowledged_where_the_loop_would() {
+    let (exits, _, _) = run(program_rig(false, masked_program()), 1_000_000);
+    let (served, _, count) = run(program_rig(true, masked_program()), 1_000_000);
+    assert_eq!(exits.outcome, RunOutcome::Halted);
+    assert!(count.ports > 2_000, "{count:?}");
+    let [timer, _, _] = counters(&exits);
+    assert!(timer > 20, "{timer}");
+    assert_eq!(served, exits);
+    // Caps land inside the masked poll, in the shadows and at entries.
+    for cap in (1..3_000).step_by(37).chain([4_999, 7_001, 9_973]) {
+        let (exits, _, _) = run(program_rig(false, masked_program()), cap);
+        let (served, _, _) = run(program_rig(true, masked_program()), cap);
+        assert_eq!(served, exits, "cap {cap}");
+    }
+}
+
+/// Timer divisors that land the 8254's request at every phase of the
+/// short loops below.
+const PHASE_DIVISORS: [u16; 12] = [19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67];
+
+/// The 8259 and 8254 set up for IRQ0 at `divisor` (Intel 8254 datasheet,
+/// Mode 2) with interrupts disabled, then `prologue` and a loop of `body`
+/// run 4000h times by LOOP, then CLI; HLT. IRQ0 counts in [0500h], the
+/// single-step trap in [0504h] (Intel 80286 Programmer's Reference Manual,
+/// §9.5, Single Step Interrupt).
+fn traced_loop_program(divisor: u16, prologue: &[u8], body: &[u8]) -> Vec<(u32, Vec<u8>)> {
+    let [lo, hi] = divisor.to_le_bytes();
+    let mut main = vec![
+        0xFA, // CLI
+        0xB0, 0x13, 0xE6, 0x20, // ICW1
+        0xB0, 0x08, 0xE6, 0x21, // ICW2: vectors 08h-0Fh
+        0xB0, 0x01, 0xE6, 0x21, // ICW4
+        0xB0, 0xFE, 0xE6, 0x21, // unmask IRQ0
+        0xB0, 0x34, 0xE6, 0x43, // 8254 counter 0, mode 2
+        0xB0, lo, 0xE6, 0x40, 0xB0, hi, 0xE6, 0x40, // the divisor
+    ];
+    main.extend_from_slice(prologue);
+    main.extend([0xB9, 0x00, 0x40]); // MOV CX,4000h
+    main.extend_from_slice(body);
+    main.extend([0xE2, (-(body.len() as i8) - 2) as u8]); // LOOP body
+    main.extend([0xFA, 0xF4]); // CLI; HLT
+    let irq0 = vec![
+        0x50, // PUSH AX
+        0xFF, 0x06, 0x00, 0x05, // INC WORD [0500h]
+        0xB0, 0x20, 0xE6, 0x20, // EOI
+        0x58, 0xCF, // POP AX; IRET
+    ];
+    let step = vec![
+        0xFF, 0x06, 0x04, 0x05, // INC WORD [0504h]
+        0xCF, // IRET
+    ];
+    vec![
+        (0x7C00, main),
+        (0x8000, irq0),
+        (0x8200, step),
+        (0x04, vec![0x00, 0x82, 0, 0]),
+        (0x20, vec![0x00, 0x80, 0, 0]),
+    ]
+}
+
+/// STI, then TF set through PUSHF; POP AX; OR AH,1; PUSH AX; POPF.
+const STI_AND_TRACE: &[u8] = &[0xFB, 0x9C, 0x58, 0x80, 0xCC, 0x01, 0x50, 0x9D];
+
+/// Both ways at every divisor must match, including every acknowledgement
+/// time in the controller's log.
+fn assert_traced_loop_matches(body: &[u8], prologue: &[u8]) {
+    let mut diverged = Vec::new();
+    for divisor in PHASE_DIVISORS {
+        let program = || traced_loop_program(divisor, prologue, body);
+        let (exits, _, _) = run(program_rig(false, program()), 200_000);
+        let (served, _, count) = run(program_rig(true, program()), 200_000);
+        let [timer, _, steps] = counters(&exits);
+        assert!(timer > 10 && steps > 1000, "{divisor}: {timer} {steps}");
+        assert!(count.ports > 1000, "{divisor}: {count:?}");
+        if served != exits {
+            diverged.push(divisor);
+        }
+    }
+    assert!(diverged.is_empty(), "diverged at divisors {diverged:?}");
+}
+
+/// With TF and IF set, a served IN in the shadow of MOV SS: a run that
+/// starts in the shadow has a request pending and the CPU not ready, and
+/// the boundary after the IN holds the IN's single-step trap, which the
+/// CPU delivers before it would stop for the request.
+#[test]
+fn a_request_behind_a_traced_access_in_a_mov_ss_shadow_is_acknowledged_where_the_loop_would() {
+    // MOV AX,SS; MOV SS,AX; IN AL,80h.
+    assert_traced_loop_matches(&[0x8C, 0xD0, 0x8E, 0xD0, 0xE4, 0x80], STI_AND_TRACE);
+}
+
+/// The same with TF set and the served IN in the shadow of STI, after a
+/// served IN with interrupts disabled.
+#[test]
+fn a_request_behind_a_traced_access_in_an_sti_shadow_is_acknowledged_where_the_loop_would() {
+    // CLI; IN AL,80h; STI; IN AL,80h.
+    assert_traced_loop_matches(&[0xFA, 0xE4, 0x80, 0xFB, 0xE4, 0x80], STI_AND_TRACE);
+}
+
+/// TF and IF set together by POPF in a run that began with both clear,
+/// then a served IN whose single-step trap is held at the next boundary.
+#[test]
+fn a_request_behind_a_traced_access_after_popf_is_acknowledged_where_the_loop_would() {
+    assert_traced_loop_matches(
+        &[
+            0xFA, // CLI
+            0xE4, 0x80, 0xE4, 0x80, // IN AL,80h twice
+            0x68, 0x02, 0x03, // PUSH 0302h: IF and TF
+            0x9D, // POPF
+            0xE4, 0x80, // IN AL,80h, traced
+            0x9C, 0x58, 0x80, 0xE4, 0xFE, 0x50, 0x9D, // clear TF again
+        ],
+        &[],
+    );
+}
+
+/// A run that began with interrupts disabled, then STI directly followed
+/// by MOV SS and a served IN in its shadow, all traced.
+#[test]
+fn a_request_behind_a_traced_access_in_a_mov_ss_shadow_after_sti_is_acknowledged_where_the_loop_would(
+) {
+    // CLI; IN AL,80h; MOV AX,SS; STI; MOV SS,AX; IN AL,80h.
+    assert_traced_loop_matches(
+        &[0xFA, 0xE4, 0x80, 0x8C, 0xD0, 0xFB, 0x8E, 0xD0, 0xE4, 0x80],
+        STI_AND_TRACE,
+    );
+}
+
+/// TF and IF set together by POPF in a run that began with both clear,
+/// then a served IN in the shadow of MOV SS.
+#[test]
+fn a_request_behind_a_traced_access_in_a_mov_ss_shadow_after_popf_is_acknowledged_where_the_loop_would(
+) {
+    assert_traced_loop_matches(
+        &[
+            0xFA, // CLI
+            0xE4, 0x80, 0xE4, 0x80, // IN AL,80h twice
+            0x68, 0x02, 0x03, // PUSH 0302h: IF and TF
+            0x9D, // POPF
+            0x8C, 0xD0, 0x8E, 0xD0, // MOV AX,SS; MOV SS,AX
+            0xE4, 0x80, // IN AL,80h in the shadow, traced
+            0x9C, 0x58, 0x80, 0xE4, 0xFE, 0x50, 0x9D, // clear TF again
+        ],
+        &[],
+    );
 }

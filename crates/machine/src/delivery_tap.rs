@@ -11,9 +11,12 @@
 //! of the last [`RECENT_DELIVERIES`] entries for the report, and a
 //! [`DeliveryRecording`], a ring of the last [`RECORDED_ENTRIES`] entries
 //! with exact totals per vector, which the front end writes out when it
-//! likes. A slice ends at every port access before the bus performs it, so
-//! an IRQ's controller input is named from the 8259's vector bases as they
-//! were at its delivery.
+//! likes. An IRQ's controller input is named from the 8259's vector bases
+//! under which it was acknowledged, read when the machine acknowledges it:
+//! a port write before its delivery (one served while the CPU runs, or any
+//! while a single-step trap or an NMI is delivered first) can change them.
+//! An IRQ the CPU was handed without the machine's acknowledgement is named
+//! from the bases when its slice ends.
 //!
 //! Both rings fold consecutive identical deliveries (the same kind, vector,
 //! saved CS:IP, error code and VM transition) into one entry with a count and the retired
@@ -365,16 +368,18 @@ impl<C: cpu::Cpu> crate::Machine<C> {
     }
 
     /// Name the controller input of an IRQ delivery from its vector, with
-    /// the vector bases `bases_of` reads from the bus as it stands when a
-    /// slice ends: the master's eight vectors are IRQ 0 to 7, the slave's
-    /// IRQ 8 to 15. The bases are read once per slice that has an IRQ
-    /// delivery.
+    /// the vector bases `bases_of` reads from the bus as it stands when the
+    /// machine acknowledges the IRQ (see the module docs): the master's
+    /// eight vectors are IRQ 0 to 7, the slave's IRQ 8 to 15. The bases are
+    /// read once per acknowledgement while a delivery log exists.
     pub fn set_irq_bases_of(&mut self, bases_of: crate::IrqBasesOf) {
         self.irq_bases_of = Some(bases_of);
     }
 
     /// Move the CPU's delivery records into the tap; nothing without one.
-    pub(crate) fn read_deliveries(&mut self) {
+    /// `bases` are the vector bases read when the IRQ the slice delivered
+    /// was acknowledged; without them they are read now.
+    pub(crate) fn read_deliveries(&mut self, bases: Option<[Option<u8>; 2]>) {
         let Some(tap) = self.deliveries.as_deref_mut() else {
             return;
         };
@@ -388,7 +393,7 @@ impl<C: cpu::Cpu> crate::Machine<C> {
             .as_ref()
             .filter(|_| tap.buffer.iter().any(irq))
         {
-            let bases = bases_of(&self.bus);
+            let bases = bases.unwrap_or_else(|| bases_of(&self.bus));
             for record in tap.buffer.iter_mut().filter(|record| irq(record)) {
                 record.irq = irq_input(bases, record.vector);
             }

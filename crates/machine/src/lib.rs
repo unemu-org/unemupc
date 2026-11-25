@@ -282,6 +282,9 @@ pub struct Machine<C: Cpu> {
     /// Reads the interrupt controllers' vector bases, to name an IRQ
     /// delivery's controller input from its vector.
     irq_bases_of: Option<IrqBasesOf>,
+    /// The vector bases when the IRQ the CPU holds queued was acknowledged,
+    /// read only for the delivery tap: its delivery is named from them.
+    queued_irq_bases: Option<[Option<u8>; 2]>,
     /// The reset requests that came soon after the one before.
     reset_streak: ResetStreak,
     /// Serve [`SERVED_RANGES`] while the CPU runs; see
@@ -384,6 +387,7 @@ impl<C: Cpu> Machine<C> {
             code_trail: None,
             deliveries: None,
             irq_bases_of: None,
+            queued_irq_bases: None,
             reset_streak: ResetStreak::default(),
             in_process_devices: true,
             served_ranges: None,
@@ -619,11 +623,11 @@ impl<C: Cpu> Machine<C> {
 
     /// Serve the accesses in [`SERVED_RANGES`] while the CPU runs, instead of
     /// returning from the CPU for each one (on by default; see
-    /// [`in_process`](crate::in_process)). Either way the guest sees the same
-    /// machine: the same retired counts, virtual time, device state and
-    /// output. Off restores a return for every access, for comparison and
-    /// measurement. A CPU backend without in-process access ignores it.
-    /// Takes effect at the next run.
+    /// `backlog/docs/design/scheduler.md` §In-process device access). Either
+    /// way the guest sees the same machine: the same retired counts, virtual
+    /// time, device state and output. Off restores a return for every
+    /// access, for comparison and measurement. A CPU backend without
+    /// in-process access ignores it. Takes effect at the next run.
     pub fn set_in_process_devices(&mut self, enabled: bool) {
         self.in_process_devices = enabled;
     }
@@ -942,6 +946,15 @@ impl<C: Cpu> Machine<C> {
                 if self.cpu.irq_ready() && !self.cpu.has_pending_irq() && self.pic.poll().is_some()
                 {
                     if let Some(vector) = self.pic.acknowledge() {
+                        // The vector came from the bases the controllers
+                        // hold now; port writes before its delivery (served
+                        // ones in the same slice, or any while a single-step
+                        // trap or an NMI is delivered first) can change them.
+                        self.queued_irq_bases = self
+                            .irq_bases_of
+                            .as_ref()
+                            .filter(|_| self.deliveries.is_some())
+                            .map(|bases_of| bases_of(&self.bus));
                         self.cpu.inject_irq(vector);
                     }
                 }
@@ -1058,6 +1071,11 @@ impl<C: Cpu> Machine<C> {
                 return Err(scheduler_error("virtual counter exhausted"));
             }
             let before = self.cpu.completed_steps();
+            // The reference engine visits every device at every clock, which
+            // the handler's quiet charges do not reproduce: it never serves.
+            let serving = self.in_process_devices && self.engine == SchedulerEngine::Deadline;
+            // An IRQ the guest takes in this slice is the one queued.
+            let irq_bases = self.queued_irq_bases.filter(|_| self.cpu.has_pending_irq());
             #[cfg(feature = "host-profile")]
             let profile = self.bus.profile().clone();
             #[cfg(feature = "host-profile")]
@@ -1065,14 +1083,13 @@ impl<C: Cpu> Machine<C> {
             let (run, served) = {
                 #[cfg(feature = "host-profile")]
                 let _span = profile.span(device::profile::ProfilePhase::Cpu);
-                if self.in_process_devices {
+                if serving {
                     let mut handler = in_process::InProcess {
                         bus: &mut self.bus,
                         pic: &mut *self.pic,
                         clock: &mut self.clock,
                         completed_steps: &mut self.completed_steps,
                         clock_remainder: &mut self.clock_remainder,
-                        engine: self.engine,
                         cpu_rate_numerator: self.cpu_rate_numerator,
                         cpu_tick_denominator: self.cpu_tick_denominator,
                         irq_lines: &self.irq_lines,
@@ -1085,6 +1102,9 @@ impl<C: Cpu> Machine<C> {
                             .map(|line| (line, self.a20_changes)),
                         reset_signal: self.reset_signal.as_deref(),
                         memory_map: self.memory_map.is_some(),
+                        irq_stop_armed: options.stop_when_irq_ready
+                            && !self.cpu.has_pending_irq()
+                            && !self.cpu.interrupts_enabled(),
                         budget,
                         deadline_at,
                         outcome: in_process::ServedRun::default(),
@@ -1122,6 +1142,22 @@ impl<C: Cpu> Machine<C> {
                     budget,
                     exit,
                 );
+                if let Ok(cpu::CpuStepRun {
+                    stop: CpuStepStop::Exit(stop),
+                    ..
+                }) = &run
+                {
+                    use device::profile::ProfileSpace;
+                    match *stop {
+                        CpuStop::PortIn { port, .. } | CpuStop::PortOut { port, .. } => {
+                            profile.access(ProfileSpace::Port, u64::from(port), false);
+                        }
+                        CpuStop::MmioRead { addr, .. } | CpuStop::MmioWrite { addr, .. } => {
+                            profile.access(ProfileSpace::Mmio, addr, false);
+                        }
+                        _ => {}
+                    }
+                }
             }
             self.close_reset_fetch_window();
             {
@@ -1130,18 +1166,39 @@ impl<C: Cpu> Machine<C> {
                     .bus
                     .profile()
                     .span(device::profile::ProfilePhase::Observation);
-                self.read_deliveries();
+                self.read_deliveries(irq_bases);
+            }
+            if !self.cpu.has_pending_irq() {
+                self.queued_irq_bases = None;
             }
             let run = match run {
                 Ok(run) if served.error.is_none() => run,
                 run => {
                     // A served access's failure is the one the loop reports,
                     // after what it does for a failed ordinary stop: sync the
-                    // A20 gate a port write changed and poll the coprocessor
-                    // acknowledgement.
+                    // A20 gate a port write changed, poll the coprocessor
+                    // acknowledgement, charge the access's own step and
+                    // settle the bus, the accessed devices first.
                     let completed = self.cpu.completed_steps() - before;
-                    self.charge_steps(completed.saturating_sub(served.charged))?;
                     self.served_accesses.add(&served.served);
+                    if served.finish {
+                        if served.sync_a20 {
+                            self.sync_a20();
+                        }
+                        if self.numeric_error_ack.as_ref().is_some_and(|ack| ack()) {
+                            self.cpu.ack_external_numeric_error()?;
+                        }
+                        // The access's error wins over these, as it does there.
+                        let _ = self.charge_steps(completed.saturating_sub(served.charged));
+                        if served.failed {
+                            self.bus.settle();
+                        }
+                        let _ = self.settle(true);
+                        return Err(served
+                            .error
+                            .unwrap_or_else(|| scheduler_error("served access failed")));
+                    }
+                    self.charge_steps(completed.saturating_sub(served.charged))?;
                     if served.error.is_some() {
                         if served.sync_a20 {
                             self.sync_a20();
@@ -1188,12 +1245,24 @@ impl<C: Cpu> Machine<C> {
             let prefix = prefix
                 .checked_sub(served.charged)
                 .ok_or_else(|| scheduler_error("served accesses charged past the stop"))?;
-            self.charge_steps(prefix)?;
-            if served.sync_a20 {
-                self.sync_a20();
-            }
-            if served.settle {
-                self.settle(false)?;
+            if served.finish {
+                // The last served access's own step and settle, in the
+                // order the ordinary stop's service runs them.
+                if served.sync_a20 {
+                    self.sync_a20();
+                }
+                let charged = self.charge_steps(prefix);
+                let settled = self.settle(true);
+                charged?;
+                settled?;
+            } else {
+                self.charge_steps(prefix)?;
+                if served.sync_a20 {
+                    self.sync_a20();
+                }
+                if served.settle {
+                    self.settle(false)?;
+                }
             }
             let accessed = matches!(
                 stop,
