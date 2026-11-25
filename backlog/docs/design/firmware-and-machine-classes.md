@@ -668,6 +668,15 @@ hard-disk fixture and remains a follow-up; it is not tested by these profiles.
 The catalogue remains Listed; this is qualification of these exact profiles
 and pins, not a change to the catalogue's general firmware status.
 
+The `generic-386-games.toml` and `generic-486-games.toml` profiles retain this
+floppy/readonly IDE layout and add SB16/OPL3 at 220h, IRQ5, DMA1/DMA5. Sound
+uses the existing AT controllers: DMA5's address/count at C4h/C6h and page
+8Bh, and master PIC IRQ5 (vector 0Dh after SeaBIOS initialization). The
+shared sound probes leave the firmware's PIC initialization intact, unmask
+IRQ5, and verify completion and EOI without changing firmware or its catalogue
+status. See [the machine-file sound contract](machine-files.md#freedos-floppy-and-ide-profiles)
+and [the optional local DOOM sound probe](../user-media.md#sound-variant).
+
 **Implemented catalogue entry.** `seabios-1.17.0-unemu1-isa` is **Listed**, not
 Tested: a 131,072-byte system BIOS at E0000h, SHA-256
 `ad50fdb5e12a03dd5c17eac481a4183a7793b84252319eea02b8c878667c994f`.

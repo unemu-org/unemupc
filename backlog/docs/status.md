@@ -1,5 +1,30 @@
 # Status
 
+## SB16 on generic ISA boards (2026-11-25)
+
+**MEASURED**, x86jit `6a38ae49`: shared SeaBIOS boot probes pass on 80386DX,
+80486DX and 80486DX-CPUID. `generic-386-games.toml` and
+`generic-486-games.toml` extend the existing IDE profiles with SB16/OPL3 at
+220h, IRQ5, DMA1/DMA5; FreeDOS A: and the pinned readonly IDE C: are inherited.
+The earlier generic machine files are unchanged.
+
+The probes check DSP reset AA/4.05, 8-bit mono and signed 16-bit stereo DMA
+from 21000h (including DMA5 page-bit masking), IRQ5 delivery/acknowledgement,
+clear master/slave PIC in-service registers, OPL detection and timer status
+00h/FFh/C0h, and FM key-on/release. SeaBIOS masks are B8h/8Eh; the driver
+unmasks IRQ5 without reinitializing either PIC. Independent PCM integration,
+frozen audio hashes/retired counts and split runs cover all three CPU choices.
+No DMA/PIC/device behavior change was required. See
+[machine profiles](design/machine-files.md#freedos-floppy-and-ide-profiles)
+and [the separately opted-in DOOM sound probe](user-media.md#sound-variant).
+
+**MEASURED:** the ignored `user_media_doom_sound_386` reaches a mode 13h
+picture with 243 palette indices at 160,240,957 retired instructions (43.7 s
+in this probe). The test-owned DEFAULT.CFG selects SB effects and OPL music;
+the SB16 sees 15 DSP command writes, 528 OPL data writes and channel-1 DMA
+advancement without register programming. No audio digest or game-derived
+artifact is retained; see [the sound variant](user-media.md#sound-variant).
+
 ## Local DOOM startup (2026-11-24)
 
 **MEASURED:** registered DOOM 1.2 from a user-supplied directory reaches mode

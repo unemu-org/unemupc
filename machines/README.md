@@ -29,6 +29,14 @@ the other variant. These profiles boot from A:, while C: is a data disk;
 booting directly from C: needs a separate bootable fixture and qualification.
 See [the board description](../backlog/docs/design/machine-files.md#generic-386-isa-board).
 
+`generic-386-games.toml` and `generic-486-games.toml` extend the IDE profiles
+with a Sound Blaster 16 and its OPL3: DSP base 220h, IRQ5, byte DMA channel 1
+and word DMA channel 5. They retain FreeDOS boot from A:, the pinned readonly
+IDE C: and the same open SeaBIOS/SeaVGABIOS firmware. The 486 profile selects
+`80486dx`; a child may select `80486dx-cpuid`. Use a local child profile for
+game media. The optional [DOOM sound probe](../backlog/docs/user-media.md#sound-variant)
+builds temporary media from a user copy and supplies its own sound configuration.
+
 `at-freedos.toml` and its equivalent `at-freedos.yaml` describe the current
 IBM PC/AT-class FreeDOS machine:
 Xi8088 open BIOS, MDA and VGA text cards, an unwired COM1, and a 1.44 MB

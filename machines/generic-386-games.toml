@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+schema = 1
+extends = "generic-386-ide.toml"
+name = "generic-386-games"
+description = "ISA board booting FreeDOS from A: with readonly IDE C: and SB16/OPL3"
+
+[[card]]
+kind = "sb16"
+base = 0x220
+irq = 5
+dma8 = 1
+dma16 = 5

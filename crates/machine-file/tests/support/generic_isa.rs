@@ -853,6 +853,18 @@ fn freedos_config(chip: CpuChip, ide: bool) -> Option<assembly::MachineConfig> {
     Some(config)
 }
 
+fn games_config(chip: CpuChip) -> Option<assembly::MachineConfig> {
+    freedos_config(chip, true)?;
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let bits = if chip == CpuChip::I80386 { 386 } else { 486 };
+    let path = root.join(format!("machines/generic-{bits}-games.toml"));
+    let mut config = machine_file::load_for_assembly(path, Default::default())
+        .unwrap()
+        .config;
+    config.cpu.chip = chip;
+    Some(config)
+}
+
 /// IBM Personal Computer AT Technical Reference, System Board, CMOS RAM
 /// Information: drive-type nibbles at 10h and drive count at 14h. SeaBIOS
 /// rel-1.17.0, floppy.c floppy_setup consumes those same type nibbles.
@@ -1646,3 +1658,7 @@ pub fn seabios_freedos_dos32a(chip: CpuChip, vcpi: bool) {
 #[path = "user_media.rs"]
 mod user_media;
 pub use user_media::doom as user_media_doom;
+
+#[path = "generic_sound.rs"]
+mod generic_sound;
+pub use generic_sound::sb16_opl3 as seabios_sb16_opl3;

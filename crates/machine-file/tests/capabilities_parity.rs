@@ -216,9 +216,11 @@ fn repository_machine_file_parity() {
         // The open AT BIOS's mono display switch.
         ("machines/at-ide.toml".into(), "e42872c37de7d3674033a09efaf304ff1e47f95392af3baa9f2ed2553ab8a60d".into()),
         ("machines/generic-386-freedos.toml".into(), "8e5108608b54b5dc7995ca6d0fe2e7d47669c6a50d7c9732ea2027fa2993a212".into()),
+        ("machines/generic-386-games.toml".into(), "f9aecd23a2e55413a33a16ca57e5d8feae9b1d4b2f0ef1a8e377c5505c631f29".into()),
         ("machines/generic-386-ide.toml".into(), "8e3d00fb265c98f756cb78af21875862cc487c3123a8a3494315fb3388fee788".into()),
         ("machines/generic-386-seabios.toml".into(), "61cf0bc019ca5f066c88f38db91de63492fc27b3ea225f95882daa06305b51d0".into()),
         ("machines/generic-486-freedos.toml".into(), "15d8146732683afe9e9ff865d82aafab9441f35000d378cdafb914893e6cb94e".into()),
+        ("machines/generic-486-games.toml".into(), "8228c77db74a330518a6acc8060f5130813b8cc694accfaaee4ab231e85c6de7".into()),
         ("machines/generic-486-ide.toml".into(), "ee6e31860a9cb03a4339c3b7696f6f969ffe867d2c9e8ad8954a8bf355dd1efa".into()),
         ("machines/generic-486-seabios.toml".into(), "d43e0b355235b30aec8244dec0efb47cd7d2c843d38c10a68466329740c2f54a".into()),
         ("machines/presets/ibm-5170.toml".into(), "resolve:<repo>/machines/presets/ibm-5170.toml:16: firmware.bios.image: required fields are missing: firmware.bios.image (<repo>/machines/presets/ibm-5170.toml:16); inheritance chain: <repo>/machines/presets/ibm-5170.toml".into()),

@@ -549,6 +549,29 @@ IRQ14. SeaBIOS provides both disk services; there is no XTIDE ROM. The
 storage and the early DX CPU; the shared tests also select `80486dx-cpuid`.
 The diskless profiles and their hashes remain unchanged.
 
+The `generic-386-games.toml` and `generic-486-games.toml` children add an
+SB16/OPL3 to the matching IDE profile, at 220h, IRQ5, byte DMA 1 and word
+DMA 5. Both retain the readonly, SHA-256-pinned C: and FreeDOS A: boot order.
+The word channel uses the second 8237 at C0h–DFh and the 8Bh page latch.
+IRQ5 goes directly to the master 8259; the slave remains cascaded on IRQ2
+for devices such as the inherited IDE IRQ14. The sound guest preserves
+SeaBIOS's vector bases and unmasks IRQ5 as a DOS sound driver would.
+The shared `*_seabios_sb16_opl3_golden` tests select all three CPU models.
+They boot project-owned probes through SeaBIOS and check DSP reset/version,
+byte and signed-stereo word DMA above 64 KiB, IRQ acknowledgement, both PIC
+in-service registers, OPL detection/timer status and FM key-on/release.
+PCM is compared with an independent integration of the AT golden samples;
+retired counts and complete audio hashes are pinned, with split runs around
+DMA deadlines and FM writes. No proprietary guest is needed for these goldens.
+The AT FM patch holds its note for about 4000 PIT clocks; the generic guest
+scales that instruction loop to each board's nominal rate, then requires
+nonzero PCM both before and after key-off. A literal 4000-instruction hold
+ends before the FM envelope becomes audible at the higher CPU rates.
+At CPU pin `6a38ae49`, all three models acknowledge the byte/word DSP IRQ
+597/299 PIT clocks after the final playback-command byte. SeaBIOS's initial
+master/slave masks are B8h/8Eh; after the driver unmasks IRQ5, both in-service
+registers and the DSP interrupt status return to zero on completion.
+
 **READ:** both boards already permit these cards and supply the DMA controller.
 The shared CMOS derivation advertises A: as type 4 in byte 10h (`40h`),
 sets equipment bit 0 at 14h, and preserves the integrated-FPU bit on 486.

@@ -638,9 +638,11 @@ fn repository_machine_cpu_regions_cover_the_full_firmware_board_space() {
             "at-games.toml",
             "at-ide.toml",
             "generic-386-freedos.toml",
+            "generic-386-games.toml",
             "generic-386-ide.toml",
             "generic-386-seabios.toml",
             "generic-486-freedos.toml",
+            "generic-486-games.toml",
             "generic-486-ide.toml",
             "generic-486-seabios.toml",
             "presets/ibm-5170.toml",
@@ -776,7 +778,7 @@ fn repository_machine_cpu_regions_cover_the_full_firmware_board_space() {
         }
     }
     assert_eq!(
-        checked, 14,
+        checked, 16,
         "every machine file and both preset BIOS variants"
     );
 }

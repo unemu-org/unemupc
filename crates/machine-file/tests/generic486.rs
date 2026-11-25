@@ -153,6 +153,16 @@ fn generic486_cpuid_seabios_storage_configuration() {
 }
 
 #[test]
+fn generic486_dx_seabios_sb16_opl3_golden() {
+    generic_isa::seabios_sb16_opl3(assembly::CpuChip::I80486Dx);
+}
+
+#[test]
+fn generic486_cpuid_seabios_sb16_opl3_golden() {
+    generic_isa::seabios_sb16_opl3(assembly::CpuChip::I80486DxCpuid);
+}
+
+#[test]
 fn generic486_dx_seabios_freedos_jemmex_v86() {
     generic_isa::seabios_freedos_jemmex_v86(assembly::CpuChip::I80486Dx);
 }
@@ -185,11 +195,11 @@ fn generic486_cpuid_seabios_freedos_dos32a_vcpi() {
 #[test]
 #[ignore = "local-only commercial media; set UNEMUPC_USER_DOOM_DIR"]
 fn user_media_doom_486_dx() {
-    generic_isa::user_media_doom(assembly::CpuChip::I80486Dx);
+    generic_isa::user_media_doom(assembly::CpuChip::I80486Dx, false);
 }
 
 #[test]
 #[ignore = "local-only commercial media; set UNEMUPC_USER_DOOM_DIR"]
 fn user_media_doom_486_cpuid() {
-    generic_isa::user_media_doom(assembly::CpuChip::I80486DxCpuid);
+    generic_isa::user_media_doom(assembly::CpuChip::I80486DxCpuid, false);
 }

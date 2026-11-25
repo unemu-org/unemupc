@@ -34,6 +34,50 @@ helper uses the shipped generic IDE profile, boots FreeDOS from A:, types `C:`
 and `DOOM` through the emulated keyboard, and gives C: a volatile sector overlay.
 No configuration writes reach the immutable base or the supplied directory.
 
+## Sound variant
+
+`user_media_doom_sound_386` uses `machines/generic-386-games.toml` with SB16
+at 220h, IRQ5 and DMA1/DMA5. It is separately ignored and requires the same
+`UNEMUPC_USER_DOOM_DIR` opt-in:
+
+```sh
+cargo test --offline -p machine-file --test generic386 user_media_doom_sound_386 -- --ignored --nocapture
+```
+
+Before hashing or mounting the generated data disk, the test replaces its
+`DEFAULT.CFG` with these test-owned DOOM 1.2 settings:
+
+```text
+snd_sfxdevice 3
+snd_musicdevice 3
+snd_sbport 544
+snd_sbirq 5
+snd_sbdma 1
+snd_mport -1
+snd_channels 3
+```
+
+These select Sound Blaster effects and OPL music; 544 is decimal 220h.
+The source directory is only read. The disk base receives its full SHA-256
+after the generated configuration is copied; subsequent guest writes stay
+in the volatile sector overlay. The probe requires the same non-trivial
+mode 13h picture plus DSP command writes, OPL register-data writes and
+channel-1 address/count advancement during a poll with no DMA-controller
+register writes. It observes the existing bounded port traces and restores
+device snapshots into a separate 8237 for side-effect-free inspection.
+Trace overflow is a failure. No audio or game-derived hash is recorded.
+
+**MEASURED**, DOOM 1.2, x86jit `6a38ae49`: all selected startup identifiers
+and the DOS/4G banner appear. The qualifying mode 13h picture has 243 palette
+indices at 160,240,957 retired instructions (43.7 s in this probe). At that
+point the SB16 has seen 15 DSP command writes and 528 OPL register-data writes,
+and the DMA advancement check has passed. This qualifies sound initialization
+and DMA activity at startup; it does not claim attract-mode endurance or pin
+the game's audio content. The sound trace rings hold 65,536 events per device
+and are drained every 100,000 scheduling units; other diagnostics keep their
+small rings. A synthetic-media test checks generated configuration replacement,
+deterministic disk bytes and preservation of the supplied directory's defaults.
+
 ## Temporary disk
 
 `scripts/user-media-disk.sh` reads only `UNEMUPC_USER_DOOM_DIR` and prints the

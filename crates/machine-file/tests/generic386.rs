@@ -55,6 +55,11 @@ fn generic386_seabios_storage_configuration() {
 }
 
 #[test]
+fn generic386_seabios_sb16_opl3_golden() {
+    generic_isa::seabios_sb16_opl3(assembly::CpuChip::I80386);
+}
+
+#[test]
 fn generic386_seabios_freedos_jemmex_v86() {
     generic_isa::seabios_freedos_jemmex_v86(assembly::CpuChip::I80386);
 }
@@ -72,5 +77,11 @@ fn generic386_seabios_freedos_dos32a_vcpi() {
 #[test]
 #[ignore = "local-only commercial media; set UNEMUPC_USER_DOOM_DIR"]
 fn user_media_doom_386() {
-    generic_isa::user_media_doom(assembly::CpuChip::I80386);
+    generic_isa::user_media_doom(assembly::CpuChip::I80386, false);
+}
+
+#[test]
+#[ignore = "local-only commercial media; set UNEMUPC_USER_DOOM_DIR"]
+fn user_media_doom_sound_386() {
+    generic_isa::user_media_doom(assembly::CpuChip::I80386, true);
 }

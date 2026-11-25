@@ -2,10 +2,13 @@
 //! Private DOOM qualification; see user-media.md. ATA-2, legacy task file;
 //! IBM VGA/XGA Technical Reference, BIOS mode 13h. No media or frame digests
 //! leave this process.
+//! Creative Sound Blaster Series Hardware Programming Guide, §2 DSP ports,
+//! §3 DMA output; Intel 8237A datasheet, Current Address and Word Count Registers.
 
-use super::{budget, freedos_config, freedos_text};
+use super::{budget, freedos_config, freedos_text, games_config};
 use assembly::{CpuChip, DeviceId};
 use cpu::Cpu;
+use device::{AccessDir, Device, TraceEvent};
 use std::{path::PathBuf, process::Command, time::Instant};
 
 struct PrivateDisk(PathBuf);
@@ -16,12 +19,116 @@ impl Drop for PrivateDisk {
     }
 }
 
-pub fn doom(chip: CpuChip) {
+const SOUND_CONFIG: &str = "snd_sfxdevice 3\nsnd_musicdevice 3\nsnd_sbport 544\nsnd_sbirq 5\nsnd_sbdma 1\nsnd_mport -1\nsnd_channels 3\n";
+
+fn configure_sound(disk: &PrivateDisk) {
+    let path = disk.0.with_file_name("DEFAULT.CFG");
+    std::fs::write(&path, SOUND_CONFIG).unwrap();
+    let copied = Command::new("mcopy")
+        .args(["-o", "-i"])
+        .arg(format!("{}@@16384", disk.0.display()))
+        .arg(&path)
+        .arg("::DEFAULT.CFG")
+        .env("MTOOLSRC", "/dev/null")
+        .env_remove("MTOOLS_DATE_STRING")
+        .env("SOURCE_DATE_EPOCH", "315532800")
+        .env("TZ", "UTC")
+        .output()
+        .expect("start generated sound configuration copy");
+    assert!(copied.status.success(), "sound configuration copy failed");
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn generated_sound_configuration_replaces_defaults_without_touching_source() {
+    use sha2::{Digest, Sha256};
+    let source = machine_file::test_support::TempDir::new("synthetic-sound-media");
+    std::fs::write(source.path().join("DOOM.EXE"), b"synthetic executable").unwrap();
+    std::fs::write(source.path().join("DOOM.WAD"), b"synthetic data").unwrap();
+    let defaults = source.path().join("DEFAULT.CFG");
+    std::fs::write(&defaults, b"snd_sfxdevice 0\n").unwrap();
+    let mut digests = Vec::new();
+    for _ in 0..2 {
+        let built = Command::new("bash")
+            .arg(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../scripts/user-media-disk.sh"))
+            .env("UNEMUPC_USER_DOOM_DIR", source.path())
+            .output()
+            .unwrap();
+        assert!(built.status.success());
+        let disk = PrivateDisk(PathBuf::from(
+            String::from_utf8(built.stdout).unwrap().trim(),
+        ));
+        configure_sound(&disk);
+        let read = Command::new("mtype")
+            .arg("-i")
+            .arg(format!("{}@@16384", disk.0.display()))
+            .arg("::DEFAULT.CFG")
+            .env("MTOOLSRC", "/dev/null")
+            .output()
+            .unwrap();
+        assert!(read.status.success());
+        assert_eq!(read.stdout, SOUND_CONFIG.as_bytes());
+        digests.push(Sha256::digest(std::fs::read(&disk.0).unwrap()));
+    }
+    assert_eq!(
+        digests[0], digests[1],
+        "generated sound media must reproduce"
+    );
+    assert_eq!(std::fs::read(defaults).unwrap(), b"snd_sfxdevice 0\n");
+}
+
+fn dma_position(assembled: &assembly::AssembledMachine) -> (u32, u16) {
+    let snapshot = assembled
+        .machine
+        .bus()
+        .device(assembled.device_index[&DeviceId::Dma])
+        .unwrap()
+        .save();
+    let mut dma = devices::Dma8237::new();
+    dma.restore(&snapshot).unwrap();
+    (dma.physical_address(1), dma.current_count(1))
+}
+
+#[derive(Default, Debug)]
+struct SoundActivity {
+    dsp_writes: u64,
+    opl_writes: u64,
+    dma_advanced: bool,
+}
+
+impl SoundActivity {
+    fn observe_ports(&mut self, events: &[TraceEvent]) {
+        for event in events {
+            if let TraceEvent::Port {
+                port,
+                dir: AccessDir::Write,
+                ..
+            } = event
+            {
+                match port {
+                    0x22C => self.dsp_writes += 1,
+                    0x221 | 0x223 | 0x229 | 0x389 | 0x38B => self.opl_writes += 1,
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    fn complete(&self) -> bool {
+        self.dsp_writes > 0 && self.opl_writes > 0 && self.dma_advanced
+    }
+}
+
+pub fn doom(chip: CpuChip, sound: bool) {
     if std::env::var_os("UNEMUPC_USER_DOOM_DIR").is_none() {
         eprintln!("skipping: set UNEMUPC_USER_DOOM_DIR to an extracted DOOM directory");
         return;
     }
-    let Some(mut config) = freedos_config(chip, true) else {
+    let Some(mut config) = (if sound {
+        games_config(chip)
+    } else {
+        freedos_config(chip, true)
+    }) else {
         return;
     };
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -33,6 +140,11 @@ pub fn doom(chip: CpuChip) {
     let disk = PrivateDisk(PathBuf::from(
         String::from_utf8(built.stdout).unwrap().trim(),
     ));
+    if sound {
+        // Complete the generated base before hashing or mounting it. Guest
+        // configuration writes subsequently belong to the volatile overlay.
+        configure_sound(&disk);
+    }
     let bytes = std::fs::metadata(&disk.0).unwrap().len();
     let drive = config
         .drives
@@ -63,6 +175,18 @@ pub fn doom(chip: CpuChip) {
     };
     let mut assembled = machine_file::assemble_with_observation(&config, &policy)
         .unwrap_or_else(|_| panic!("private media assembly failed"));
+    if sound {
+        // DSP busy-polling can fill a small ring between instruction polls.
+        // Preserve the whole interval on the two evidence-producing devices.
+        for id in [DeviceId::Sb16, DeviceId::Dma] {
+            assembled
+                .machine
+                .bus_mut()
+                .device_mut(assembled.device_index[&id])
+                .unwrap()
+                .set_trace_policy(device::TracePolicy::Ring { capacity: 65_536 });
+        }
+    }
     assembled.machine.enable_delivery_log().unwrap();
     let keyboard = assembled.device_index[&DeviceId::Keyboard];
     let started = Instant::now();
@@ -82,20 +206,42 @@ pub fn doom(chip: CpuChip) {
     let mut graphics = false;
     let mut launch_retired = 0;
     let mut next_progress = 40_000_000;
+    let mut activity = SoundActivity::default();
     // This host probe reports wall time; only the fixed instruction allowance
     // controls guest execution. It never prints the private guest screen.
     for cap in (100_000..=budget(chip, 45_000_000)).step_by(100_000) {
+        let dma_before = sound.then(|| dma_position(&assembled));
         let result = assembled.machine.run_bounded(Some(cap));
         let mut events = assembled.machine.bus_mut().take_open_bus_trace();
-        for index in assembled.device_index.values() {
-            events.extend(
-                assembled
-                    .machine
-                    .bus_mut()
-                    .device_mut(*index)
-                    .unwrap()
-                    .take_trace(),
-            );
+        let mut dma_programmed = false;
+        for (id, index) in &assembled.device_index {
+            let device = assembled.machine.bus_mut().device_mut(*index).unwrap();
+            let trace = device.take_trace();
+            if sound && matches!(id, DeviceId::Sb16 | DeviceId::Dma) {
+                assert_eq!(device.trace_dropped(), 0, "sound evidence trace overflowed");
+                if *id == DeviceId::Sb16 {
+                    activity.observe_ports(&trace);
+                } else {
+                    dma_programmed = trace.iter().any(|event| {
+                        matches!(
+                            event,
+                            TraceEvent::Port {
+                                dir: AccessDir::Write,
+                                ..
+                            }
+                        )
+                    });
+                }
+            }
+            events.extend(trace);
+        }
+        if let Some(before) = dma_before {
+            // A channel's address/count can advance without CPU programming
+            // only when the DMA controller services a transfer. Restoring a
+            // snapshot into a separate chip observes this without bus reads.
+            if !dma_programmed && before != dma_position(&assembled) {
+                activity.dma_advanced = true;
+            }
         }
         if let Some(event) = events
             .into_iter()
@@ -189,13 +335,16 @@ pub fn doom(chip: CpuChip) {
                     palette[index as usize] = true;
                 }
                 let distinct = palette.into_iter().filter(|v| *v).count();
-                if distinct >= 32 {
+                if distinct >= 32 && (!sound || activity.complete()) {
                     assert_eq!(bda_mode[0], 0x13);
                     assert!(
                         seen.into_iter().all(|value| value),
                         "missing startup identifiers"
                     );
                     eprintln!("{} DOOM picture: distinct indices={distinct}; retired={}; wall={:?}; DOS/4G banner={dos4gw}", chip.name(), assembled.machine.cpu().retired(), started.elapsed());
+                    if sound {
+                        eprintln!("{} DOOM sound: {activity:?}", chip.name());
+                    }
                     return;
                 }
             }
@@ -216,6 +365,9 @@ pub fn doom(chip: CpuChip) {
         }
     }
     let retired = assembled.machine.cpu().retired();
+    if sound {
+        eprintln!("FINDINGS sound: {activity:?}");
+    }
     let state = assembled.machine.cpu().diagnostic_state();
     eprintln!(
         "FINDINGS location: CS:IP={:04x}:{:08x}; linear={:08x}; system={:?}; deliveries={:?}",
