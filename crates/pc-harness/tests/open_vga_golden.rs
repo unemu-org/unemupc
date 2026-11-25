@@ -18,6 +18,8 @@ use machine::RunOutcome;
 
 #[path = "support/fixtures.rs"]
 mod fixtures;
+#[path = "support/serving.rs"]
+mod serving;
 #[allow(dead_code)]
 #[path = "support/at_games.rs"]
 mod support;
@@ -682,4 +684,53 @@ fn open_vga_bios_mode_0d_scrolling_and_mode_13h_reach_scanout() {
     assert_eq!(hashes, SCROLL_FRAME_SHA256);
     assert_eq!(retired, SCROLL_GOLDEN_RETIRED);
     assembled.finish_persistence().unwrap();
+}
+
+/// The mode 0Dh/13h scanout run with the display window and port 80h
+/// served in process and with every access returning: the same machine,
+/// frames and traces at every poll, through POST, the video BIOS and the
+/// boot sector's planar and chain-4 drawing.
+#[test]
+#[ignore = "slow: open AT BIOS/VGA/XTIDE POST and the mode 0Dh/13h boot sector, twice in lockstep"]
+fn open_vga_scanout_serving_in_process_matches_every_access_returning() {
+    if open_profile_booting("m0d-scroll-1200.img", &mode_0d_scroll_floppy(), None).is_none() {
+        return;
+    }
+    // Each way boots its own copy of the profile: its hard disk journal
+    // admits one session at a time.
+    let profiles = std::cell::RefCell::new(Vec::new());
+    let compared = serving::compare(
+        &serving::Lockstep {
+            label: "open vga mode 0Dh/13h",
+            step: 5_000,
+            cap: 100_000_000,
+            idle_limit: Some(pc_harness::BIOS_IDLE_LIMIT),
+            outputs: Vec::new(),
+            displays: vec![DeviceId::Vga],
+            profile: None,
+        },
+        || {
+            let profile =
+                open_profile_booting("m0d-scroll-1200.img", &mode_0d_scroll_floppy(), None)
+                    .unwrap();
+            let assembled =
+                machine_file::load_for_assembly(&profile.file, AssemblyOptions::default())
+                    .unwrap()
+                    .assemble(&policy())
+                    .unwrap();
+            profiles.borrow_mut().push(profile);
+            assembled
+        },
+        |_| false,
+    );
+    assert_eq!(compared.outcome, RunOutcome::Halted);
+    assert!(compared.served_accesses.mmio > 0);
+    assert_eq!(
+        compared.served.machine.cpu().retired(),
+        SCROLL_GOLDEN_RETIRED
+    );
+    assert_eq!(
+        boot_stage(compared.served.machine.cpu()),
+        Some(MODE_13_STAGE)
+    );
 }

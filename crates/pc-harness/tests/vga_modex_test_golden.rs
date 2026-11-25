@@ -16,6 +16,10 @@ use std::path::{Path, PathBuf};
 
 #[path = "support/fixtures.rs"]
 mod fixtures;
+#[path = "support/host_profile.rs"]
+mod host_profile;
+#[path = "support/serving.rs"]
+mod serving;
 
 const CPU_REV: &str = "fc356a6870dcedd1c71439c3cf9d64b995bcebe5";
 const IMAGE: &str = "vga-modex-test/vga-modex-test-1200.img";
@@ -304,4 +308,63 @@ fn open_bios_mode_twelve_palette_writes_with_pas_set_show_sixteen_colours() {
             );
         }
     }
+}
+
+/// The Mode X run, display-memory heavy (planar fills, latch copies, page
+/// flips), with the window served in process and with every access
+/// returning: the same machine, frames and traces at every poll.
+#[test]
+#[ignore = "slow golden: open AT/VGA BIOS POST and 60 Mode X flips, twice in lockstep"]
+fn open_bios_modex_serving_in_process_matches_every_access_returning() {
+    for relative in [OPEN_BIOS, VGA_BIOS, IMAGE] {
+        if fixtures::fixture(relative).is_none() {
+            return;
+        }
+    }
+    let temporary = TempDir::new("vga-modex-serving");
+    let file = machine_file(temporary.path(), IMAGE, image_sha256());
+    let observation = ObservationPolicy {
+        routes: vec![
+            ObservationRequest {
+                device: DeviceId::Uart,
+                output: OutputKind::Bytes(ByteStreamKind::SerialTx),
+                byte_limit: 65536,
+            },
+            ObservationRequest {
+                device: DeviceId::Vga,
+                output: OutputKind::TextScanout,
+                byte_limit: 0,
+            },
+        ],
+        ..Default::default()
+    };
+    let compared = serving::compare(
+        &serving::Lockstep {
+            label: "vga-modex-test",
+            step: 5000,
+            cap: CAP,
+            idle_limit: Some(pc_harness::BIOS_IDLE_LIMIT),
+            outputs: vec![(DeviceId::Uart, ByteStreamKind::SerialTx)],
+            displays: vec![DeviceId::Vga],
+            profile: Some(|rig, label| {
+                Box::new(host_profile::WorkloadProfile::from_env(rig, || label))
+            }),
+        },
+        || {
+            machine_file::load_for_assembly(&file, AssemblyOptions::default())
+                .unwrap()
+                .assemble(&observation)
+                .unwrap()
+        },
+        |_| false,
+    );
+    assert_eq!(compared.outcome, RunOutcome::Halted);
+    assert!(compared.served_accesses.mmio > 100_000);
+    assert_eq!(
+        String::from_utf8(compared.outputs[0].clone()).unwrap(),
+        format!(
+            "vga-modex-test\r\npattern ready\r\n{}\r\nframes 60 done\r\n",
+            "01".repeat(30)
+        )
+    );
 }

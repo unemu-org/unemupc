@@ -9,6 +9,9 @@ use assembly::{
 
 const CPU_REV: &str = "fc356a6870dcedd1c71439c3cf9d64b995bcebe5";
 
+#[path = "support/serving.rs"]
+mod serving;
+
 const FRAME_HASHES: [&str; 7] = [
     "542e315e0ac2a357e8debffd2636765cb37d50542f923826656b76a7e5f22a1b",
     "483976e4a820889295d384081974a322b0fac19957934b1c27c7c960a676b22d",
@@ -131,9 +134,8 @@ fn rom() -> Vec<u8> {
     rom
 }
 
-#[test]
-fn synthetic_planar_scrolling_and_page_flips_have_pinned_frame_hashes() {
-    assert!(include_str!("../../../Cargo.lock").contains(CPU_REV));
+/// The scrolling ROM on a register-level VGA board.
+fn rig() -> assembly::AssembledMachine {
     let mut config = assembly::bios(rom(), None);
     config.devices.retain(|d| d.id != DeviceId::Mda);
     config.memory.mmio.retain(|w| w.device != DeviceId::Mda);
@@ -167,14 +169,20 @@ fn synthetic_planar_scrolling_and_page_flips_have_pinned_frame_hashes() {
         ],
         ..ObservationPolicy::default()
     };
-    let mut rig = machine_file::assemble_with_observation_and_options(
+    machine_file::assemble_with_observation_and_options(
         &config,
         &policy,
         AssemblyOptions {
             allow_unlisted_firmware: true,
         },
     )
-    .unwrap();
+    .unwrap()
+}
+
+#[test]
+fn synthetic_planar_scrolling_and_page_flips_have_pinned_frame_hashes() {
+    assert!(include_str!("../../../Cargo.lock").contains(CPU_REV));
+    let mut rig = rig();
     let mut hashes = Vec::new();
     let mut pending_captures = 0;
     for cap in (100..=160_000).step_by(100) {
@@ -239,4 +247,28 @@ fn synthetic_planar_scrolling_and_page_flips_have_pinned_frame_hashes() {
     assert_eq!(pending_captures, 7);
     eprintln!("scrolling frames: {hashes:#?}");
     assert_eq!(hashes, FRAME_HASHES);
+}
+
+/// The scrolling run, display-memory and port-80h heavy, with both served
+/// in process and with every access returning: the same machine, frames and
+/// traces at every 100-step poll.
+#[test]
+fn synthetic_scrolling_serving_in_process_matches_every_access_returning() {
+    let compared = serving::compare(
+        &serving::Lockstep {
+            label: "vga scrolling",
+            step: 100,
+            cap: 160_000,
+            idle_limit: None,
+            outputs: vec![(DeviceId::Post, device::ByteStreamKind::PostCheckpoints)],
+            displays: vec![DeviceId::Vga],
+            profile: None,
+        },
+        rig,
+        |_| false,
+    );
+    assert_eq!(compared.outcome, machine::RunOutcome::RetiredCapReached);
+    assert_eq!(compared.polls, 1600);
+    assert_eq!(compared.outputs[0].len(), 14);
+    assert!(compared.served_accesses.ports > 0 && compared.served_accesses.mmio > 0);
 }

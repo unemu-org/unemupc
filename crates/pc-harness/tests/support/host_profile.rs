@@ -35,7 +35,7 @@ mod enabled {
         pub budget: u64,
         pub single: u64,
         pub exits: [u64; 7],
-        pub events: [u64; 6],
+        pub events: [u64; 8],
     }
 
     struct State {
@@ -150,10 +150,11 @@ mod enabled {
 
         fn report(&self, suffix: &str) {
             let c = self.collector.counts();
-            eprintln!("HOST PROFILE {}{suffix}: wall_s={:.6} nanos(cpu,scheduler,port,mmio,frame,observation)={:?} calls={} retired={} steps={} mean_retired={:.3} mean_budget={:.3} budget_one={} exits(port,mmio,irq,hlt,budget,other,error)={:?} events(deadline,tick_due,device_tick,halted_advance,device_sync,dma_probe)={:?}",
+            eprintln!("HOST PROFILE {}{suffix}: wall_s={:.6} nanos(cpu,scheduler,port,mmio,frame,observation)={:?} calls={} retired={} steps={} mean_retired={:.3} mean_budget={:.3} budget_one={} exits(port,mmio,irq,hlt,budget,other,error)={:?} served(port,mmio)={:?} events(deadline,tick_due,device_tick,halted_advance,device_sync,dma_probe)={:?}",
             self.label, self.started.elapsed().as_secs_f64(), c.nanos, c.calls,
             c.retired, c.steps, c.retired as f64 / c.calls.max(1) as f64,
-            c.budget as f64 / c.calls.max(1) as f64, c.single, c.exits, c.events);
+            c.budget as f64 / c.calls.max(1) as f64, c.single, c.exits,
+            &c.events[ProfileEvent::ServedPortIo as usize..], &c.events[..ProfileEvent::ServedPortIo as usize]);
         }
     }
 
@@ -171,7 +172,9 @@ mod enabled {
 
         #[test]
         fn profiling_preserves_cpu_memory_devices_trace_and_frame() {
-            let run = |enabled: bool| {
+            // Both ways of serving accesses: returning from the CPU for each,
+            // and serving port 80h and the window while it runs.
+            let run = |enabled: bool, in_process: bool| {
                 let program = vec![
                     0xFA, // CLI keeps this synthetic probe independent of timer IRQs.
                     0xC7, 0x06, 0, 0, 0x41, 7, // MOV WORD [DS:0],0741h (MMIO)
@@ -194,7 +197,8 @@ mod enabled {
                         .unwrap();
                 rig.machine = rig
                     .machine
-                    .with_step_limit(std::num::NonZeroU64::new(3).unwrap());
+                    .with_step_limit(std::num::NonZeroU64::new(3).unwrap())
+                    .with_in_process_devices(in_process);
                 assert!(!rig.machine.bus().profile().enabled());
                 let profile = enabled.then(|| WorkloadProfile::attach(&mut rig, "identity".into()));
                 assert_eq!(
@@ -224,17 +228,22 @@ mod enabled {
                 if let Some(profile) = profile {
                     profile.checkpoint(" checkpoint");
                     let c = profile.collector.counts();
-                    assert!(c.calls > 10);
+                    let served = |event: ProfileEvent| c.events[event as usize];
+                    assert!(c.calls >= 10);
                     assert_eq!(c.retired, rig.machine.cpu().retired());
                     assert_eq!(c.steps, rig.machine.cpu().completed_steps());
                     assert_eq!(c.exits.iter().sum::<u64>(), c.calls);
-                    for exit in [
-                        ProfileExit::PortIo,
-                        ProfileExit::Mmio,
-                        ProfileExit::Halt,
-                        ProfileExit::Budget,
-                    ] {
+                    for exit in [ProfileExit::PortIo, ProfileExit::Halt, ProfileExit::Budget] {
                         assert!(c.exits[exit as usize] > 0, "{exit:?}");
+                    }
+                    if in_process {
+                        assert!(served(ProfileEvent::ServedPortIo) > 0);
+                        assert!(served(ProfileEvent::ServedMmio) > 0);
+                    } else {
+                        assert!(c.calls > 10);
+                        assert!(c.exits[ProfileExit::Mmio as usize] > 0);
+                        assert_eq!(served(ProfileEvent::ServedPortIo), 0);
+                        assert_eq!(served(ProfileEvent::ServedMmio), 0);
                     }
                     for phase in [
                         ProfilePhase::Cpu,
@@ -249,7 +258,10 @@ mod enabled {
                 }
                 state
             };
-            assert_eq!(run(false), run(true));
+            let returning = run(false, false);
+            assert_eq!(run(true, false), returning);
+            assert_eq!(run(true, true), returning);
+            assert_eq!(run(false, true), returning);
         }
 
         #[test]

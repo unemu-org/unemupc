@@ -823,6 +823,111 @@ target during active execution can land on the first boundary after it. This
 tightens today's quantum-sized overshoot and can itself change policy/golden
 endpoints. No events later than the final observation instant are drained.
 
+## In-process device access
+
+The loop above returns from the CPU at every port access and every access to
+a trapped window, even when servicing it changes nothing but one device.
+MEASURED before this seam with the host-profile counters: DOOM's demo loop
+made 1.35 million MMIO returns per 50 million instructions and test386 3.55
+million port returns per 80 million, 18 to 59 instructions per return. The
+CPU core can instead call the embedder synchronously for chosen ranges and
+continue the run (x86jit `DeviceIo`, its spec.md §5.4). The machine uses it
+for the accesses in `machine::SERVED_RANGES`: the diagnostic checkpoint port
+80h and the display window A0000h–BFFFFh. Other ports and windows (PIT,
+PIC, 8042 among them) still return; they are later work.
+
+The seam is backend-neutral (`cpu::device_access`): the machine declares
+ranges with `Cpu::set_served_ranges` and runs `Cpu::run_steps_serving` with a
+`DeviceAccessHandler`; it never sees x86jit types. A `DeviceAccess` carries
+space, direction, address, width, value and `steps`, counted as
+`CpuStepRun::steps` counts the matching stop (a port access includes its own
+unit, an MMIO access only the units before it). The handler answers
+`Handled(value)`, `Fallback` (the run returns the ordinary stop, nothing
+changed) or `Fault` (the run ends with the error the handler recorded), and
+may set the core's interrupt-request level (`IrqReady` at the first boundary
+that accepts a maskable interrupt; the machine does not use it) or a stop position (`BudgetExhausted` short of
+the budget, after any unfinished MMIO instruction completes). The x86jit
+adapter registers ports as declared and only the trapped parts of MMIO
+ranges; an access that does not fit one registered range, such as a word at
+BFFFFh in a trapped region running past C0000h, returns as before.
+Registration changes wait for a run start with no outstanding access; any
+other refusal (overlap, exhausted handles) makes the run return an error.
+The interrupt level is cleared when the call ends. A handler fault stays
+latched in the core: later runs return the same error with no step until a
+CPU reset, unlike a failed ordinary OUT, after which the CPU runs on. A
+handler panic poisons the VM; its message is kept in the error.
+
+The machine's handler (`machine::in_process`) does what the loop does for
+that stop, in its order and at its virtual time: charge the steps before the
+access, access the bus, invalidate deadlines, charge a port access's own
+step, settle the accessed devices and their dependents and sample the wired
+IRQ lines. It declines before changing anything when equality cannot be
+proven:
+
+- the access's steps would reach the next device deadline (the last step of
+  a run bounded by it), whose ticks can need DMA through the CPU's memory;
+- a cycle reaches a DMA requester or controller or one of their access
+  dependents (a word OUT to 80h reaches the page register at 81h), or a
+  requester already reports DMA pending;
+- the bus would fault (undecoded MMIO, or an undecoded port under the
+  faulting policy);
+- it is a port write and a memory-map hook is attached, since the hook runs
+  after every port write with the CPU in hand (EMS frames, speaker trace);
+- an exception or interrupt delivery owns the transfer.
+
+What only the loop can do with the CPU after an access ends the run at the
+next boundary instead (after an MMIO access's instruction completes): an A20
+line change after a port write (the loop syncs the gate), a raised reset
+signal (the loop checks it first), and a request pending at the PIC (the
+loop's own acceptance check runs there, as after the ordinary stop). The
+core's interrupt-request level is not used for the last: its ready stop also
+waits for a held single-step trap, a waiting event and an unreported
+external numeric error, so it would acknowledge later than the loop. A
+deadline the access moves earlier than the run's budget becomes the run's
+stop position, and a failed deadline query also stops the run, so the loop
+reports it after its reset and cap checks. The coprocessor acknowledgement
+the loop polls after every return comes only from port F0h, which is never
+served. After the run the loop charges only the steps the handler did not,
+then services the stop as before; after a failed served access it also syncs
+a changed A20 line and polls that acknowledgement, as after a failed stop.
+
+An access costs one deadline query, made after it: the step at which the
+clock reaches the next deadline is kept (from the loop's budget query for a
+run's first access), so the check before an access is a comparison, and the
+charge before it only moves the machine and bus clocks
+(`Bus::advance_quiet`): nothing is due and every device's answer is cached.
+`Machine::served_accesses` counts served port and MMIO accesses without the
+host-profile feature.
+
+Serving a register device that can move or raise deadlines (PIT, PIC, 8042)
+needs work this stage does not do, because these hold only for the ranges
+served now:
+
+- one charge never ticks through several deadlines: the handler's charge
+  after an access does not service DMA between them, as the loop does;
+- DMA that becomes due during a served MMIO access is serviced after that
+  instruction's step instead of before it;
+- the delivery tap reads the controllers' vector bases when it drains a
+  slice, which is right only while PIC ports always end a slice;
+- MMIO registrations are computed from the trap layout once and never
+  follow a later remap;
+- the code trail samples slice boundaries, so it differs with serving on.
+
+Observation runs after every CPU return as before. Fewer returns mean longer
+slices, never longer runs: a run is still at most its budget, so the
+delivery log's capacity bound (one delivery per step, `DELIVERY_LOG_MAX`
+against the default 65,536-step limit) is unchanged. The host-profile events
+`ServedPortIo` and `ServedMmio` count served accesses next to the return
+counts.
+
+`Machine::set_in_process_devices` (on by default) switches serving off, so
+one workload can run both ways. The `support/serving.rs` lockstep comparison
+in `pc-harness` runs test386, the Mode X, scrolling and mode 0Dh/13h VGA
+goldens and the open-BIOS FreeDOS boot both ways and requires the same
+outcome, counters, observed bytes, frames and device traces at every poll and
+the same devices, RAM, processor state and delivery log at the end, and
+requires that the served way served something.
+
 ## Determinism and future consumers
 
 The execution state consists of CPU architectural state/retirement, scheduler

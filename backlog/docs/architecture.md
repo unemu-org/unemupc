@@ -199,6 +199,17 @@ The authoritative loop is
    wired IRQ transitions before the next acceptance check. Errors retain the
    completed prefix's device time. Exact active caps win over a new INTA.
 
+Accesses to port 80h and the display window A0000h–BFFFFh are served while
+the CPU runs (`Cpu::run_steps_serving`, `machine::SERVED_RANGES`): the
+handler performs steps 3 and 4 for the access in the loop's order and the run
+continues. It declines to the ordinary stop whenever equality is not proven
+(an access whose step reaches the next deadline, DMA parties, bus faults,
+port writes under a memory-map hook), and ends the run at the next boundary
+for an A20 change, a reset request or a request pending at the PIC, and at
+a deadline moved earlier.
+`Machine::set_in_process_devices(false)` restores a return for every access.
+See [scheduler §In-process device access](design/scheduler.md#in-process-device-access).
+
 Production uses deadline dispatch. Devices without a deadline implementation
 retain per-clock visits, while scheduled devices synchronize lazily on access.
 The non-default `reference-scheduler` feature exposes per-clock dispatch to
@@ -242,7 +253,8 @@ survive bounded runner calls.
 
 ## Contracts and ownership
 
-- **[`Cpu`](../../crates/cpu/src/lib.rs)** exposes `run_steps`, completed-step
+- **[`Cpu`](../../crates/cpu/src/lib.rs)** exposes `run_steps` and its
+  in-process variant `run_steps_serving` with `set_served_ranges`, completed-step
   and whole-instruction counters, general-purpose registers/RIP, port/MMIO
   completions, IF and IRQ readiness, IRQ injection/pending status and DMA byte
   access. It has no segment-register API,
@@ -390,7 +402,11 @@ not copied into this workspace
 ([decision-13](../decisions/decision-13%20-%20Consume%20x86jit%20main%20at%20an%20exact%20revision.md)).
 
 - `Exit::PortIo`, `MmioRead`, `MmioWrite`, `Hlt`, `Exception` and
-  `BudgetExhausted` map to `CpuStop`. `UnmappedMemory` and `UnknownInstruction`
+  `BudgetExhausted` map to `CpuStop`. Served ranges register as x86jit
+  device ranges and `run_steps_serving` runs `run_steps_with_devices` with an
+  adapter onto the neutral handler; its `Deadline` stop maps to
+  `BudgetExhausted`, `IntrReady` to `IrqReady`, and a device fault or handler
+  failure to an `UnexpectedExit` error. `UnmappedMemory` and `UnknownInstruction`
   become typed CPU errors; `Syscall` is unsupported. Host interruption, code
   space exhaustion and unrecognized exits become `UnexpectedExit` errors.
 - The memory mosaic uses `RegionKind::Ram` (RWX), `Trap` (MMIO), and `Rom`

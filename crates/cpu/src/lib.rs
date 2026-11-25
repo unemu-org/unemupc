@@ -56,12 +56,16 @@
 #![forbid(unsafe_code)]
 
 pub mod delivery;
+pub mod device_access;
 pub mod diagnostic;
 pub mod stop_report;
 pub mod x86jit_backend;
 
 pub use delivery::{
     Delivery, DeliveryCounts, DeliveryKind, DeliveryLogError, DeliveryName, DeliveryRegisters,
+};
+pub use device_access::{
+    AccessControl, AccessResult, AccessSpace, DeviceAccess, DeviceAccessHandler, ServedRange,
 };
 pub use diagnostic::CpuDiagnostic;
 pub use stop_report::CpuStopReport;
@@ -449,6 +453,39 @@ pub trait Cpu {
         Err(CpuError::UnexpectedExit {
             what: "step-bounded execution is unsupported by this backend or mode".to_string(),
         })
+    }
+
+    /// Declare the ranges whose accesses [`Cpu::run_steps_serving`] offers
+    /// to its handler, replacing any earlier set; an empty slice serves none.
+    /// See [`device_access`]. A backend may apply the change only at a later
+    /// run start where no access is outstanding; until then the earlier set
+    /// stays in force. The default ignores the call, for a backend that never
+    /// serves accesses in process.
+    fn set_served_ranges(&mut self, ranges: &[ServedRange]) -> Result<(), CpuError> {
+        let _ = ranges;
+        Ok(())
+    }
+
+    /// [`Cpu::run_steps`], offering each access inside the served ranges to
+    /// `handler` before stopping for it (see [`device_access`]).
+    ///
+    /// Steps, stops and every guest effect are those of [`Cpu::run_steps`]
+    /// with the handled accesses serviced at their stops, except that a
+    /// handled access does not end the run. A handler's
+    /// [`AccessControl::set_intr`] can end it with
+    /// [`CpuStepStop::IrqReady`] and [`AccessControl::stop_at`] with
+    /// [`CpuStop::BudgetExhausted`] short of the budget.
+    /// [`AccessResult::Fault`] ends it with an error, after charging the
+    /// completed steps to [`Cpu::completed_steps`]. The default serves
+    /// nothing and runs [`Cpu::run_steps`].
+    fn run_steps_serving(
+        &mut self,
+        max_steps: u64,
+        options: StepRunOptions,
+        handler: &mut dyn DeviceAccessHandler,
+    ) -> Result<CpuStepRun, CpuError> {
+        let _ = handler;
+        self.run_steps(max_steps, options)
     }
 
     /// Completed scheduling units across step-bounded runs, including error exits (§6).

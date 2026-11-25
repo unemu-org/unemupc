@@ -27,6 +27,8 @@ use assembly::{
 use video::Frame;
 #[path = "support/fixtures.rs"]
 mod fixtures;
+#[path = "support/serving.rs"]
+mod serving;
 #[path = "support/session.rs"]
 #[allow(dead_code)]
 mod session;
@@ -219,4 +221,47 @@ fn the_code_trail_and_reports_leave_the_freedos_boot_golden_unchanged() {
     assert_eq!(recorded.trace, again.trace);
     assert_eq!(recorded.reports, 10);
     assert!(diagnosed.trail_samples > 0);
+}
+
+/// The open-BIOS FreeDOS boot with port 80h and the display window served
+/// in process and with every access returning, polled as
+/// `run_freedos_config` polls it: the same machine, screens, POST stream,
+/// serial output and traces at every poll up to FreeCOM's date prompt.
+#[ignore = "slow: boots FreeDOS twice on the open BIOS, in lockstep"]
+#[test]
+fn serving_in_process_leaves_the_freedos_boot_golden_unchanged() {
+    let (Some(_rom), Some(_img)) = (
+        fixtures::fixture("kiselev-bios/bios-xi8088.bin"),
+        fixtures::fixture("freedos/freedos.img"),
+    ) else {
+        return;
+    };
+    let compared = serving::compare(
+        &serving::Lockstep {
+            label: "freedos boot",
+            step: pc_harness::DOS_INTERACTIVE_POLL_STEP,
+            cap: pc_harness::BIOS_MAX_RETIRED,
+            idle_limit: Some(pc_harness::BIOS_IDLE_LIMIT),
+            outputs: vec![
+                (DeviceId::Uart, device::ByteStreamKind::SerialTx),
+                (DeviceId::Post, device::ByteStreamKind::PostCheckpoints),
+            ],
+            displays: vec![DeviceId::Vga, DeviceId::Mda],
+            profile: None,
+        },
+        assembled,
+        |assembled| mda(assembled).contains(pc_harness::DOS_DATE_PROMPT),
+    );
+    // The numbers of `freedos_boot_golden`.
+    let served = &compared.served.machine;
+    assert_eq!(compared.outcome, machine::RunOutcome::RetiredCapReached);
+    assert!(compared.served_accesses.ports > 0 && compared.served_accesses.mmio > 0);
+    assert_eq!(
+        (cpu::Cpu::retired(served.cpu()), served.virtual_time()),
+        (8_800_473, 10_000_000)
+    );
+    assert_eq!(
+        session::screen_hash(&mda(&compared.served)),
+        0x83ffbc2844f28889
+    );
 }

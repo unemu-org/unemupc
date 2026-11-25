@@ -42,6 +42,10 @@ pub enum ProfileEvent {
     HaltedAdvance,
     DeviceSync,
     DmaProbe,
+    /// A port access the machine served while the CPU ran, without a return.
+    ServedPortIo,
+    /// An MMIO access the machine served while the CPU ran, without a return.
+    ServedMmio,
 }
 
 /// Host-owned diagnostics, excluded from hardware snapshots and virtual time.

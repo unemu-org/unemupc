@@ -41,12 +41,14 @@
 
 mod code_trail;
 pub mod delivery_tap;
+mod in_process;
 
 pub use code_trail::{CodeTrail, TrailEntry, CODE_TRAIL_LEN};
 pub use delivery_tap::{
     DeliveryEntry, DeliveryRecording, DeliveryRing, RecentDeliveries, RECENT_DELIVERIES,
     RECORDED_ENTRIES,
 };
+pub use in_process::{ServedAccesses, SERVED_RANGES};
 
 use device::clock::{PIT, TICKS_PER_PIT_CLOCK};
 use std::num::NonZeroU64;
@@ -282,6 +284,14 @@ pub struct Machine<C: Cpu> {
     irq_bases_of: Option<IrqBasesOf>,
     /// The reset requests that came soon after the one before.
     reset_streak: ResetStreak,
+    /// Serve [`SERVED_RANGES`] while the CPU runs; see
+    /// [`Self::set_in_process_devices`].
+    in_process_devices: bool,
+    /// The served-range choice last handed to the CPU, `None` before the
+    /// first run.
+    served_ranges: Option<bool>,
+    /// Accesses served while the CPU ran, since construction.
+    served_accesses: ServedAccesses,
 }
 
 /// Reset requests in a row, each fewer than [`cpu::RESET_STORM_STEPS`]
@@ -375,6 +385,9 @@ impl<C: Cpu> Machine<C> {
             deliveries: None,
             irq_bases_of: None,
             reset_streak: ResetStreak::default(),
+            in_process_devices: true,
+            served_ranges: None,
+            served_accesses: ServedAccesses::default(),
         }
     }
 
@@ -604,6 +617,36 @@ impl<C: Cpu> Machine<C> {
         self
     }
 
+    /// Serve the accesses in [`SERVED_RANGES`] while the CPU runs, instead of
+    /// returning from the CPU for each one (on by default; see
+    /// [`in_process`](crate::in_process)). Either way the guest sees the same
+    /// machine: the same retired counts, virtual time, device state and
+    /// output. Off restores a return for every access, for comparison and
+    /// measurement. A CPU backend without in-process access ignores it.
+    /// Takes effect at the next run.
+    pub fn set_in_process_devices(&mut self, enabled: bool) {
+        self.in_process_devices = enabled;
+    }
+
+    /// Builder form of [`Self::set_in_process_devices`].
+    #[must_use]
+    pub fn with_in_process_devices(mut self, enabled: bool) -> Self {
+        self.in_process_devices = enabled;
+        self
+    }
+
+    /// Whether accesses in [`SERVED_RANGES`] are served while the CPU runs.
+    pub fn in_process_devices(&self) -> bool {
+        self.in_process_devices
+    }
+
+    /// How many accesses were served while the CPU ran, since construction:
+    /// zero with serving off or on a backend without it. A host diagnostic;
+    /// it never affects the guest.
+    pub fn served_accesses(&self) -> ServedAccesses {
+        self.served_accesses
+    }
+
     /// The selected device timer dispatch policy.
     pub fn scheduler_engine(&self) -> SchedulerEngine {
         self.engine
@@ -758,28 +801,7 @@ impl<C: Cpu> Machine<C> {
     }
 
     fn next_deadline(&mut self) -> Result<Option<VClock>, MachineError> {
-        #[cfg(any(test, feature = "reference-scheduler"))]
-        let event = if self.engine == SchedulerEngine::PerClock {
-            if self.bus.device(0).is_none() {
-                return Ok(None);
-            }
-            NextEvent::EveryPitClock
-        } else {
-            self.bus.next_event()
-        };
-        #[cfg(not(any(test, feature = "reference-scheduler")))]
-        let event = self.bus.next_event();
-        let at = match event {
-            NextEvent::Dormant => return Ok(None),
-            NextEvent::EveryPitClock => PIT
-                .next_edge_after(self.clock)
-                .ok_or_else(|| scheduler_error("clock exhausted"))?,
-            NextEvent::At(at) => at,
-        };
-        if at <= self.clock {
-            return Err(scheduler_error("device deadline did not advance"));
-        }
-        Ok(Some(at))
+        next_device_deadline(self.engine, &mut self.bus, self.clock)
     }
 
     // Visit transitions at their own times so a short low pulse cannot vanish
@@ -808,21 +830,15 @@ impl<C: Cpu> Machine<C> {
             .completed_steps
             .checked_add(steps)
             .ok_or_else(|| scheduler_error("step counter exhausted"))?;
-        let denominator = self.cpu_tick_denominator;
-        let total = u128::from(steps)
-            .checked_mul(denominator)
-            .and_then(|ticks| ticks.checked_add(u128::from(self.clock_remainder)))
-            .ok_or_else(|| scheduler_error("clock interval exhausted"))?;
-        let rate = u128::from(self.cpu_rate_numerator.get());
-        let clocks =
-            u64::try_from(total / rate).map_err(|_| scheduler_error("clock interval exhausted"))?;
-        self.clock_remainder = (total % rate) as u64;
-        let target = self
-            .clock
-            .0
-            .checked_add(clocks)
-            .ok_or_else(|| scheduler_error("clock exhausted"))?;
-        self.advance_to(VClock(target))
+        let (target, remainder) = step_target(
+            self.clock,
+            steps,
+            self.clock_remainder,
+            self.cpu_rate_numerator,
+            self.cpu_tick_denominator,
+        )?;
+        self.clock_remainder = remainder;
+        self.advance_to(target)
     }
 
     fn settle(&mut self, accessed: bool) -> Result<(), MachineError> {
@@ -890,6 +906,15 @@ impl<C: Cpu> Machine<C> {
     }
 
     fn run_until(&mut self, cap: Option<u64>) -> Result<RunOutcome, MachineError> {
+        if self.served_ranges != Some(self.in_process_devices) {
+            let ranges: &[cpu::ServedRange] = if self.in_process_devices {
+                &SERVED_RANGES
+            } else {
+                &[]
+            };
+            self.cpu.set_served_ranges(ranges)?;
+            self.served_ranges = Some(self.in_process_devices);
+        }
         self.sync_a20();
         self.sync_memory_map(MemoryMapSync::Apply)?;
         if self.reset_pending {
@@ -996,18 +1021,28 @@ impl<C: Cpu> Machine<C> {
             let options = cpu::StepRunOptions {
                 stop_when_irq_ready: self.pic.poll().is_some() && !self.cpu.irq_ready(),
             };
+            let mut deadline_at = None;
             if completing {
                 budget = 1;
             } else if self.reset_fetch_window {
                 // In the reset-fetch window, stop after every step so the
                 // board gate applies again right after the first CS load.
                 budget = budget.min(1);
-            } else if let Some(deadline) = self.next_deadline()? {
-                let clocks = u128::from(deadline.0 - self.clock.0);
-                let phase = clocks * u128::from(self.cpu_rate_numerator.get())
-                    - u128::from(self.clock_remainder);
-                let steps = phase.div_ceil(self.cpu_tick_denominator);
-                budget = budget.min(u64::try_from(steps).unwrap_or(u64::MAX));
+            } else {
+                // The served-access handler reuses this answer for the run's
+                // first access: no device changes before then.
+                let steps = match self.next_deadline()? {
+                    Some(deadline) => steps_until(
+                        deadline,
+                        self.clock,
+                        self.clock_remainder,
+                        self.cpu_rate_numerator,
+                        self.cpu_tick_denominator,
+                    ),
+                    None => u64::MAX,
+                };
+                budget = budget.min(steps);
+                deadline_at = Some(steps);
             }
             // Bound execution before touching the CPU: detecting overflow when
             // charging completed steps would leave an unaccounted guest effect.
@@ -1024,13 +1059,44 @@ impl<C: Cpu> Machine<C> {
             }
             let before = self.cpu.completed_steps();
             #[cfg(feature = "host-profile")]
-            let profile = self.bus.profile();
+            let profile = self.bus.profile().clone();
             #[cfg(feature = "host-profile")]
             let retired_before = profile.enabled().then(|| self.cpu.retired());
-            let run = {
+            let (run, served) = {
                 #[cfg(feature = "host-profile")]
                 let _span = profile.span(device::profile::ProfilePhase::Cpu);
-                self.cpu.run_steps(budget, options)
+                if self.in_process_devices {
+                    let mut handler = in_process::InProcess {
+                        bus: &mut self.bus,
+                        pic: &mut *self.pic,
+                        clock: &mut self.clock,
+                        completed_steps: &mut self.completed_steps,
+                        clock_remainder: &mut self.clock_remainder,
+                        engine: self.engine,
+                        cpu_rate_numerator: self.cpu_rate_numerator,
+                        cpu_tick_denominator: self.cpu_tick_denominator,
+                        irq_lines: &self.irq_lines,
+                        last_levels: &mut self.last_levels,
+                        dma_wirings: &self.dma_wirings,
+                        dma_channel_wirings: &self.dma_channel_wirings,
+                        a20_line: self
+                            .a20_line
+                            .as_deref()
+                            .map(|line| (line, self.a20_changes)),
+                        reset_signal: self.reset_signal.as_deref(),
+                        memory_map: self.memory_map.is_some(),
+                        budget,
+                        deadline_at,
+                        outcome: in_process::ServedRun::default(),
+                    };
+                    let run = self.cpu.run_steps_serving(budget, options, &mut handler);
+                    (run, handler.outcome)
+                } else {
+                    (
+                        self.cpu.run_steps(budget, options),
+                        in_process::ServedRun::default(),
+                    )
+                }
             };
             #[cfg(feature = "host-profile")]
             if let Some(retired_before) = retired_before {
@@ -1067,11 +1133,28 @@ impl<C: Cpu> Machine<C> {
                 self.read_deliveries();
             }
             let run = match run {
-                Ok(run) => run,
-                Err(error) => {
-                    self.charge_steps(self.cpu.completed_steps() - before)?;
+                Ok(run) if served.error.is_none() => run,
+                run => {
+                    // A served access's failure is the one the loop reports,
+                    // after what it does for a failed ordinary stop: sync the
+                    // A20 gate a port write changed and poll the coprocessor
+                    // acknowledgement.
+                    let completed = self.cpu.completed_steps() - before;
+                    self.charge_steps(completed.saturating_sub(served.charged))?;
+                    self.served_accesses.add(&served.served);
+                    if served.error.is_some() {
+                        if served.sync_a20 {
+                            self.sync_a20();
+                        }
+                        if self.numeric_error_ack.as_ref().is_some_and(|ack| ack()) {
+                            self.cpu.ack_external_numeric_error()?;
+                        }
+                    }
                     self.settle(false)?;
-                    return Err(error.into());
+                    return Err(served
+                        .error
+                        .or_else(|| run.err().map(MachineError::from))
+                        .unwrap_or_else(|| scheduler_error("served access failed")));
                 }
             };
             if let Some(trail) = &mut self.code_trail {
@@ -1101,7 +1184,17 @@ impl<C: Cpu> Machine<C> {
             } else {
                 run.steps
             };
+            self.served_accesses.add(&served.served);
+            let prefix = prefix
+                .checked_sub(served.charged)
+                .ok_or_else(|| scheduler_error("served accesses charged past the stop"))?;
             self.charge_steps(prefix)?;
+            if served.sync_a20 {
+                self.sync_a20();
+            }
+            if served.settle {
+                self.settle(false)?;
+            }
             let accessed = matches!(
                 stop,
                 CpuStop::PortOut { .. }
@@ -1196,15 +1289,12 @@ impl<C: Cpu> Machine<C> {
     /// withdraw requests whose device no longer needs service. The first sample
     /// establishes reset levels without fabricating a rising edge.
     fn sample_irq_lines(&mut self) {
-        for (i, line) in self.irq_lines.iter().enumerate() {
-            let Some(level) = self.bus.device_irq_output(line.device, line.output) else {
-                continue;
-            };
-            if self.last_levels[i].is_some_and(|previous| previous != level) {
-                self.pic.set_irq_line(line.irq, level);
-            }
-            self.last_levels[i] = Some(level);
-        }
+        forward_irq_levels(
+            &self.bus,
+            &mut *self.pic,
+            &self.irq_lines,
+            &mut self.last_levels,
+        );
     }
 
     /// Run each wired bus master's pending DMA transfer through its DMA
@@ -1310,6 +1400,98 @@ impl<C: Cpu> Machine<C> {
             }
         }
         Ok(transferred)
+    }
+}
+
+/// The next autonomous device transition after `clock` (§6): every
+/// observable wired transition under the deadline engine, every PIT input
+/// clock under the per-clock oracle.
+fn next_device_deadline(
+    engine: SchedulerEngine,
+    bus: &mut Bus,
+    clock: VClock,
+) -> Result<Option<VClock>, MachineError> {
+    #[cfg(any(test, feature = "reference-scheduler"))]
+    let event = if engine == SchedulerEngine::PerClock {
+        if bus.device(0).is_none() {
+            return Ok(None);
+        }
+        NextEvent::EveryPitClock
+    } else {
+        bus.next_event()
+    };
+    #[cfg(not(any(test, feature = "reference-scheduler")))]
+    let event = {
+        let _ = engine;
+        bus.next_event()
+    };
+    let at = match event {
+        NextEvent::Dormant => return Ok(None),
+        NextEvent::EveryPitClock => PIT
+            .next_edge_after(clock)
+            .ok_or_else(|| scheduler_error("clock exhausted"))?,
+        NextEvent::At(at) => at,
+    };
+    if at <= clock {
+        return Err(scheduler_error("device deadline did not advance"));
+    }
+    Ok(Some(at))
+}
+
+/// Completed steps after which the clock, now at `clock` with `remainder`
+/// carried, reaches `deadline` at CPU rate A/B (`numerator` A,
+/// `tick_denominator` B times the virtual ticks per PIT clock); see §6.
+fn steps_until(
+    deadline: VClock,
+    clock: VClock,
+    remainder: u64,
+    numerator: NonZeroU64,
+    tick_denominator: u128,
+) -> u64 {
+    let clocks = u128::from(deadline.0 - clock.0);
+    let phase = clocks * u128::from(numerator.get()) - u128::from(remainder);
+    u64::try_from(phase.div_ceil(tick_denominator)).unwrap_or(u64::MAX)
+}
+
+/// The clock after `steps` completed steps from `clock` with `remainder`
+/// carried, and the remainder carried on, at the rate [`steps_until`] uses.
+fn step_target(
+    clock: VClock,
+    steps: u64,
+    remainder: u64,
+    numerator: NonZeroU64,
+    tick_denominator: u128,
+) -> Result<(VClock, u64), MachineError> {
+    let total = u128::from(steps)
+        .checked_mul(tick_denominator)
+        .and_then(|ticks| ticks.checked_add(u128::from(remainder)))
+        .ok_or_else(|| scheduler_error("clock interval exhausted"))?;
+    let rate = u128::from(numerator.get());
+    let clocks =
+        u64::try_from(total / rate).map_err(|_| scheduler_error("clock interval exhausted"))?;
+    let target = clock
+        .0
+        .checked_add(clocks)
+        .ok_or_else(|| scheduler_error("clock exhausted"))?;
+    Ok((VClock(target), (total % rate) as u64))
+}
+
+/// Propagate device IRQ level changes to the PIC; see
+/// [`Machine::sample_irq_lines`].
+fn forward_irq_levels(
+    bus: &Bus,
+    pic: &mut dyn InterruptController,
+    lines: &[IrqLine],
+    last_levels: &mut [Option<bool>],
+) {
+    for (i, line) in lines.iter().enumerate() {
+        let Some(level) = bus.device_irq_output(line.device, line.output) else {
+            continue;
+        };
+        if last_levels[i].is_some_and(|previous| previous != level) {
+            pic.set_irq_line(line.irq, level);
+        }
+        last_levels[i] = Some(level);
     }
 }
 
@@ -1705,7 +1887,10 @@ mod tests {
             cpu.map_ram(0, 0x10000).unwrap();
             cpu.write_mem(0x1000, &program).unwrap();
             let bus = Bus::new(Vec::new(), DecodeMap::default());
-            let mut machine = Machine::new(cpu, bus, Box::new(NoIc), Vec::new(), None);
+            // Port 80h is served while the CPU runs by default, which takes
+            // these OUTs off the slice boundaries the trail samples.
+            let mut machine = Machine::new(cpu, bus, Box::new(NoIc), Vec::new(), None)
+                .with_in_process_devices(false);
             if trail {
                 machine.enable_code_trail();
             }

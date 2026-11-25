@@ -18,6 +18,8 @@ use device::ByteStreamKind;
 mod fixtures;
 #[path = "support/host_profile.rs"]
 mod host_profile;
+#[path = "support/serving.rs"]
+mod serving;
 
 const CPU_REV: &str = "fc356a6870dcedd1c71439c3cf9d64b995bcebe5";
 const CAP: u64 = 100_000_000;
@@ -380,4 +382,51 @@ fn test386_legacy_scheduler_rig_captures_configured_post() {
             .unwrap(),
         [0x42]
     );
+}
+
+/// The 386 run with port 80h served in process and with every access
+/// returning: the same machine at every poll and at the halt. Its port
+/// traffic is mostly the console write that truncates to port 02h, which is
+/// never served; only its few POST codes are, so it exercises serving only
+/// lightly while pinning a long protected-mode run.
+#[test]
+#[ignore = "slow: test386 on the 386 board twice, in lockstep"]
+fn test386_i386_serving_in_process_matches_every_access_returning() {
+    let Some(rom) = fixtures::fixture("test386/test386.bin") else {
+        return;
+    };
+    let config = board(rom, CpuChip::I80386);
+    let compared = serving::compare(
+        &serving::Lockstep {
+            label: "test386 i386",
+            step: 1_000_000,
+            cap: CAP,
+            idle_limit: None,
+            outputs: vec![
+                (DeviceId::Post, ByteStreamKind::PostCheckpoints),
+                (DeviceId::DebugConsole, ByteStreamKind::DebugConsole),
+            ],
+            displays: Vec::new(),
+            profile: Some(|rig, label| {
+                Box::new(host_profile::WorkloadProfile::from_env(rig, || label))
+            }),
+        },
+        || {
+            let mut assembled = assembly::assemble_with_observation_and_options(
+                &config,
+                &observation_policy(),
+                AssemblyOptions {
+                    allow_unlisted_firmware: true,
+                },
+            )
+            .unwrap();
+            assembled.machine.enable_delivery_log().unwrap();
+            assembled
+        },
+        |_| false,
+    );
+    assert_eq!(compared.outcome, machine::RunOutcome::Halted);
+    assert_eq!(compared.served.machine.cpu().retired(), 79_664_383);
+    assert_eq!(compared.outputs[0].last(), Some(&0xFF));
+    assert!(compared.served_accesses.ports > 0);
 }

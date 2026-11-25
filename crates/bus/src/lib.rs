@@ -318,6 +318,64 @@ impl Bus {
         Ok((range.device, chunk))
     }
 
+    /// Whether a port access of `size` bytes at `port` would complete without
+    /// a bus fault and reach only devices `accept` admits: each cycle's device
+    /// and that device's declared access dependents, by bus index. Cycles
+    /// split as in [`Bus::port_read`]; an undecoded cycle reaches no device
+    /// and faults only under [`UndecodedPortAccess::Fault`]. Nothing is
+    /// accessed or synchronized; a caller decides with this whether it may
+    /// perform the access itself (§3.3).
+    pub fn port_access_reaches_only(
+        &self,
+        mut port: u16,
+        mut size: u8,
+        mut accept: impl FnMut(usize) -> bool,
+    ) -> bool {
+        loop {
+            let (device, chunk) = self.port_chunk(port, size);
+            match device {
+                Some(index) if !self.reaches_only(index, &mut accept) => return false,
+                None if self.undecoded_ports == UndecodedPortAccess::Fault => return false,
+                _ => {}
+            }
+            if chunk == size {
+                return true;
+            }
+            port = port.wrapping_add(u16::from(chunk));
+            size -= chunk;
+        }
+    }
+
+    /// [`Bus::port_access_reaches_only`] for an MMIO access: false when any
+    /// part is undecoded, as [`Bus::mmio_read`] would fault.
+    pub fn mmio_access_reaches_only(
+        &self,
+        mut addr: u64,
+        mut size: u8,
+        mut accept: impl FnMut(usize) -> bool,
+    ) -> bool {
+        loop {
+            let Ok((index, chunk)) = self.mmio_chunk(addr, size) else {
+                return false;
+            };
+            if !self.reaches_only(index, &mut accept) {
+                return false;
+            }
+            if chunk == size {
+                return true;
+            }
+            addr += u64::from(chunk);
+            size -= chunk;
+        }
+    }
+
+    fn reaches_only(&self, index: usize, accept: &mut impl FnMut(usize) -> bool) -> bool {
+        accept(index)
+            && self.access_dependents[index]
+                .iter()
+                .all(|&dependent| accept(dependent))
+    }
+
     /// Dispatch a guest `in` at `port`, `size` bytes wide.
     ///
     /// Cycles use the starting window's width and combine little-endian, as
@@ -504,6 +562,28 @@ impl Bus {
         }
         self.now.set(now);
         changed
+    }
+
+    /// Move bus time to `now` without visiting devices, for a caller that
+    /// knows every device's next event is cached and none is due at or
+    /// before `now`: [`Bus::tick_due`] would then tick nothing and refill no
+    /// answer. Pins changed by earlier accesses stay marked for the next
+    /// [`Bus::tick_due`], whose answer about them the machine does not use.
+    pub fn advance_quiet(&mut self, now: VClock) {
+        let previous = self.now.get();
+        debug_assert!(now >= previous, "bus time must not move backwards");
+        debug_assert!(
+            self.deadlines.iter().all(|slot| match slot {
+                Some(NextEvent::At(at)) => *at > now,
+                Some(NextEvent::EveryPitClock) => {
+                    device::clock::PIT.edges_between(previous, now) == 0
+                }
+                Some(NextEvent::Dormant) => true,
+                None => false,
+            }),
+            "a quiet advance must not pass a device event"
+        );
+        self.now.set(now);
     }
 
     /// Earliest autonomous event, reusing the same per-device answers as

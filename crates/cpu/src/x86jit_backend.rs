@@ -17,12 +17,17 @@
 //! CPU without any local x86jit checkout present.
 
 use x86jit_core::{
-    CpuMode, CpuModel, CpuState, ExceptionDelivery, ExecutionProfile, Exit, FpuModel,
-    NumericErrorEvent, NumericErrorRoute, PortDir, Prot, Reg, RegionKind, ResetOptions,
-    StepOptions, StepRunError, StepStop, Vcpu, Vm, VmConfig,
+    CpuMode, CpuModel, CpuState, DeviceContext, DeviceDeadline, DeviceDirection, DeviceError,
+    DeviceIo, DeviceRange, DeviceRegistrationError, DeviceRequest, DeviceResult, DeviceSpace,
+    DeviceStop, ExceptionDelivery, ExecutionProfile, Exit, FpuModel, NumericErrorEvent,
+    NumericErrorRoute, PortDir, Prot, Reg, RegionKind, ResetOptions, StepOptions, StepRunError,
+    StepStop, Vcpu, Vm, VmConfig,
 };
 
-use crate::{Cpu, CpuError, CpuReg, CpuStepRun, CpuStepStop, CpuStop, DmaAccess, StepRunOptions};
+use crate::{
+    Cpu, CpuError, CpuReg, CpuStepRun, CpuStepStop, CpuStop, DeviceAccessHandler, DmaAccess,
+    StepRunOptions,
+};
 
 /// Consecutive deliveries that retire nothing, after which the core ends a
 /// machine-profile run with its budget unspent; the value `x86jit-core`
@@ -68,6 +73,19 @@ pub struct X86JitCpu {
     low_reset_fetch: bool,
     /// The buffer each read of the core's delivery log reuses.
     delivery_records: Vec<x86jit_core::DeliveryRecord>,
+    /// The ranges served in process and their registrations in the core.
+    served: ServedRanges,
+}
+
+/// The machine's served ranges ([`Cpu::set_served_ranges`]) and the core
+/// registrations that carry them. The core accepts registration changes only
+/// while no access is outstanding, so a change waits for such a run start.
+#[derive(Debug, Default)]
+struct ServedRanges {
+    wanted: Vec<crate::ServedRange>,
+    /// `wanted` differs from what is registered.
+    dirty: bool,
+    handles: Vec<x86jit_core::DeviceHandle>,
 }
 
 /// Guest backing allocation diagnostics, excluding tracking metadata and RSS.
@@ -116,6 +134,7 @@ impl X86JitCpu {
             completed_steps: 0,
             low_reset_fetch: true,
             delivery_records: Vec::new(),
+            served: ServedRanges::default(),
         })
     }
 
@@ -157,6 +176,7 @@ impl X86JitCpu {
             completed_steps: 0,
             low_reset_fetch: true,
             delivery_records: Vec::new(),
+            served: ServedRanges::default(),
         })
     }
 
@@ -329,6 +349,7 @@ impl X86JitCpu {
             completed_steps: 0,
             low_reset_fetch,
             delivery_records: Vec::new(),
+            served: ServedRanges::default(),
         })
     }
 
@@ -778,6 +799,167 @@ fn to_core_reg(reg: CpuReg) -> Reg {
 }
 
 impl X86JitCpu {
+    /// Bring the core's registrations in line with the served ranges, when
+    /// it accepts changes; false while an access is still outstanding, so
+    /// this run serves nothing and the change waits. Ports register as
+    /// declared; MMIO registers only its trapped parts, which is all the
+    /// core can serve. Any other refusal (overlapping ranges, exhausted
+    /// handles) is an error: the run returns it, leaving the ranges that
+    /// registered before it.
+    fn apply_served_ranges(&mut self) -> Result<bool, CpuError> {
+        if !self.served.dirty {
+            return Ok(true);
+        }
+        let refused = |range: &dyn std::fmt::Debug, error: DeviceRegistrationError| {
+            CpuError::UnexpectedExit {
+                what: format!("served range {range:?} refused: {error}"),
+            }
+        };
+        while let Some(&handle) = self.served.handles.last() {
+            match self.vm.unregister_device_range(handle) {
+                Err(DeviceRegistrationError::Busy) => return Ok(false),
+                Ok(()) | Err(DeviceRegistrationError::UnknownHandle) => {}
+                Err(error) => return Err(refused(&handle, error)),
+            }
+            self.served.handles.pop();
+        }
+        let mut ranges = Vec::new();
+        for range in &self.served.wanted {
+            match range {
+                crate::ServedRange::Ports(ports) => ranges.push(DeviceRange::Ports(
+                    u32::from(*ports.start())..u32::from(*ports.end()) + 1,
+                )),
+                crate::ServedRange::Mmio(addrs) => {
+                    let (start, end) = (*addrs.start(), addrs.end().saturating_add(1));
+                    let mut traps: Vec<_> = self
+                        .dma_regions
+                        .iter()
+                        .filter(|(region, kind)| {
+                            *kind == RegionKind::Trap && region.start < end && start < region.end
+                        })
+                        .map(|(region, _)| region.start.max(start)..region.end.min(end))
+                        .collect();
+                    traps.sort_unstable_by_key(|range| range.start);
+                    ranges.extend(traps.into_iter().map(DeviceRange::Mmio));
+                }
+            }
+        }
+        for range in ranges {
+            match self.vm.register_device_range(range.clone()) {
+                Ok(handle) => self.served.handles.push(handle),
+                Err(DeviceRegistrationError::Busy) => return Ok(false),
+                Err(error) => return Err(refused(&range, error)),
+            }
+        }
+        self.served.dirty = false;
+        Ok(true)
+    }
+
+    /// One step-bounded call, with `handler` offered the served accesses.
+    fn step_run(
+        &mut self,
+        max_steps: u64,
+        options: StepRunOptions,
+        mut handler: Option<&mut dyn DeviceAccessHandler>,
+    ) -> Result<CpuStepRun, CpuError> {
+        let machine = self.vm.execution_profile() == ExecutionProfile::Machine;
+        let mut steps = 0;
+        // Bounded returns in a row with no instruction retired between them.
+        let mut stalls = 0u32;
+        let mut stalled_at = 0;
+        // A handler's stop position, which the core forgets between calls.
+        let mut stop_at = None;
+        // A handler panic's message, which the core's failure stop drops.
+        let mut panic = None;
+        let result = loop {
+            let limit = stop_at.map_or(max_steps, |at: u64| at.clamp(steps, max_steps));
+            if limit == steps && steps < max_steps {
+                break Ok(CpuStepStop::Exit(CpuStop::BudgetExhausted));
+            }
+            let options =
+                StepOptions::default().with_stop_when_irq_ready(options.stop_when_irq_ready);
+            let run = match handler.as_deref_mut() {
+                Some(handler) => {
+                    let mut adapter = ServingAdapter {
+                        handler,
+                        offset: steps,
+                        stop_at: &mut stop_at,
+                        panic: &mut panic,
+                    };
+                    self.cpu
+                        .run_steps_with_devices(
+                            &self.vm,
+                            limit - steps,
+                            options,
+                            Some(&mut adapter),
+                        )
+                        .map(x86jit_core::DeviceRun::into_run)
+                }
+                None => self.cpu.run_steps(&self.vm, limit - steps, options),
+            };
+            let run = match run {
+                Ok(run) => run,
+                Err(error) => break Err(step_run_error(error)),
+            };
+            steps += run.steps();
+            self.completed_steps += run.steps();
+            let stop = run.into_stop();
+            break match stop {
+                StepStop::Exit(Exit::Device(stop)) => match stop {
+                    DeviceStop::Deadline { .. } => Ok(CpuStepStop::Exit(CpuStop::BudgetExhausted)),
+                    DeviceStop::IntrReady => Ok(CpuStepStop::IrqReady),
+                    DeviceStop::Fault { error } => Err(CpuError::UnexpectedExit {
+                        what: format!("in-process device access failed (code {})", error.code),
+                    }),
+                    DeviceStop::HandlerFailed => Err(CpuError::UnexpectedExit {
+                        what: format!(
+                            "in-process device handler failed: {}",
+                            panic
+                                .take()
+                                .unwrap_or_else(|| "no panic message".to_string())
+                        ),
+                    }),
+                    other => Err(CpuError::UnexpectedExit {
+                        what: format!("in-process device access: {other:?}"),
+                    }),
+                },
+                // In the machine profile a budget stop short of the budget is
+                // only the core's bound on deliveries that retired nothing
+                // (`Vcpu::run_steps`), resumable at the handler. Running on lets
+                // a stack that overruns reach its shutdown, as on hardware;
+                // after STALL_RETURNS bounded returns a 16-bit stack has either
+                // done so or wraps cleanly forever, and the run stops.
+                StepStop::Exit(Exit::BudgetExhausted) if machine && steps < limit => {
+                    let retired = self.cpu.retired_instructions();
+                    stalls = if stalls != 0 && retired == stalled_at {
+                        stalls + 1
+                    } else {
+                        1
+                    };
+                    stalled_at = retired;
+                    if stalls < STALL_RETURNS {
+                        continue;
+                    }
+                    Err(CpuError::DeliveryStalled {
+                        deliveries: stalls * DELIVERY_STALL_LIMIT,
+                        cs: self.cpu.cpu.cs,
+                        ip: self.cpu.cpu.rip,
+                    })
+                }
+                StepStop::Exit(exit) => self.map_exit(exit).map(CpuStepStop::Exit),
+                StepStop::IrqReady => Ok(CpuStepStop::IrqReady),
+                other => Err(CpuError::UnexpectedExit {
+                    what: format!("{other:?}"),
+                }),
+            };
+        };
+        // The level was this call's; a later plain run must not stop for it.
+        if self.cpu.intr_asserted() {
+            self.cpu.set_intr(false);
+        }
+        result.map(|stop| CpuStepRun { steps, stop })
+    }
+
     fn map_exit(&self, exit: Exit) -> Result<CpuStop, CpuError> {
         match exit {
             Exit::PortIo {
@@ -874,6 +1056,91 @@ impl X86JitCpu {
             other => Err(CpuError::UnexpectedExit {
                 what: format!("{other:?}"),
             }),
+        }
+    }
+}
+
+fn step_run_error(error: StepRunError) -> CpuError {
+    match error {
+        StepRunError::UnsupportedMode => CpuError::UnexpectedExit {
+            what: "step-bounded execution is unsupported by this backend or mode".to_string(),
+        },
+        StepRunError::PendingPortIn => CpuError::UnexpectedExit {
+            what: "pending port input must be completed before step-bounded execution".to_string(),
+        },
+        other => CpuError::UnexpectedExit {
+            what: format!("{other:?}"),
+        },
+    }
+}
+
+/// Presents the core's device requests to the machine's neutral handler.
+/// The core counts positions and deadlines from the start of its own call,
+/// and one [`Cpu::run_steps_serving`] call can make several core calls (the
+/// delivery-stall bound), so `offset` holds the steps of the calls before.
+struct ServingAdapter<'a, 'h> {
+    handler: &'a mut (dyn DeviceAccessHandler + 'h),
+    offset: u64,
+    stop_at: &'a mut Option<u64>,
+    panic: &'a mut Option<String>,
+}
+
+impl DeviceIo for ServingAdapter<'_, '_> {
+    fn access(&mut self, request: &DeviceRequest, context: &mut DeviceContext<'_>) -> DeviceResult {
+        let space = match request.space {
+            DeviceSpace::Port => crate::AccessSpace::Port,
+            DeviceSpace::Mmio => crate::AccessSpace::Mmio,
+            _ => return DeviceResult::Fallback,
+        };
+        let write = match request.direction {
+            DeviceDirection::Read => false,
+            DeviceDirection::Write => true,
+            _ => return DeviceResult::Fallback,
+        };
+        let access = crate::DeviceAccess {
+            space,
+            write,
+            address: request.address,
+            size: request.size,
+            value: if write { request.value } else { 0 },
+            steps: self.offset + request.position.steps,
+            delivery: request.event.is_some(),
+        };
+        let mut control = crate::AccessControl::default();
+        // Keep the panic's message, then let the core see the panic: it
+        // poisons the VM, whose state the handler may have left half done.
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.handler.access(&access, &mut control)
+        }));
+        let result = match result {
+            Ok(result) => result,
+            Err(payload) => {
+                *self.panic = Some(
+                    payload
+                        .downcast_ref::<&str>()
+                        .map(|text| text.to_string())
+                        .or_else(|| payload.downcast_ref::<String>().cloned())
+                        .unwrap_or_else(|| "a non-text panic".to_string()),
+                );
+                std::panic::resume_unwind(payload)
+            }
+        };
+        match result {
+            crate::AccessResult::Handled(value) => {
+                if let Some(asserted) = control.intr() {
+                    context.set_intr(asserted);
+                }
+                if let Some(at) = control.stop() {
+                    // A later position than one already set is refused, and
+                    // the earlier one stands, which is what the seam promises.
+                    let _ =
+                        context.set_deadline(DeviceDeadline::Steps(at.saturating_sub(self.offset)));
+                    *self.stop_at = Some(self.stop_at.map_or(at, |old| old.min(at)));
+                }
+                DeviceResult::Handled(value)
+            }
+            crate::AccessResult::Fallback => DeviceResult::Fallback,
+            crate::AccessResult::Fault => DeviceResult::DeviceFault(DeviceError::new(0)),
         }
     }
 }
@@ -980,71 +1247,27 @@ impl Cpu for X86JitCpu {
         max_steps: u64,
         options: StepRunOptions,
     ) -> Result<CpuStepRun, CpuError> {
-        let machine = self.vm.execution_profile() == ExecutionProfile::Machine;
-        let mut steps = 0;
-        // Bounded returns in a row with no instruction retired between them.
-        let mut stalls = 0u32;
-        let mut stalled_at = 0;
-        let stop = loop {
-            let run = self
-                .cpu
-                .run_steps(
-                    &self.vm,
-                    max_steps - steps,
-                    StepOptions::default().with_stop_when_irq_ready(options.stop_when_irq_ready),
-                )
-                .map_err(|error| match error {
-                    StepRunError::UnsupportedMode => CpuError::UnexpectedExit {
-                        what: "step-bounded execution is unsupported by this backend or mode"
-                            .to_string(),
-                    },
-                    StepRunError::PendingPortIn => CpuError::UnexpectedExit {
-                        what: "pending port input must be completed before step-bounded execution"
-                            .to_string(),
-                    },
-                    other => CpuError::UnexpectedExit {
-                        what: format!("{other:?}"),
-                    },
-                })?;
-            steps += run.steps();
-            self.completed_steps += run.steps();
-            let stop = run.into_stop();
-            // In the machine profile a budget stop short of the budget is
-            // only the core's bound on deliveries that retired nothing
-            // (`Vcpu::run_steps`), resumable at the handler. Running on lets
-            // a stack that overruns reach its shutdown, as on hardware;
-            // after STALL_RETURNS bounded returns a 16-bit stack has either
-            // done so or wraps cleanly forever, and the run stops.
-            if machine && steps < max_steps && matches!(stop, StepStop::Exit(Exit::BudgetExhausted))
-            {
-                let retired = self.cpu.retired_instructions();
-                stalls = if stalls != 0 && retired == stalled_at {
-                    stalls + 1
-                } else {
-                    1
-                };
-                stalled_at = retired;
-                if stalls < STALL_RETURNS {
-                    continue;
-                }
-                return Err(CpuError::DeliveryStalled {
-                    deliveries: stalls * DELIVERY_STALL_LIMIT,
-                    cs: self.cpu.cpu.cs,
-                    ip: self.cpu.cpu.rip,
-                });
-            }
-            break stop;
-        };
-        let stop = match stop {
-            StepStop::Exit(exit) => CpuStepStop::Exit(self.map_exit(exit)?),
-            StepStop::IrqReady => CpuStepStop::IrqReady,
-            other => {
-                return Err(CpuError::UnexpectedExit {
-                    what: format!("{other:?}"),
-                })
-            }
-        };
-        Ok(CpuStepRun { steps, stop })
+        self.step_run(max_steps, options, None)
+    }
+
+    fn set_served_ranges(&mut self, ranges: &[crate::ServedRange]) -> Result<(), CpuError> {
+        if self.served.wanted != ranges {
+            self.served.wanted = ranges.to_vec();
+            self.served.dirty = true;
+        }
+        Ok(())
+    }
+
+    fn run_steps_serving(
+        &mut self,
+        max_steps: u64,
+        options: StepRunOptions,
+        handler: &mut dyn DeviceAccessHandler,
+    ) -> Result<CpuStepRun, CpuError> {
+        let serving = self.vm.execution_profile() == ExecutionProfile::Machine
+            && self.apply_served_ranges()?
+            && !self.served.handles.is_empty();
+        self.step_run(max_steps, options, serving.then_some(handler))
     }
 
     fn completed_steps(&self) -> u64 {
@@ -1164,6 +1387,10 @@ impl Cpu for X86JitCpu {
         (self.cpu.cpu.cs, self.cpu.cpu.rip)
     }
 }
+
+#[cfg(test)]
+#[path = "device_access_tests.rs"]
+mod device_access_tests;
 
 #[cfg(test)]
 mod tests {
@@ -2148,6 +2375,7 @@ mod tests {
             completed_steps: 0,
             low_reset_fetch: true,
             delivery_records: Vec::new(),
+            served: ServedRanges::default(),
         };
         cpu.map_ram(0, 0x10000).unwrap();
         cpu.set_reg(CpuReg::Rip, 0x1000);
@@ -3034,6 +3262,7 @@ mod tests {
                 completed_steps: 0,
                 low_reset_fetch: true,
                 delivery_records: Vec::new(),
+                served: ServedRanges::default(),
             };
             cpu.map_ram(0, MMIO).unwrap();
             cpu.map_mmio(MMIO, 0x1000).unwrap();
@@ -3169,6 +3398,7 @@ mod tests {
             completed_steps: 0,
             low_reset_fetch: true,
             delivery_records: Vec::new(),
+            served: ServedRanges::default(),
             vm,
             cpu: vcpu,
             dma_regions: vec![(0..0x2000, RegionKind::Ram)],
