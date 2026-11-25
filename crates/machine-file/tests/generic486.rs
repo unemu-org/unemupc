@@ -213,3 +213,43 @@ fn user_media_doom_486_dx() {
 fn user_media_doom_486_cpuid() {
     generic_isa::user_media_doom(assembly::CpuChip::I80486DxCpuid, false);
 }
+
+#[test]
+fn generic486_dx_seabios_int13_disk_services() {
+    generic_isa::seabios_int13_disk_services(assembly::CpuChip::I80486Dx);
+}
+
+#[test]
+fn generic486_cpuid_seabios_int13_disk_services() {
+    generic_isa::seabios_int13_disk_services(assembly::CpuChip::I80486DxCpuid);
+}
+
+#[test]
+fn generic486_dx_seabios_ata_protected_driver() {
+    generic_isa::seabios_ata_protected_driver(assembly::CpuChip::I80486Dx);
+}
+
+#[test]
+fn generic486_dx_seabios_apm_protected_power_off() {
+    generic_isa::seabios_apm_protected_power_off(assembly::CpuChip::I80486Dx);
+}
+
+#[test]
+fn generic486_dx_seabios_mouse_aux_and_bios_handler() {
+    generic_isa::seabios_mouse_aux_and_bios_handler(assembly::CpuChip::I80486Dx);
+}
+
+#[test]
+fn generic486_cpuid_seabios_ata_protected_driver() {
+    generic_isa::seabios_ata_protected_driver(assembly::CpuChip::I80486DxCpuid);
+}
+
+#[test]
+fn generic486_cpuid_seabios_apm_protected_power_off() {
+    generic_isa::seabios_apm_protected_power_off(assembly::CpuChip::I80486DxCpuid);
+}
+
+#[test]
+fn generic486_cpuid_seabios_mouse_aux_and_bios_handler() {
+    generic_isa::seabios_mouse_aux_and_bios_handler(assembly::CpuChip::I80486DxCpuid);
+}

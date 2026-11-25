@@ -101,3 +101,23 @@ fn generic386_80387_seabios_reaches_diskless_post_end() {
 fn generic386_80387_seabios_freedos_reaches_prompt() {
     generic_isa::seabios_80387_freedos();
 }
+
+#[test]
+fn generic386_seabios_int13_disk_services() {
+    generic_isa::seabios_int13_disk_services(assembly::CpuChip::I80386);
+}
+
+#[test]
+fn generic386_seabios_ata_protected_driver() {
+    generic_isa::seabios_ata_protected_driver(assembly::CpuChip::I80386);
+}
+
+#[test]
+fn generic386_seabios_apm_protected_power_off() {
+    generic_isa::seabios_apm_protected_power_off(assembly::CpuChip::I80386);
+}
+
+#[test]
+fn generic386_seabios_mouse_aux_and_bios_handler() {
+    generic_isa::seabios_mouse_aux_and_bios_handler(assembly::CpuChip::I80386);
+}

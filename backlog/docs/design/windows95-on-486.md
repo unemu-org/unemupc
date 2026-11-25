@@ -109,16 +109,16 @@ desktop; "Later" = after the first desktop.
 | # | Area | Need | Current state and evidence | Owner | Size | Blocks |
 | --- | --- | --- | --- | --- | --- | --- |
 | 1 | Test harness | A local-only test fed by environment variables: build the disk, launch setup, stage at reboots, report stops | READ: the DOOM helper exists (`crates/machine-file/tests/support/user_media.rs:122`), but it takes one flat directory, a 34 MiB 4x32 geometry and DOOM-specific names (`user-media.md` § Temporary disk) | U | M | Setup |
-| 2 | Disk image | About 500 MB FAT16, active partition, subdirectories | READ: geometry limit 16383/16/63 (`ata.rs:43`); CMOS 39h translation seeded as QEMU does (`assemble.rs:1841`, `:1868`); SeaBIOS reads it (`block.c:84-90`). A disk of at most 1024 cylinders needs no translation | U | S | Setup |
+| 2 | Disk image | About 500 MB FAT16, active partition, subdirectories | MEASURED: synthetic 1015/16/63 (523,837,440 bytes) and 2048/16/63 (1,056,964,608 bytes) disks enumerate alongside the probe floppy; native EDD capacity and final-LBA data agree. This qualifies geometry/addressing, not FAT16. READ: nested FAT16 construction has separate disk-builder tests (`status.md` § Local Windows 95 setup launcher). | U | S | Setup |
 | 3 | DOS launcher | Setup starts from the open FreeDOS floppy | Untested. ASSUMED risk, fallback in section 2 | U | S | Setup |
-| 4 | INT 13h | CHS geometry Windows agrees with; extensions optional | READ: EDD 3.0 present (`disk.c:409-414`). No gap known; needs a probe with a 1015/16/63 disk | U | S | - |
-| 5 | Protected-mode IDE driver (ESDI_506.PDR) | IDENTIFY, SET MULTIPLE, READ/WRITE (MULTIPLE), INITIALIZE PARAMETERS, RECALIBRATE with IRQ14; absent slave and absent secondary channel answer cleanly | READ: commands ECh, 20h/21h/30h/31h, C4h/C5h, C6h, 91h, 10h-1Fh, 40h/41h, 70h-7Fh, EFh, 90h; everything else ABRT (`ata.rs:640-778`). IDENTIFY words 0-6, 47, 49 (LBA, IORDY, no DMA), 53-61, 64, 67-68 (`ata.rs:780-826`). Data port accepts 16-bit cycles only (`ata.rs:83`). Power commands E0h-E6h and FLUSH E7h abort. ASSUMED sufficient; this is the first real driver to use it. If the driver declines, Windows falls back to MS-DOS compatibility mode through INT 13h in V86: slower, still boots | U | S-M, fix as found | Desktop only if it hangs |
+| 4 | INT 13h | CHS geometry Windows agrees with; extensions optional | MEASURED: `seabios_int13_disk_services` on all three CPU entries checks AH=08h/41h/48h/42h and a final reported CHS-cylinder read. AH=08h maximum C/H/S: 1013/15/63 and 1022/31/63 (landing cylinder reserved, translation to 32 heads). EDD 3.0 reports native CHS/full capacity; both buffers match synthetic sectors. | U | S | - |
+| 5 | Protected-mode IDE driver (ESDI_506.PDR) | IDENTIFY, SET MULTIPLE, READ/WRITE (MULTIPLE), INITIALIZE PARAMETERS, RECALIBRATE with IRQ14; absent slave and absent secondary channel answer cleanly | MEASURED: `seabios_ata_protected_driver` on all three CPU entries runs flat32 IDENTIFY, SET MULTIPLE (2), four-sector READ/WRITE MULTIPLE and readback, INITIALIZE DEVICE PARAMETERS, SET FEATURES (PIO4), RECALIBRATE and A1h ABRT. Twelve IRQ14 deliveries enter the protected IDT, with expected block/completion statuses and data. Absent slave status/error=00h/00h; secondary status/control=FFh. ASSUMED: ESDI_506.PDR uses this subset; the real Windows driver remains unqualified. | U | S-M, fix as found | Desktop only if it hangs |
 | 6 | ATAPI CD-ROM | Not needed on path C | READ: absent (`ata.rs:45`); firmware side ready | U | L | Later |
-| 7 | PS/2 mouse | 8042 aux port, IRQ12, standard ID 00 mouse | READ: device and commands exist (`ps2_mouse.rs:11-19`); `board.mouse` is accepted on the generic boards (`validate.rs:744-776`); SeaBIOS sets the equipment bit and serves INT 15h C2h (`mouse.c:17-23`, `:255`). No generic-board test uses it. Sample rate does not pace packets (`ps2_mouse.rs:27-30`) | U | S | Later (setup works from the keyboard) |
+| 7 | PS/2 mouse | 8042 aux port, IRQ12, standard ID 00 mouse | MEASURED: `seabios_mouse_aux_and_bios_handler` lowers `board.mouse = true` on each board/CPU entry. INT 15h C2h initialise/set-handler/enable/disable succeeds; injected motion reaches its BIOS callback. Direct reset gives FAh AAh 00h; sample-rate 100, enable and ID commands ACK; ID=00h. Three IRQ12 bytes preserve signs/buttons and aux OBF without parity/timeout. Windows driver compatibility remains ASSUMED; sample-rate pacing remains unmodelled. | U | S | Later (setup works from the keyboard) |
 | 8 | Serial mouse | Alternative to PS/2 | READ: exists (`assemble.rs:367-372`), but COM1 is SeaBIOS's serial console on these boards (`board.rs:222-229`, `fw_cfg.rs:28`), so the two collide. Prefer PS/2 | U | - | - |
 | 9 | Keyboard | 8042 command byte, A20, LEDs, typematic | READ: table at `i8042.rs:113-131`; D2h and E0h not modelled. ASSUMED enough | U | S if found | - |
 | 10 | Memory size | INT 15h 88h, E801h, E820h | READ: all present (`system.c:170`, `:260`, `:290`); RAM ceiling 64 MiB (`memory.rs:13-17`). Use 16-32 MiB | - | - | - |
-| 11 | APM | Connect, CPU idle, power off | READ: on by default (`Kconfig:401`); real, 16-bit and 32-bit interfaces (`apm.c:19-64`); power-off without ACPI is `cli; hlt` (`apm.c:89-100`), which stops the machine (`crates/machine/src/lib.rs:2553`). That is a clean end-of-run signal for tests | U | S (probe) | - |
+| 11 | APM | Connect, CPU idle, power off | MEASURED: `seabios_apm_protected_power_off` checks APM 1.2 install/5303h connect, builds descriptors from returned bases/lengths, calls the 32-bit entry for version negotiation and CPU idle (5305h), wakes through one protected IRQ0, then powers off all devices (5307h). The run ends at the BIOS HLT with IF=0; off does not return. All three CPU entries pass. | U | S (probe) | - |
 | 12 | PnP BIOS | Optional | READ: `$PnP` header present, every call returns "not supported" (`pnpbios.c:36-62`, `Kconfig:406`). ASSUMED: Device Manager shows a failing "Plug and Play BIOS" node, cosmetic. Turning `CONFIG_PNPBIOS` off means a firmware rebuild, re-pin and golden re-run | S | S | Later, optional |
 | 13 | IRQ routing, PCI | None on ISA | READ: PCI BIOS, PIR, ACPI, MP tables off (`vendor/seabios/config:17-33`). Undecoded ports float to FFh (`crates/bus/src/lib.rs:99`), which is what legacy and ISA PnP detection expects | - | - | - |
 | 14 | CMOS/RTC | Time, alarm, periodic, 128 bytes | READ: 128-byte RTC with the QEMU layout (`board.rs:208-210`, `assemble.rs:1811-1860`); periodic partial, alarm and update-ended modelled (`cmos_rtc.rs:64-66`) | - | - | - |
@@ -134,11 +134,12 @@ desktop; "Later" = after the first desktop.
 | 24 | CPUID | Either 486 entry | READ: the CPUID entry reports FPU only (x86jit `model.rs:401`), so no VME is advertised. Start with `80486dx` | - | - | - |
 | 25 | Snapshots | A checkpoint after setup would save hours | Deferred (`deferred.md:69`). Disk journal generations at reboots replace it for now | U | L | Not proposed |
 
-Notes on rows where Windows 95 behaviour drives the risk (all ASSUMED):
+Notes on rows where Windows 95 behaviour drives the risk:
 
-- Row 5. The driver compares the BIOS geometry with IDENTIFY words 1/3/6 and
-  54-58 to decide whether it can take the disk over. A disk within 1024
-  cylinders removes that question from the first run.
+- Row 5. ASSUMED: the driver compares BIOS geometry with IDENTIFY words
+  1/3/6 and 54-58 before taking the disk over. The open probes measure both
+  interfaces, including SeaBIOS's reserved landing cylinder; they do not prove
+  how the Windows driver interprets that difference.
 - Row 15. Setup's GUI is the Windows 3.1 VGA driver, which the 286 AT profile
   has already run (`status.md:975`); the generic boards with SeaVGABIOS have not.
 - Row 22. VMM uses ARPL in V86 as its breakpoint, traps HLT and port I/O from
@@ -174,14 +175,35 @@ Local-only test, following `backlog/docs/user-media.md`:
 - A per-device port summary (ATA commands seen, 8042 aux commands, PIC OCW3
   writes) turns ASSUMED rows 5, 7 and 17 into READ facts on the first run.
 
-Open, project-owned probes that can cover the same gaps in CI:
+Project-owned probes cover the following gaps in CI. The first four rows
+are **MEASURED** at x86jit `ce6bbbee`, with the pinned unemu SeaBIOS fork and
+SeaVGABIOS on 80386DX, 80486DX and 80486DX-CPUID. Their sources and frozen
+binaries live in `crates/machine-file/tests/fixtures/seabios-{int13,ata-driver,mouse,apm}.*`;
+`service_fixtures` rebuilds each with NASM and compares every byte. The shared
+`support/generic_services.rs` helper uses a read-only in-memory floppy. Hard
+disks use fully SHA-256-identified sparse zero bases. Synthetic sectors are
+seeded directly through the media overlay, independently of ATA's address
+decoder; guest writes use that same overlay. No device fix or pre-existing
+golden change was necessary. Hardware references: ATA-2 (X3T10/0948D rev 4c),
+§6.2 task file, §7 command descriptions and §§8.3–8.4 PIO protocols; IBM PS/2
+Hardware Interface Technical Reference, Keyboard and Auxiliary Device
+Controller / Auxiliary Device Interface and Pointing Device / Data Reporting;
+APM BIOS Interface Specification 1.2, §§4.6.1 (installation), 4.6.4 (32-bit
+connect), 4.6.6 (CPU Idle), 4.6.8 (Set Power State).
+EDD 3.0 §5.8, Tables 3–5 define the separately asserted path length, ISA
+interface address, ATA master selection and reserved zero fields; the
+checksum is checked as well. IDENTIFY words 57–58 are checked separately
+from LBA capacity words 60–61. The first WRITE MULTIPLE block qualifies BSY,
+ERR and DRQ before transfer and saves its status for host validation
+(ATA-2 §8.4). Mouse phase waits reject premature halt/reset and lack of
+virtual-time progress before the expected marker.
 
 | Gap rows | Probe |
 | --- | --- |
-| 2, 4 | SeaBIOS boot with a 1015/16/63 disk and one above 1024 cylinders: INT 13h AH=08h, 41h, 48h and a read at the last cylinder |
-| 5 | A driver-style ATA sequence from protected mode with IRQ14: IDENTIFY, SET MULTIPLE, READ/WRITE MULTIPLE, INITIALIZE PARAMETERS, absent slave, absent secondary channel, A1h abort |
-| 7 | FreeDOS with the open CuteMouse driver in PS/2 mode and injected motion; a direct 8042 aux exchange with IRQ12 |
-| 11 | APM install check, 32-bit connect, CPU idle, power off ending the run |
+| 2, 4 | MEASURED: `seabios_int13_disk_services`, both disk geometries, AH=08h/41h/48h/42h, last LBA and final reported CHS cylinder |
+| 5 | MEASURED: `seabios_ata_protected_driver`, flat32 IDT/PIC IRQ14, IDENTIFY, multiple-block reads/writes, parameters/features, recalibrate and absent/aborted commands |
+| 7 | MEASURED: `seabios_mouse_aux_and_bios_handler`, BIOS C2h callback plus direct aux commands and IRQ12. CuteMouse and the Windows driver remain unqualified |
+| 11 | MEASURED: `seabios_apm_protected_power_off`, install/32-bit connect, protected entry, IRQ0 idle wake and terminal BIOS HLT with IF=0 |
 | 15 | Mode 12h write modes, latch copies, read mode 1 and an INT 10h AH=1Ch save/restore round trip through SeaVGABIOS |
 | 17 | Extend the PIC unit tests only if the port trace shows special mask or poll mode |
 | 22, 23 | A small V86 monitor with ARPL breakpoints, trapped I/O and CR3 switches already exists as the V86 and paging ROMs; add bench fixtures for paged protected16 CPL 3 and paged V86 |

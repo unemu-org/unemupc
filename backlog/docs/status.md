@@ -1,5 +1,62 @@
 # Status
 
+## Generic ISA BIOS services and protected ATA probes (2026-11-25)
+
+**MEASURED**, x86jit `ce6bbbee`, pinned unemu SeaBIOS/SeaVGABIOS:
+four project-owned floppy fixtures pass on 80386DX and both 486 entries.
+They boot from read-only in-memory media. The synthetic IDE disks retain
+fully SHA-256-identified zero bases; sector seeds and writes use the existing
+volatile overlay. Seeds address the media directly, independently of ATA's
+address decoder. No device fix or pre-existing golden update was required.
+
+- INT 13h 08h/41h/48h/42h: 1015/16/63 and 2048/16/63 disks, native EDD
+  capacity, EDD 3.0 ISA/ATA path length/master/reserved fields/checksum,
+  last-LBA data and final reported
+  CHS-cylinder data. SeaBIOS reserves one CHS landing cylinder and translates
+  the larger disk to 32 heads.
+- Flat32 ATA driver: IDENTIFY model/CHS/current CHS capacity/LBA, SET MULTIPLE=2, four-sector
+  READ/WRITE MULTIPLE with readback, parameters, PIO4 features, recalibrate,
+  absent slave, floating secondary channel and A1h ERR/ABRT. Twelve IRQ14
+  deliveries enter the protected IDT; every block status and payload matches.
+  The first write block polls BSY clear before checking ERR clear and DRQ set,
+  and saves its status for a separate host assertion (ATA-2 §8.4).
+- `board.mouse = true`: INT 15h C2h initialise/set-handler/enable/disable and
+  an injected BIOS packet; direct aux reset FA/AA/00, sample-rate 100,
+  reporting/ID commands and a second signed/button packet as three IRQ12 bytes.
+- APM 1.2 install and 32-bit connect: descriptors use returned bases/lengths;
+  protected calls negotiate the version, idle until one IRQ0, then power off
+  all devices. The terminal state is the BIOS HLT with IF clear, with no return
+  from power-off.
+
+Frozen retired counts (both 486 CPU entries agree):
+
+| Probe | 80386DX | 80486DX / 80486DX-CPUID |
+| --- | ---: | ---: |
+| INT 13h, 1015 cylinders | 8,241,639 | 10,816,044 |
+| INT 13h, 2048 cylinders | 8,241,493 | 10,816,191 |
+| Protected ATA | 8,259,907 | 10,850,496 |
+| Mouse, BIOS plus direct aux | 8,402,774 | 11,140,838 |
+| Protected APM power-off | 8,239,019 | 10,813,700 |
+
+NASM rebuild-and-compare is an automated test. Negative fixture mutations
+(wrong final LBA, masked ATA IRQ, disabled auxiliary IRQ and returning APM
+standby call) each fail their corresponding 386 probe; restored fixtures pass.
+The first-write qualification adds guest instructions, changing only the new
+ATA probe's frozen counts above (+1 on 386, +13 on each 486 entry, including
+the polling-loop alignment). Mouse phase waits reject a terminal outcome
+before the marker and require virtual-time progress on each iteration.
+**MEASURED mutation checks:** clearing ATA LBA bit 20 fails the independently
+seeded last-sector comparison; forcing initial write status D8h or 59h fails
+the ATA probe; forcing the mouse boot-failure HLT fails the phase outcome
+assertion. Flipping IDENTIFY word 57 fails current CHS capacity. EDD mutations
+to path length, ATA slave selection and each reserved region (header, ISA
+path, ATA path, trailer), with the checksum adjusted to remain valid, fail
+their individual field assertions. All eleven mutants were restored before
+the final probe and gate runs.
+These tests qualify the exposed interfaces; actual Windows IDE/mouse drivers
+and CuteMouse remain unqualified. Sample-rate packet pacing remains unmodelled.
+See [the measured gap rows and hardware references](design/windows95-on-486.md#5-determinism-and-tests).
+
 ## Local Windows 95 setup launcher (2026-11-25)
 
 **MEASURED**, x86jit `4bf91c8d`: the ignored `user_media_win95_stage1`

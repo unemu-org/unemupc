@@ -757,9 +757,9 @@ impl machine_file::ImageReader for FirmwareImages<'_> {
     }
 }
 
-fn add_floppy(config: &mut assembly::MachineConfig, sector: &[u8; 512]) {
+fn add_floppy(config: &mut assembly::MachineConfig, sector: &[u8]) {
     let mut floppy = vec![0; 1_474_560];
-    floppy[..512].copy_from_slice(sector);
+    floppy[..sector.len()].copy_from_slice(sector);
     config.devices.push(
         assembly::DeviceConfig::new(
             DeviceId::Fdc,
@@ -1750,3 +1750,10 @@ pub use user_media::doom as user_media_doom;
 #[path = "generic_sound.rs"]
 mod generic_sound;
 pub use generic_sound::sb16_opl3 as seabios_sb16_opl3;
+
+#[path = "generic_services.rs"]
+mod generic_services;
+pub use generic_services::{
+    seabios_apm_protected_power_off, seabios_ata_protected_driver, seabios_int13_disk_services,
+    seabios_mouse_aux_and_bios_handler,
+};
