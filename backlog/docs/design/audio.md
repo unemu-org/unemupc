@@ -97,6 +97,17 @@ or time was skipped. A sample starting exactly at the frontier is still allowed.
 Sealed, paused, out-of-order and unrepresentable writes use the same error.
 Clones are writer handles for one mixer consumer, not independent cursors.
 
+The retained segment queue is that reader's cursor. Before integrating an output
+frame, `RateSource` releases the prefix preceding its start, preserving the
+native sample active at that start. Rendering stops at the first segment whose
+origin is at or beyond the frame's end. Release likewise stops at the first
+remaining segment: chronological, nonoverlapping segments put all later ones
+in the future. Segment traversal is therefore linear in output frames plus
+segments, rather than their product; native-sample integration is unchanged.
+This also bounds retained history during a single long capture, before the
+mixer's final observation release. The incomplete output frame still survives
+that final release.
+
 ## PC speaker
 
 IBM Personal Computer AT Technical Reference, September 1985, Section 1

@@ -11,6 +11,66 @@ fn period(numerator: u64, denominator: u64) -> SamplePeriod {
     )
 }
 
+/// Run in release mode with --ignored --exact --nocapture. Alternating periods
+/// keep segments distinct even if a producer coalesces equal-rate PCM later.
+#[test]
+#[ignore]
+fn native_segment_capture_scaling() {
+    for count in [2048, 4096, 8192, 16384] {
+        let build = std::time::Instant::now();
+        let buffer = SampleBuffer::default();
+        for index in 0..count {
+            buffer
+                .push_segment(
+                    VClock(index * 24),
+                    period(48 + index % 2, 2),
+                    &[[123, -456]],
+                )
+                .unwrap();
+        }
+        let build = build.elapsed();
+        let mut mixer = Mixer::new(VClock::ZERO);
+        mixer.add_source(VClock::ZERO, Box::new(RateSource::new(buffer.clone())));
+        let end = VClock(count * 24);
+        let mut capture = CaptureAudioSink::with_frame_limit(count as usize);
+        let render = std::time::Instant::now();
+        mixer.render_until(end, &mut capture).unwrap();
+        let render = render.elapsed();
+        assert_eq!(capture.frame_count(), completed_frames(end));
+        assert!(capture.frames().iter().all(|frame| *frame == [123, -456]));
+        eprintln!(
+            "segments={count} frames={} build_s={:.6} render_s={:.6}",
+            capture.frame_count(),
+            build.as_secs_f64(),
+            render.as_secs_f64(),
+        );
+        std::hint::black_box(capture);
+    }
+}
+
+#[test]
+fn native_render_releases_consumed_prefix_without_an_observation_release() {
+    let buffer = SampleBuffer::default();
+    for index in 0..256 {
+        buffer
+            .push_segment(VClock(index * 24), period(24, 1), &[[index as i16; 2]])
+            .unwrap();
+    }
+    let mut reader = RateSource::new(buffer.clone());
+    for index in [0, 1, 127, 255] {
+        assert_eq!(
+            reader.render(VClock(index * 24), VClock((index + 1) * 24)),
+            [i128::from(index) * 24; 2]
+        );
+        assert_eq!(buffer.buffered_segments(), (256 - index) as usize);
+        assert_eq!(buffer.buffered_frames(), (256 - index) as usize);
+    }
+    assert_eq!(
+        buffer.push_segment(VClock(256 * 24 - 1), period(24, 1), &[[1; 2]]),
+        Err(AudioError::HistoryOrder)
+    );
+}
+
 struct Signal {
     origin: VClock,
     period: SamplePeriod,

@@ -448,6 +448,76 @@ selected device dependency's `device/host-profile` passed all 900 tests
 (6.917s test time). This was a runner invocation correction; repository
 sources were unchanged. Cargo deny remains reserved for the supervisor.
 
+### Native audio history traversal (2026-11-25)
+
+The native-audio proposal above is implemented in `RateSource`: the shared
+segment queue acts as its single reader's cursor. Each render releases the
+consumed prefix and stops at the first future segment. Release also stops at
+the first remaining active/future segment instead of scanning later history.
+The native integration, segment boundaries, pause handling and late-write
+checks are unchanged. See [audio design §Mixing](design/audio.md#mixing).
+
+**MEASURED:** the scaling benchmark was added and run before the traversal
+change. Reproduce with `cargo test --offline --release -p audio --lib
+tests::native_segment_capture_scaling -- --exact --ignored --nocapture`, using
+the project cargo wrapper on a shared host. It builds one sample per segment,
+alternates native periods 24 and 49/2 ticks to keep segments distinct, and
+checks every output frame against the same exact stereo level. Build and
+render timings are separate; compilation is excluded.
+
+| Segments | Output frames | Before render s | After render s | Before build s | After build s |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 2,048 | 1,977 | 0.011916 | 0.000088 | 0.000050 | 0.000046 |
+| 4,096 | 3,954 | 0.050303 | 0.000171 | 0.000089 | 0.000068 |
+| 8,192 | 7,909 | 0.186034 | 0.000337 | 0.000218 | 0.000131 |
+| 16,384 | 15,818 | 0.737732 | 0.000680 | 0.000248 | 0.000204 |
+
+Doubling the history now approximately doubles render time, versus quadrupling
+it before. Contiguous-segment coalescing was considered and left unchanged:
+the queue traversal removes the dominant cost, allocation is small in this
+probe, and retaining explicit segments preserves all rate/phase/cut semantics.
+The separate retention regression was run against the original traversal and
+failed (256 segments retained versus 255 after advancing one sample). It passes
+after the fix, checking exact areas, prefix retention and late-write rejection.
+
+**MEASURED:** the two exact-name sound workloads listed above ran sequentially,
+once off and once on before the change, then once off and once on after it.
+These runs use the same x86jit pin
+`786b5fd04dd895a696f951fcdf26828f55bfb3d6` on both sides, rather than the older
+profiling table's pin. No dependency was changed for this measurement. Commands
+are the release commands described above: `-p machine-file --test generic386
+generic386_seabios_sb16_opl3_golden` and `-p machine-file --test generic486
+generic486_dx_seabios_sb16_opl3_golden`, with `-- --exact --nocapture` and
+`UNEMUPC_REQUIRE_FIXTURES=1`. Off omits the feature and sets
+`UNEMUPC_HOST_PROFILE=0`; on adds `--features host-profile` and sets
+`UNEMUPC_HOST_PROFILE=1`. Each test contains 8/16-bit whole/split captures.
+
+| Test process | Before off s | After off s | Before on s | After on s |
+| --- | ---: | ---: | ---: | ---: |
+| SB16 386 | 41.88 | 10.78 | 43.83 | 8.83 |
+| SB16 486 DX | 34.79 | 15.15 | 27.27 | 16.45 |
+
+Direct `capture_audio` intervals from the enabled runs:
+
+| Capture | Before s | After s |
+| --- | ---: | ---: |
+| SB16 386 8-bit whole | 13.129267 | 0.003254 |
+| SB16 386 8-bit split (77 boundaries) | 6.289288 | 0.005291 |
+| SB16 386 16-bit whole | 7.967533 | 0.003586 |
+| SB16 386 16-bit split (77 boundaries) | 6.001469 | 0.005841 |
+| SB16 486 DX 8-bit whole | 3.476145 | 0.002947 |
+| SB16 486 DX 8-bit split (53 boundaries) | 2.842825 | 0.003681 |
+| SB16 486 DX 16-bit whole | 3.455264 | 0.002007 |
+| SB16 486 DX 16-bit split (53 boundaries) | 2.715665 | 0.002764 |
+
+These are single observations under uncontrolled shared-host activity, not
+confidence intervals or isolated CPU speedups. Test-process times exclude
+compilation. All eight enabled before/after counter sets match exactly,
+including retired instructions, completed steps, supplied budgets, exits and
+device/scheduler events. Golden tuples, guest result bytes and IRQ delays also
+match directly; both diagnostic settings pass the unchanged PCM goldens.
+No expected value was updated.
+
 
 ## Nominal CPU clocks and turbo (2026-11-24)
 

@@ -255,6 +255,8 @@ pub(super) fn integrate_native(
 
 /// One device-lifetime PCM reader. Writers change rate or pause by appending
 /// timestamped segments to its shared buffer, without replacing this source.
+/// Rendering moves retention to the interval's start; completed intervals are
+/// never revisited, just as with `EdgeSource`.
 pub struct RateSource {
     samples: SampleBuffer,
 }
@@ -269,10 +271,16 @@ impl RateSource {
 
 impl AudioSource for RateSource {
     fn render(&mut self, start: VClock, end: VClock) -> SampleArea {
+        // The shared queue is this reader's cursor. Release each completed prefix
+        // before rendering so a long observation never rescans its past frames.
+        self.release_before(start);
         let mut samples = self.samples.0.borrow_mut();
         samples.covered_until = samples.covered_until.max(end);
         let mut area = [0; 2];
         for segment in &samples.segments {
+            if segment.origin >= end {
+                break;
+            }
             let from = start.max(segment.origin);
             let stop = segment.end.map_or(end, |stop| stop.min(end));
             let native_end = sample_boundary(
@@ -306,24 +314,26 @@ impl AudioSource for RateSource {
 
     fn release_before(&mut self, retain_from: VClock) {
         let mut samples = self.samples.0.borrow_mut();
-        for segment in &mut samples.segments {
-            if retain_from < segment.origin {
+        while let Some(segment) = samples.segments.front_mut() {
+            if retain_from >= segment.origin {
+                let index = segment
+                    .period
+                    .sample_index(retain_from.0 - segment.origin.0);
+                let count = index
+                    .saturating_sub(segment.first)
+                    .min(segment.frames.len() as u128) as usize;
+                segment.frames.drain(..count);
+                segment.first += count as u128;
+            }
+            if segment.end.is_some_and(|end| end <= retain_from)
+                || (segment.end.is_some() && segment.frames.is_empty())
+            {
+                samples.segments.pop_front();
+            } else {
+                // Ordered, nonoverlapping segments make every later one future
+                // history once the first still-active segment has been reached.
                 break;
             }
-            let index = segment
-                .period
-                .sample_index(retain_from.0 - segment.origin.0);
-            let count = index
-                .saturating_sub(segment.first)
-                .min(segment.frames.len() as u128) as usize;
-            segment.frames.drain(..count);
-            segment.first += count as u128;
-        }
-        while samples.segments.front().is_some_and(|segment| {
-            segment.end.is_some_and(|end| end <= retain_from)
-                || (segment.end.is_some() && segment.frames.is_empty())
-        }) {
-            samples.segments.pop_front();
         }
     }
 
