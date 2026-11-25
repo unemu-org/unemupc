@@ -16,7 +16,7 @@ use machine::{DeliveryEntry, RecentDeliveries, RunOutcome, SchedulerEngine};
 #[path = "support/fixtures.rs"]
 mod fixtures;
 
-const CPU_REV: &str = "5bdb7a4d9a9a65e6f545e632788a50cdf68cda5c";
+const CPU_REV: &str = "8064e28f1a9a2e4af7f1304a61e1eb1c9f9b13af";
 const IMAGE: &str = "i386-pm-test/i386-pm-test.bin";
 const CAP: u64 = 500_000;
 const GOLDEN_RETIRED: u64 = 31_781;
