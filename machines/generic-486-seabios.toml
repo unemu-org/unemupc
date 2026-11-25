@@ -21,7 +21,7 @@ extended_kib = 15360
 
 [firmware.bios]
 image = "../vendor/seabios/bios-1.17.0-isa.bin"
-sha256 = "ad50fdb5e12a03dd5c17eac481a4183a7793b84252319eea02b8c878667c994f"
+sha256 = "9aace5de21df74ba42243664454d1f2130c143fc04ce5b4e69c0c71e55e9b699"
 
 # SeaBIOS receives this video ROM through fw_cfg and copies it to C0000h.
 [[firmware.option_roms]]

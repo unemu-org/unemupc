@@ -501,13 +501,16 @@ built and ran nothing. Prebuilt-image measurements are recorded in Sources.
 Machine/core availability below is the spike's source assessment at x86jit
 pin `8979fc9`, not a SeaBIOS boot result.
 
-**Firmware source (2026-11-24).** The shipped build now pins the source of
+**Firmware source (2026-11-25).** The shipped build now pins the source of
 truth, [unemu-org/seabios](https://github.com/unemu-org/seabios), at release
-`v1.17.0-unemu1`, commit `e38573ec2d7d43fb7802bc43ddcb3ce2bf892809`: upstream rel-1.17.0 plus the
+`v1.17.0-unemu1`, commit `ac8cabc4585f4922139a841b1c91cceb432b8728`: upstream rel-1.17.0 plus the
 fix set in the fork's `README.unemu.md`. The initial code fix replaces
 `__swab32`'s inline `bswapl` with C compiled for the 80386 (`byteorder.h:15–20`).
 Upstream's inline instruction requires a 486 despite `-march=i386`; the
-fw_cfg directory, ATA and block commands reach it. The old fixture shut down
+fw_cfg directory, ATA and block commands reach it. The second fix probes the
+math coprocessor before setting the BDA equipment bit and enabling IRQ13.
+The maintainer replaced the release and tag under the same name to include
+both fixes, before any external users existed. The old fixture shut down
 on #UD at `0008:000F510B`, after 3,582 retired instructions. Fixes belong in
 the fork and go upstream (`upc-o0j.23`), rather than in CPU or board workarounds.
 Source citations below retain the spike's upstream revision unless marked fork.
@@ -679,13 +682,14 @@ and [the optional local DOOM sound probe](../user-media.md#sound-variant).
 
 **Implemented catalogue entry.** `seabios-1.17.0-unemu1-isa` is **Listed**, not
 Tested: a 131,072-byte system BIOS at E0000h, SHA-256
-`ad50fdb5e12a03dd5c17eac481a4183a7793b84252319eea02b8c878667c994f`.
+`9aace5de21df74ba42243664454d1f2130c143fc04ce5b4e69c0c71e55e9b699`.
 It is open firmware (LGPL-3.0-only), built by `vendor/seabios/fetch.sh`
 from release `v1.17.0-unemu1`, fork commit
-`e38573ec2d7d43fb7802bc43ddcb3ce2bf892809`. Both SeaBIOS and SeaVGABIOS
+`ac8cabc4585f4922139a841b1c91cceb432b8728`. Both SeaBIOS and SeaVGABIOS
 pin its corresponding source archive, SHA-256
-`b85015a695a9b1b8080c4871335bb68c2ec9aa9c8ba69e88a122a925c580c8c0`;
-the release adds rebuild files and documentation without changing firmware sources or ROM bytes.
+`f94f8720fc0cc9eedc9681b100ecba0c0d6d30d26f7a0e599c0b86f9138dac0a`;
+the replacement release includes rebuild files and documentation as well as
+the byte-swap fix and coprocessor probe. Catalogue IDs and ROM filenames stay unchanged.
 The catalogue declares an 80386 minimum, AT keyboard/PICs and 128-byte CMOS. It belongs to both
 `generic-386-isa` and `generic-486-isa`, provides floppy/fixed-disk services and enables
 `cmos-qemu-layout`. It has no pre-mapped ROM scan window. The shipped

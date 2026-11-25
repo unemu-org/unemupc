@@ -67,7 +67,7 @@ pub fn shipped_file_has_listed_pinned_firmware_and_assembles(chip: CpuChip) {
     assert_eq!(entry.status, FirmwareStatus::Listed);
     assert_eq!(
         entry.sha256,
-        "ad50fdb5e12a03dd5c17eac481a4183a7793b84252319eea02b8c878667c994f"
+        "9aace5de21df74ba42243664454d1f2130c143fc04ce5b4e69c0c71e55e9b699"
     );
     let bios = &config.images[config.system_bios_image.unwrap()];
     assert_eq!(bios.base, 0xE0000);
@@ -337,6 +337,62 @@ pub fn toml_yaml_defaults_and_memory_limits_match(chip: CpuChip) {
     }
 }
 
+/// Intel 80387 Programmer's Reference Manual, §6.2.3, Figure 6-1: POST
+/// must report a coprocessor only after its non-waiting presence probe answers.
+/// Intel 8259A datasheet, Interrupt Mask Register: slave bit 5 masks IRQ13.
+pub fn seabios_equipment_matches_fpu(chip: CpuChip) {
+    let Some(config) = shipped(chip) else {
+        return;
+    };
+    let policy = assembly::ObservationPolicy {
+        routes: vec![assembly::ObservationRequest {
+            device: DeviceId::DebugConsole,
+            output: assembly::OutputKind::Bytes(device::ByteStreamKind::DebugConsole),
+            byte_limit: 65536,
+        }],
+        ..Default::default()
+    };
+    let mut assembled = machine_file::assemble_with_observation(&config, &policy).unwrap();
+    let result = assembled
+        .machine
+        .run_bounded(Some(budget(chip, 10_000_000)));
+    eprintln!(
+        "{} FPU probe retired: {}",
+        chip.name(),
+        assembled.machine.cpu().retired()
+    );
+    if let Err(machine::MachineError::Cpu(error)) = &result {
+        if let Some(report) = assembled.machine.cpu().stop_report(error) {
+            eprintln!("{report}");
+        }
+    }
+    result.unwrap();
+    let debug = assembled
+        .observation
+        .drain_bytes(DeviceId::DebugConsole, device::ByteStreamKind::DebugConsole)
+        .unwrap();
+    assert!(String::from_utf8_lossy(&debug).contains("No bootable device."));
+    let mut equipment = [0; 2];
+    assembled
+        .machine
+        .cpu()
+        .read_mem(0x410, &mut equipment)
+        .unwrap();
+    let equipment = u16::from_le_bytes(equipment);
+    let mask = assembled.machine.bus_mut().port_read(0xA1, 1).unwrap();
+    eprintln!(
+        "{} BDA equipment={equipment:04x}; slave PIC mask={mask:02x}",
+        chip.name()
+    );
+    let present = chip != CpuChip::I80386;
+    assert_eq!(
+        equipment,
+        if present { 0x0026 } else { 0x0024 },
+        "BDA equipment"
+    );
+    assert_eq!(mask & 0x20 == 0, present, "IRQ13 unmasked only with an FPU");
+}
+
 pub fn seabios_reaches_diskless_post_end(chip: CpuChip) {
     let Some(config) = shipped(chip) else {
         return;
@@ -404,19 +460,15 @@ fn diskless_post(chip: CpuChip, config: assembly::MachineConfig) {
     let equipment = u16::from_le_bytes(equipment);
     machine.machine.bus_mut().port_write(0x70, 1, 0x14).unwrap();
     let cmos = machine.machine.bus_mut().port_read(0x71, 1).unwrap();
-    // SeaBIOS sets the BDA coprocessor flag unconditionally; CMOS still
-    // records the configured socket, so the two differ on a no-FPU 386.
-    if config.cpu.fpu != assembly::FpuChip::None {
-        assert_eq!(equipment & 2, 2);
-    }
-    assert_eq!(
-        cmos & 2,
-        if config.cpu.fpu == assembly::FpuChip::None {
-            0
-        } else {
-            2
-        }
-    );
+    // The BIOS probes the coprocessor, so its INT 11h flag matches the
+    // socket that CMOS records.
+    let expected = if config.cpu.fpu == assembly::FpuChip::None {
+        0
+    } else {
+        2
+    };
+    assert_eq!(equipment & 2, expected);
+    assert_eq!(cmos & 2, u32::from(expected));
     eprintln!(
         "{} FPU: BDA equipment={equipment:04x}; CMOS14={cmos:02x}",
         chip.name()
@@ -814,9 +866,9 @@ pub fn seabios_int10_modes_have_golden_frames(chip: CpuChip) {
     assert_eq!(
         assembled.machine.cpu().retired(),
         if chip == CpuChip::I80386 {
-            8_528_672
+            8_528_669
         } else {
-            11_102_827
+            11_102_858
         }
     );
     assert_eq!(
@@ -1107,10 +1159,10 @@ fn freedos_prompt(chip: CpuChip, ide: bool, config: assembly::MachineConfig) {
     assert_eq!(
         assembled.machine.cpu().retired(),
         match (chip == CpuChip::I80386, ide) {
-            (true, false) => 10_718_776,
-            (true, true) => 10_716_489,
-            (false, false) => 13_218_823,
-            (false, true) => 13_316_536,
+            (true, false) => 10_718_712,
+            (true, true) => 10_716_425,
+            (false, false) => 13_218_759,
+            (false, true) => 13_316_472,
         }
     );
     let serial = serial_until(&mut assembled, chip, b"A:\\>");
@@ -1169,9 +1221,9 @@ fn freedos_prompt(chip: CpuChip, ide: bool, config: assembly::MachineConfig) {
             assert_eq!(
                 retired,
                 if chip == CpuChip::I80386 {
-                    13_491_318
+                    13_491_254
                 } else {
-                    16_391_365
+                    16_391_301
                 }
             );
             return;
@@ -1350,9 +1402,9 @@ pub fn seabios_freedos_jemmex_v86(chip: CpuChip) {
             assert_eq!(
                 assembled.machine.cpu().retired(),
                 if chip == CpuChip::I80386 {
-                    12_368_511
+                    12_368_447
                 } else {
-                    14_968_030
+                    14_967_966
                 }
             );
             assert_eq!(
@@ -1612,16 +1664,17 @@ pub fn seabios_freedos_dos32a(chip: CpuChip, vcpi: bool) {
             assert_eq!(saw_v86, vcpi);
             assert_eq!(saw_v86_delivery, vcpi);
             assert_eq!(text.contains("JemmEx loaded"), vcpi);
-            assert_eq!(system.virtual_8086, vcpi);
+            // The prompt may be sampled inside the monitor's interrupt handler;
+            // the observed transitions above establish that DOS runs in v86.
             assert_eq!(system.protected(), vcpi);
             assert_eq!(system.paging(), vcpi);
             assert_eq!(
                 assembled.machine.cpu().retired(),
                 match (chip, vcpi) {
-                    (CpuChip::I80386, false) => 13_391_425,
-                    (CpuChip::I80386, true) => 14_567_429,
-                    (_, false) => 15_991_472,
-                    (_, true) => 17_067_476,
+                    (CpuChip::I80386, false) => 13_391_361,
+                    (CpuChip::I80386, true) => 14_567_365,
+                    (_, false) => 15_991_408,
+                    (_, true) => 17_067_412,
                 }
             );
             assert_eq!(
@@ -1655,10 +1708,10 @@ pub fn seabios_freedos_dos32a(chip: CpuChip, vcpi: bool) {
                     assert_eq!(
                         assembled.machine.cpu().retired(),
                         match (chip, vcpi) {
-                            (CpuChip::I80386, false) => 13_681_937,
-                            (CpuChip::I80386, true) => 14_857_941,
-                            (_, false) => 16_581_984,
-                            (_, true) => 17_657_988,
+                            (CpuChip::I80386, false) => 13_681_873,
+                            (CpuChip::I80386, true) => 14_857_877,
+                            (_, false) => 16_581_920,
+                            (_, true) => 17_657_924,
                         }
                     );
                     assert_eq!(

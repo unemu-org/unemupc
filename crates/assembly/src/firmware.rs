@@ -208,7 +208,7 @@ const VGABIOS_0_8A_UNEMU_3_SOURCE_ARCHIVE: &str =
 const XTIDE_SOURCE_ARCHIVE: &str =
     "7bbd5de269f4e1d52ae30b52531fcda842709b9ae49166ac249f9b37187b91e8";
 const SEABIOS_SOURCE_ARCHIVE: &str =
-    "b85015a695a9b1b8080c4871335bb68c2ec9aa9c8ba69e88a122a925c580c8c0";
+    "f94f8720fc0cc9eedc9681b100ecba0c0d6d30d26f7a0e599c0b86f9138dac0a";
 
 impl std::fmt::Display for FirmwareDistribution {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -468,7 +468,7 @@ impl FirmwareEntry {
 pub const SEABIOS_1_17_0_ISA: FirmwareEntry = FirmwareEntry {
     id: "seabios-1.17.0-unemu1-isa",
     kind: FirmwareKind::SystemBios,
-    sha256: "ad50fdb5e12a03dd5c17eac481a4183a7793b84252319eea02b8c878667c994f",
+    sha256: "9aace5de21df74ba42243664454d1f2130c143fc04ce5b4e69c0c71e55e9b699",
     size: 131072,
     base: FirmwareBase::TopOfFirstMib,
     scan_window: None,
@@ -482,7 +482,7 @@ pub const SEABIOS_1_17_0_ISA: FirmwareEntry = FirmwareEntry {
     distribution: FirmwareDistribution::Open {
         fetch: "vendor/seabios/fetch.sh",
         license: "LGPL-3.0-only",
-        provenance: "unemu-org/seabios v1.17.0-unemu1 e38573ec2d7d43fb7802bc43ddcb3ce2bf892809 (rel-1.17.0 plus 80386 byte swap), ISA configuration",
+        provenance: "unemu-org/seabios v1.17.0-unemu1 ac8cabc4585f4922139a841b1c91cceb432b8728 (rel-1.17.0 plus 80386 byte swap and coprocessor probe), ISA configuration",
         source_archive_sha256: Some(SEABIOS_SOURCE_ARCHIVE),
     },
     parts: &[],
@@ -510,7 +510,7 @@ pub const SEAVGABIOS_1_17_0_STDVGA: FirmwareEntry = FirmwareEntry {
     distribution: FirmwareDistribution::Open {
         fetch: "vendor/seabios/fetch.sh",
         license: "LGPL-3.0-only",
-        provenance: "unemu-org/seabios v1.17.0-unemu1 e38573ec2d7d43fb7802bc43ddcb3ce2bf892809, standard VGA ISA configuration",
+        provenance: "unemu-org/seabios v1.17.0-unemu1 ac8cabc4585f4922139a841b1c91cceb432b8728, standard VGA ISA configuration",
         source_archive_sha256: Some(SEABIOS_SOURCE_ARCHIVE),
     },
     parts: &[],
@@ -2404,12 +2404,12 @@ mod tests {
             };
             assert_eq!(
                 source_archive_sha256,
-                Some("b85015a695a9b1b8080c4871335bb68c2ec9aa9c8ba69e88a122a925c580c8c0"),
+                Some("f94f8720fc0cc9eedc9681b100ecba0c0d6d30d26f7a0e599c0b86f9138dac0a"),
                 "{}",
                 entry.id
             );
             assert!(provenance.contains("v1.17.0-unemu1"));
-            assert!(provenance.contains("e38573ec2d7d43fb7802bc43ddcb3ce2bf892809"));
+            assert!(provenance.contains("ac8cabc4585f4922139a841b1c91cceb432b8728"));
         }
     }
 

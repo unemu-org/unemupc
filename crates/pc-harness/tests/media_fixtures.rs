@@ -449,7 +449,7 @@ const SOURCE_ARCHIVES: &[SourceArchive] = &[
         absent: &[".git", "out"],
         git: Some((
             "seabios-1.17.0-unemu1",
-            "e38573ec2d7d43fb7802bc43ddcb3ce2bf892809",
+            "ac8cabc4585f4922139a841b1c91cceb432b8728",
         )),
     },
 ];

@@ -3,18 +3,22 @@
 [`fetch.sh`](fetch.sh) builds `bios-1.17.0-isa.bin` from
 [unemu-org/seabios](https://github.com/unemu-org/seabios), pinned at release
 **v1.17.0-unemu1**, commit
-`e38573ec2d7d43fb7802bc43ddcb3ce2bf892809`. The fork is the source of truth:
+`ac8cabc4585f4922139a841b1c91cceb432b8728`. The fork is the source of truth:
 upstream **rel-1.17.0** (`b52ca86e`) plus the documented fix set in
-[`README.unemu.md`](https://github.com/unemu-org/seabios/blob/e38573ec2d7d43fb7802bc43ddcb3ce2bf892809/README.unemu.md).
+[`README.unemu.md`](https://github.com/unemu-org/seabios/blob/ac8cabc4585f4922139a841b1c91cceb432b8728/README.unemu.md).
 Its initial code fix (`d98685dd`) replaces `__swab32`'s inline `bswapl` with
 C that compiles for `-march=i386`. BSWAP requires a 486, and upstream reaches
-it through fw_cfg, ATA and block commands. Fixes are submitted upstream
+it through fw_cfg, ATA and block commands. The second fix probes the math
+coprocessor before setting the BDA equipment flag and enabling IRQ13, so a
+386 without an FPU reports its actual hardware. Fixes are submitted upstream
 (`upc-o0j.23`); there are no source patches applied by this build recipe.
 Only this README, the build script and our [`config`](config) and
 [`vgaconfig`](vgaconfig) fragments are committed.
 The clone (`src/`), temporary exports and release source archive (`build/`),
-and ROM are gitignored. The release adds LGPLv3-noticed rebuild files in
-`unemu/` and README updates; its firmware sources are unchanged.
+and ROM are gitignored. The release includes LGPLv3-noticed rebuild files in
+`unemu/` and README updates. The maintainer replaced the release and tag under
+the same `v1.17.0-unemu1` name to include both fixes; there were no external
+users yet. Catalogue IDs retain their names and pin the new bytes and source.
 
 The catalogue identifies this image as `seabios-1.17.0-unemu1-isa`, separating
 its bytes and provenance from the original upstream fixture. The output
@@ -79,7 +83,7 @@ the pinned commit rebuilds without network. The script never checks out or
 modifies a cached working tree: `git archive --format=tar` exports that exact
 commit into a temporary directory, whose contents are removed on exit.
 The primary source-content check pins that commit's tree object to
-`66f06eca7df3167ba2f2aef72f2a23dc057a37c3` before exporting. Export uses an
+`1da2ab6cd26a432bbc2beb998403f8b23120a13a` before exporting. Export uses an
 empty temporary bare repository sharing only the cache's objects, so cached
 `.git/info/attributes` cannot affect it. System/global Git configuration and
 system attributes are disabled; `core.attributesFile=/dev/null`,
@@ -99,7 +103,7 @@ commit with prefix `seabios-1.17.0-unemu1/` and checks
 `SOURCE_ARCHIVE_SHA256` before installing it. This is the byte stream of:
 
 ```sh
-GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null git -c core.autocrlf=false -c tar.umask=0002 archive --format=tar --prefix=seabios-1.17.0-unemu1/ e38573ec
+GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null git -c core.autocrlf=false -c tar.umask=0002 archive --format=tar --prefix=seabios-1.17.0-unemu1/ ac8cabc4
 ```
 
 Both catalogue entries pin this archive. It contains `COPYING`,
@@ -108,7 +112,8 @@ Both catalogue entries pin this archive. It contains `COPYING`,
 running `bash unemu/build.sh <output-directory>` rebuilds both release ROMs
 with the documented toolchain. The fixture tests check its hash, Git commit
 header, prefix, fixed metadata, configuration fragments, rebuild recipe and
-licence files. The local ROM filenames and their SHA-256 pins stay unchanged.
+licence files. The local ROM filenames stay unchanged; the system BIOS and
+release source SHA-256 pins identify the replacement release. VGA bytes are unchanged.
 
 ## ISA configuration
 
@@ -141,18 +146,18 @@ pinned `src/Kconfig`. Unspecified settings take that revision's defaults.
 
 | Input / output | SHA-256 |
 |---|---|
-| Pinned commit's `git archive --format=tar` (umask 0002) | `7dc0759caf2ff46e68bec9f2df8222c718cd0627d6969b3ec70ab0c753a6b5d0` |
-| `build/seabios-1.17.0-unemu1-src.tar` (release source asset) | `b85015a695a9b1b8080c4871335bb68c2ec9aa9c8ba69e88a122a925c580c8c0` |
+| Pinned commit's `git archive --format=tar` (umask 0002) | `668d4e73d5664deeda5b695cee481f5fcd538559cb936a99583d20828a77c229` |
+| `build/seabios-1.17.0-unemu1-src.tar` (release source asset) | `f94f8720fc0cc9eedc9681b100ecba0c0d6d30d26f7a0e599c0b86f9138dac0a` |
 | Our `config` fragment | `d1958e10e395c8eb00ea9e99ab1c6fe86cf1acb9a0480d0f7a1b551fa4fe8e2a` |
-| `bios-1.17.0-isa.bin` | `ad50fdb5e12a03dd5c17eac481a4183a7793b84252319eea02b8c878667c994f` |
+| `bios-1.17.0-isa.bin` | `9aace5de21df74ba42243664454d1f2130c143fc04ce5b4e69c0c71e55e9b699` |
 
-**MEASURED on 2026-11-24:** the input hashes and output above. Two
-independent builds in different temporary directories produced identical
-131,072-byte ROMs (direct `cmp`), using i686-elf GCC 15.2.0 and GNU binutils
-2.46 from the flake-pinned nixpkgs on macOS arm64, with hardening disabled.
-Both passed all pinned checks, preserved the Kconfig settings, used version
-`1.17.0-unemupc98-isa` and passed the hostname check. An earlier measurement
-build stopped at the old output-hash check and reported the same new hash.
+**MEASURED on 2026-11-25:** the pinned recipe passed all source, configuration
+and output checks for the replacement release. It produced the 131,072-byte
+BIOS above and the unchanged 32,768-byte VGA ROM, using i686-elf GCC 15.2.0
+and GNU binutils 2.46 from the flake-pinned nixpkgs on macOS arm64, with
+hardening disabled. The build preserved the Kconfig settings, used version
+`1.17.0-unemupc98-isa` and passed the hostname check. Two earlier independent
+exports of the coprocessor-probe sources produced these same BIOS bytes.
 
 **READ:** `scripts/buildversion.py:43–57,114–131` supports release tarballs
 through `.version`; `scripts/tarball.sh:23–38` packages it that way. The

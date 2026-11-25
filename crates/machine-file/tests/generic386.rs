@@ -15,6 +15,11 @@ fn generic386_toml_yaml_defaults_and_memory_limits_match() {
 }
 
 #[test]
+fn generic386_seabios_equipment_matches_fpu() {
+    generic_isa::seabios_equipment_matches_fpu(assembly::CpuChip::I80386);
+}
+
+#[test]
 fn generic386_seabios_reaches_diskless_post_end() {
     generic_isa::seabios_reaches_diskless_post_end(assembly::CpuChip::I80386);
 }

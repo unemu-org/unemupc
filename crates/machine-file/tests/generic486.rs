@@ -15,6 +15,16 @@ fn generic486_dx_toml_yaml_defaults_and_memory_limits_match() {
 }
 
 #[test]
+fn generic486_dx_seabios_equipment_matches_fpu() {
+    generic_isa::seabios_equipment_matches_fpu(assembly::CpuChip::I80486Dx);
+}
+
+#[test]
+fn generic486_cpuid_seabios_equipment_matches_fpu() {
+    generic_isa::seabios_equipment_matches_fpu(assembly::CpuChip::I80486DxCpuid);
+}
+
+#[test]
 fn generic486_dx_seabios_reaches_diskless_post_end() {
     generic_isa::seabios_reaches_diskless_post_end(assembly::CpuChip::I80486Dx);
 }

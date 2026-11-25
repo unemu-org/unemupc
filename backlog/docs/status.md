@@ -355,16 +355,21 @@ a DOS extender remains unqualified.
 
 `seabios-1.17.0-unemu1-isa` remains **Listed**; the exact FreeDOS profiles
 are qualified above. The fixture now builds from the source of truth, `unemu-org/seabios`, release
-`v1.17.0-unemu1`, commit `e38573ec2d7d43fb7802bc43ddcb3ce2bf892809`: upstream rel-1.17.0 plus its
+`v1.17.0-unemu1`, commit `ac8cabc4585f4922139a841b1c91cceb432b8728`: upstream rel-1.17.0 plus its
 documented 80386 fix set (`README.unemu.md`). The first fix computes
-`__swab32` in C instead of using the 486-only `BSWAP`; fixes go upstream
-(`upc-o0j.23`). **MEASURED on 2026-11-24:** two independent builds are byte
-identical (`cmp`), 131,072 bytes, SHA-256
-`ad50fdb5e12a03dd5c17eac481a4183a7793b84252319eea02b8c878667c994f`.
+`__swab32` in C instead of using the 486-only `BSWAP`. The second probes the
+math coprocessor before setting the BDA equipment flag and enabling IRQ13;
+fixes go upstream (`upc-o0j.23`). The maintainer replaced the release and tag
+under the same name to include both fixes, before any external users existed.
+**MEASURED on 2026-11-25:** the pinned recipe builds a 131,072-byte BIOS, SHA-256
+`9aace5de21df74ba42243664454d1f2130c143fc04ce5b4e69c0c71e55e9b699`.
 The firmware config, version suffix and ROM filename remain unchanged. Both
 SeaBIOS entries pin the release source archive, SHA-256
-`b85015a695a9b1b8080c4871335bb68c2ec9aa9c8ba69e88a122a925c580c8c0`,
-which includes the LGPLv3-noticed rebuild files; firmware sources and ROM bytes are unchanged.
+`f94f8720fc0cc9eedc9681b100ecba0c0d6d30d26f7a0e599c0b86f9138dac0a`,
+which includes the LGPLv3-noticed rebuild files. Catalogue IDs and ROM
+filenames stay unchanged; VGA bytes are unchanged. The normal catalogue-verified
+POST probes report BDA equipment 0024h with IRQ13 masked on the no-FPU 386,
+and 0026h with IRQ13 unmasked on both integrated-FPU 486 variants.
 
 **MEASURED at `b7c10b6f` on 2026-11-24:** the shipped diskless machine
 passes POST. Port 402h reports fw_cfg, `RamSize: 0x01000000 [cmos]` and

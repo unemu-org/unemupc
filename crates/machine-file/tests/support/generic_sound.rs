@@ -358,7 +358,11 @@ fn capture(chip: CpuChip, word: bool, splits: &[u64]) -> Option<Capture> {
         "DSP IRQ and both PIC in-service registers must be clear"
     );
     assert_eq!(&result[7..10], &[0, 0xFF, 0xC0]);
-    assert_eq!(&result[10..12], &[0xB8, 0x8E], "SeaBIOS PIC masks");
+    assert_eq!(
+        &result[10..12],
+        &[0xB8, if chip == CpuChip::I80386 { 0xAE } else { 0x8E }],
+        "SeaBIOS PIC masks"
+    );
     assert_eq!(result[12] & 0x80, 0x80, "reset reply must be ready");
     assert_eq!(&result[14..], &[0xFE, 0xCA]);
     assert!(rig.machine.recent_deliveries().unwrap().entries.iter().any(|entry| matches!(entry, machine::DeliveryEntry::Deliveries { last, .. } if last.vector == 0x0D)));
@@ -462,10 +466,10 @@ pub fn sb16_opl3(chip: CpuChip) {
         assert_eq!(
             whole.golden,
             match (chip, word) {
-                (CpuChip::I80386, false) => (8_432_284, 49_550, 14_803_314_642_468_502_597),
-                (CpuChip::I80386, true) => (8_432_312, 49_550, 4_941_613_155_073_338_808),
-                (_, false) => (11_033_784, 32_343, 14_690_981_398_313_693_354),
-                (_, true) => (11_033_812, 32_343, 13_751_645_561_190_579_262),
+                (CpuChip::I80386, false) => (8_432_283, 49_550, 9_224_039_477_004_121_228),
+                (CpuChip::I80386, true) => (8_432_311, 49_551, 4_505_727_766_093_319_895),
+                (_, false) => (11_033_817, 32_343, 7_145_792_389_143_746_930),
+                (_, true) => (11_033_845, 32_343, 9_206_121_455_469_802_097),
             }
         );
         assert_eq!(Some(&whole), capture(chip, word, &whole.splits).as_ref());
