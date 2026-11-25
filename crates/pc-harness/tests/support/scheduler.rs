@@ -8,7 +8,12 @@
 //! across devices and Intel 8259A INTA/EOI (datasheet, "Interrupt Sequence" and
 //! "End of Interrupt"). Sorting completed per-device traces would lose that order.
 
-use std::{cell::RefCell, collections::BTreeMap, fmt, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    collections::BTreeMap,
+    fmt,
+    rc::Rc,
+};
 
 use anyhow::Result;
 use assembly::{AssembledMachine, ConsoleProbe, DeviceId, RunPolicy, StopCondition};
@@ -462,6 +467,7 @@ struct ObservedDevice {
     id: DeviceId,
     stream: SharedStream,
     pic: Vec<PicObservationLog>,
+    dma_probes: Rc<Cell<usize>>,
 }
 
 impl ObservedDevice {
@@ -549,7 +555,11 @@ impl Device for ObservedDevice {
     fn take_trace(&mut self) -> Vec<TraceEvent> {
         self.inner.take_trace()
     }
+    fn dma_request_pending(&self) -> bool {
+        self.inner.dma_request_pending()
+    }
     fn take_dma_request(&mut self) -> Option<DmaRequest> {
+        self.dma_probes.set(self.dma_probes.get() + 1);
         self.inner.take_dma_request()
     }
     fn dma_complete(&mut self, outcome: DmaOutcome) {
@@ -577,12 +587,58 @@ impl Device for ObservedDevice {
 }
 
 #[test]
+fn observed_idle_dma_requester_receives_no_probes() {
+    let probes = Rc::new(Cell::new(0));
+    let requester = ObservedDevice {
+        inner: Box::new(devices::Upd765::new()),
+        id: DeviceId::Fdc,
+        stream: SharedStream::default(),
+        pic: Vec::new(),
+        dma_probes: probes.clone(),
+    };
+    let cpu = testkit::MockCpu::new(Vec::new()).with_step_program(vec![
+        testkit::MockCpuStep {
+            max_steps: 1,
+            run: cpu::CpuStepRun {
+                steps: 1,
+                stop: cpu::CpuStepStop::Exit(cpu::CpuStop::BudgetExhausted),
+            },
+            retired: 1,
+            irq_ready: false,
+        };
+        50
+    ]);
+    let mut machine = Machine::new(
+        cpu,
+        Bus::new(
+            vec![Box::new(requester), Box::new(devices::Dma8237::new())],
+            DecodeMap::default(),
+        ),
+        Box::new(NoInterruptController),
+        Vec::new(),
+        None,
+    )
+    .with_dma_wirings(vec![machine::DmaWiring {
+        requester: 0,
+        controller: 1,
+    }])
+    .with_step_limit(std::num::NonZeroU64::MIN);
+    assert_eq!(
+        machine.run_bounded(Some(50)).unwrap(),
+        RunOutcome::RetiredCapReached
+    );
+    assert_eq!(machine.cpu().retired(), 50);
+    assert_eq!(probes.get(), 0);
+}
+
+#[test]
 fn observed_device_preserves_scanout_after_draining_traces() {
     let mut display = testkit::MockBus::new(Box::new(ObservedDevice {
         inner: Box::new(devices::VgaText::new()),
         id: DeviceId::Vga,
         stream: SharedStream::default(),
         pic: Vec::new(),
+        dma_probes: Default::default(),
     }));
     display
         .device_mut()
@@ -602,6 +658,7 @@ fn observed_device_preserves_byte_output_after_draining_traces() {
         id: DeviceId::Uart,
         stream: SharedStream::default(),
         pic: Vec::new(),
+        dma_probes: Default::default(),
     }));
     serial
         .device_mut()
@@ -740,6 +797,7 @@ pub fn observe_with(
             id,
             stream: stream.clone(),
             pic: pic.clone(),
+            dma_probes: Default::default(),
         });
     }
     let result = engine(

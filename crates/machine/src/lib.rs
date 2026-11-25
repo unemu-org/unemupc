@@ -829,7 +829,7 @@ impl<C: Cpu> Machine<C> {
         if accessed {
             // An access can change a coupled device as well as its own pins.
             // Ordinary instruction boundaries have no such side effects.
-            self.bus.settle();
+            self.bus.settle_accessed();
             self.sample_irq_lines();
         }
         for _ in 0..1024 {
@@ -897,6 +897,7 @@ impl<C: Cpu> Machine<C> {
         }
         let mut completing = false;
         let mut no_progress = 0;
+        self.bus.settle();
         self.settle(true)?;
         loop {
             if !completing
@@ -1177,6 +1178,9 @@ impl<C: Cpu> Machine<C> {
             // settle its completed prefix, but preserve the access error if
             // clock accounting or coupled-device work also fails. An unsuccessful
             // deferred MMIO operation earns no extra step.
+            if access_result.is_err() {
+                self.bus.settle();
+            }
             let settle_result = self.settle(accessed);
             access_result?;
             map_result?;
@@ -1234,11 +1238,18 @@ impl<C: Cpu> Machine<C> {
     fn service_dma_pass(&mut self) -> Result<bool, BusError> {
         let mut transferred = false;
         for i in 0..self.dma_wirings.len() {
+            let wiring = self.dma_wirings[i];
+            if !self
+                .bus
+                .device(wiring.requester)
+                .is_some_and(|dev| dev.dma_request_pending())
+            {
+                continue;
+            }
             #[cfg(feature = "host-profile")]
             self.bus
                 .profile()
                 .event(device::profile::ProfileEvent::DmaProbe);
-            let wiring = self.dma_wirings[i];
             let request = self
                 .bus
                 .device_mut(wiring.requester)

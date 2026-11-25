@@ -156,6 +156,9 @@ pub struct Bus {
     map: DecodeMap,
     deadlines: Vec<Option<NextEvent>>,
     access_dependents: Vec<Vec<usize>>,
+    /// Access targets and coupled inputs need a post-access visit; unrelated
+    /// lazy counters can wait for a deadline, access or explicit snapshot.
+    accessed: Vec<bool>,
     /// Accesses may change a pin even when no autonomous timer is due. Sample
     /// those changes at the next clock, preserving the reference loop's order.
     pins_dirty: bool,
@@ -186,6 +189,7 @@ impl Bus {
             profile: Default::default(),
             deadlines: vec![None; devices.len()],
             access_dependents: vec![Vec::new(); devices.len()],
+            accessed: vec![false; devices.len()],
             pins_dirty: true,
             devices,
             map,
@@ -215,10 +219,8 @@ impl Bus {
     /// dependents. Legacy every-clock devices receive no additional sync calls.
     /// Invalid indices and self-coupling are rejected without changing the bus.
     ///
-    /// The machine probes each DMA requester through a mutable borrow on every
-    /// settle pass, even when no transfer is pending. Declaring dependents on a
-    /// requester therefore re-synchronizes them on each probe. This only costs
-    /// host time: synchronization must be idempotent at the same virtual clock.
+    /// DMA probes use the same access ordering when the requester cannot rule
+    /// out pending work. Synchronization must be idempotent at the same clock.
     pub fn add_access_coupling(
         &mut self,
         device: usize,
@@ -535,8 +537,11 @@ impl Bus {
 
     fn sync_access(&mut self, index: usize) {
         self.sync_device(index);
+        self.accessed[index] = true;
         for offset in 0..self.access_dependents[index].len() {
-            self.sync_device(self.access_dependents[index][offset]);
+            let dependent = self.access_dependents[index][offset];
+            self.sync_device(dependent);
+            self.accessed[dependent] = true;
         }
     }
 
@@ -563,6 +568,20 @@ impl Bus {
     pub fn settle(&mut self) {
         for index in 0..self.devices.len() {
             self.sync_device(index);
+        }
+        self.accessed.fill(false);
+    }
+
+    /// Settle access targets and their declared dependents in bus order (§6).
+    ///
+    /// Autonomous transitions have already been dispatched by `tick_due`.
+    /// Unrelated counters remain lazy until their next access or full `settle`;
+    /// register effects can still change coupled pins at this boundary.
+    pub fn settle_accessed(&mut self) {
+        for index in 0..self.devices.len() {
+            if std::mem::take(&mut self.accessed[index]) {
+                self.sync_device(index);
+            }
         }
     }
 
@@ -1129,6 +1148,44 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn post_access_settling_preserves_directed_bus_order_and_snapshot_sync() {
+        let calls = CoupledCalls::default();
+        let period = std::rc::Rc::new(std::cell::Cell::new(1000));
+        let devices = (0..4)
+            .map(|index| {
+                Box::new(CoupledTimer {
+                    index,
+                    now: VClock::ZERO,
+                    period: period.clone(),
+                    calls: calls.clone(),
+                }) as Box<dyn Device>
+            })
+            .collect();
+        let mut bus = Bus::new(devices, DecodeMap::default());
+        for (source, dependent) in [(0, 3), (0, 1), (3, 2), (0, 3)] {
+            bus.add_access_coupling(source, dependent).unwrap();
+        }
+        bus.tick_due(VClock(100));
+        bus.device_mut(0).unwrap().port_write(0, 1, 1000).unwrap();
+        calls.borrow_mut().clear();
+        bus.settle_accessed();
+        assert_eq!(
+            calls.borrow().as_slice(),
+            [
+                (0, "sync", VClock(100), 1000),
+                (1, "sync", VClock(100), 1000),
+                (3, "sync", VClock(100), 1000),
+            ]
+        );
+        bus.settle_accessed();
+        assert_eq!(calls.borrow().len(), 3);
+        calls.borrow_mut().clear();
+        bus.settle();
+        assert_eq!(calls.borrow().len(), 4);
+        assert_eq!(calls.borrow()[2], (2, "sync", VClock(100), 1000));
     }
 
     struct TimedDevice {

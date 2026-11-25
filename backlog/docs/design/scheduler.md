@@ -59,15 +59,31 @@ not advance". Synchronization clears the target and dependent cache slots; the
 machine retains its existing global invalidation after the access and before
 charging the stopping instruction. Unrelated devices receive no access sync.
 `EveryPitClock` devices are already current and receive no extra sync, even
-when declared as dependents. The later `Bus::settle` still visits each device
-exactly once in bus order, without expanding coupling edges.
+when declared as dependents. After a successful access, `Bus::settle_accessed`
+visits only the touched targets and declared dependents, once each in bus
+order, without expanding coupling edges. Unrelated counters remain lazy:
+autonomous transitions still run at their deadlines. Full `Bus::settle` remains
+mandatory before snapshots and at run entry, after rejected accesses and after
+DMA completion. It still visits every device in bus order.
 
-No preset currently declares a coupling. The cascaded PIC faces share state,
-but both are `Dormant` with no elapsed timer or autonomous deadline, so they
-need only the existing invalidation and pin sampling. Port 61h still does not
-drive PIT channel 2; its speaker wiring belongs to a later hardware change.
-Coupling declarations prepare time before an access; they do not connect pins
-or implement register effects. See also §Access synchronization and invalidation.
+Assembly declares the system-control-to-PIT coupling for the shared gate and
+speaker inputs. The cascaded PIC faces share state, but both are `Dormant`
+with no elapsed timer or autonomous deadline, so global invalidation and pin
+sampling cover their shared effects. Coupling declarations prepare time before
+an access; they do not connect pins or implement register effects. See also
+§Access synchronization and invalidation.
+
+**Idle DMA probes.** `Device::dma_request_pending` is a passive, conservative
+hint checked after due events have been dispatched. Its default is true, so
+devices without a hint keep their existing probe and synchronization behavior.
+An implementation may return false only when an access-synchronized probe
+cannot return a request. Timed request creation must have a device deadline;
+accesses, pauses, request consumption, reset/restore and immediate completion
+must all be reflected by the hint. The SB16 exposes its request/pause state;
+the floppy controller exposes its queued request and DOR DMA gate. True retains
+the target/dependent synchronization, wiring order, controller access and
+completion path. Each follow-on pass checks again at the same clock, so the
+hint cannot defer a sample or completion until the next CPU boundary.
 
 During adoption the CPU core (then pinned at
 `70be0087b583f1e38bf3479d92e90e89ef998cf1`) decoded a Real16 block past the

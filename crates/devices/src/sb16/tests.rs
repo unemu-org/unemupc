@@ -1591,3 +1591,67 @@ fn clock_domain_dsp_preserves_future_subedge_deadlines() {
         NextEvent::At(VClock(u64::MAX))
     );
 }
+
+#[test]
+fn dma_readiness_is_passive_and_tracks_deadlines_pause_and_completion() {
+    for word in [false, true] {
+        let (mut bus, _) = rig();
+        assert!(!bus.device().dma_request_pending());
+        command(&mut bus, &[0x41, 0x1F, 0x40]);
+        if word {
+            command(&mut bus, &[0xB0, 0, 2, 0]);
+        } else {
+            command(&mut bus, &[0x14, 2, 0]);
+        }
+        let NextEvent::At(deadline) = bus.device().next_event(bus.clock()) else {
+            panic!("sample deadline required");
+        };
+        at(&mut bus, deadline.0 - 1);
+        assert!(!bus.device().dma_request_pending());
+        at(&mut bus, deadline.0);
+        let saved = bus.device().save();
+        for _ in 0..1000 {
+            assert!(bus.device().dma_request_pending());
+        }
+        assert_eq!(bus.device().save(), saved);
+        command(&mut bus, &[if word { 0xD5 } else { 0xD0 }]);
+        assert!(!bus.device().dma_request_pending());
+        let paused = bus.device().save();
+        command(&mut bus, &[if word { 0xD6 } else { 0xD4 }]);
+        assert!(bus.device().dma_request_pending());
+        let request = bus.device_mut().take_dma_request().unwrap();
+        assert!(!bus.device().dma_request_pending());
+        let consumed = bus.device().save();
+        bus.device_mut().dma_complete(DmaOutcome::FromMemory {
+            bytes: vec![0x80; if word { 2 } else { 1 }],
+            terminal_count: false,
+        });
+        assert!(!bus.device().dma_request_pending());
+        let NextEvent::At(deadline) = bus.device().next_event(bus.clock()) else {
+            panic!("next sample deadline required");
+        };
+        at(&mut bus, deadline.0);
+        assert!(bus.device().dma_request_pending());
+        bus.device_mut().reset();
+        assert!(!bus.device().dma_request_pending());
+        for (snapshot, pending, resume) in [
+            (&saved, true, false),
+            (&paused, false, true),
+            (&consumed, false, false),
+        ] {
+            // Restore over an outstanding request so consumed snapshots must clear it.
+            bus.device_mut().restore(&saved).unwrap();
+            bus.device_mut().restore(snapshot).unwrap();
+            assert_eq!(bus.device().dma_request_pending(), pending);
+            assert_eq!(
+                bus.device_mut().take_dma_request(),
+                pending.then(|| request.clone())
+            );
+            if resume {
+                command(&mut bus, &[if word { 0xD6 } else { 0xD4 }]);
+                assert!(bus.device().dma_request_pending());
+                assert_eq!(bus.device_mut().take_dma_request(), Some(request.clone()));
+            }
+        }
+    }
+}

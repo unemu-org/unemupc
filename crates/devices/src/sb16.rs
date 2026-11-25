@@ -682,6 +682,11 @@ impl Device for Sb16 {
         self.fm.borrow_mut().reset(self.state.now);
         self.trace.clear();
     }
+    /// Creative Sound Blaster Series Hardware Programming Guide, §3 DMA and
+    /// §6 DSP commands: a paused transfer holds its request until continued.
+    fn dma_request_pending(&self) -> bool {
+        self.state.request && self.state.paused.is_none()
+    }
     fn take_dma_request(&mut self) -> Option<DmaRequest> {
         if !self.state.request || self.state.paused.is_some() {
             return None;

@@ -1749,6 +1749,13 @@ impl Device for Upd765 {
         self.irq_line()
     }
 
+    /// NEC µPD765A datasheet, READ DATA / WRITE DATA; IBM Personal Computer AT
+    /// Technical Reference, Diskette Adapter, Digital Output Register: bit 3
+    /// gates the queued DMA request without consuming it.
+    fn dma_request_pending(&self) -> bool {
+        self.dor & DOR_DMA_ENABLE != 0 && self.pending_request.is_some()
+    }
+
     fn take_dma_request(&mut self) -> Option<DmaRequest> {
         if self.dor & DOR_DMA_ENABLE != 0 {
             self.pending_request.take()
@@ -3716,6 +3723,63 @@ mod tests {
         (0..count)
             .map(|_| bus.port_read(DATA, 1).unwrap() as u8)
             .collect()
+    }
+
+    #[test]
+    fn dma_readiness_is_passive_and_preserves_the_dor_gate_and_completion() {
+        for opcode in [0x06, 0x05] {
+            let mut bus = MockBus::new(Box::new(ready_fdc(vec![0x5A; SECTOR_SIZE])));
+            assert!(!bus.device().dma_request_pending());
+            bus_command(&mut bus, &[opcode, 0, 0, 0, 1, 2, 1, 0x1B, 0xFF]);
+            let saved = bus.device().save();
+            for _ in 0..1000 {
+                assert!(bus.device().dma_request_pending());
+            }
+            assert_eq!(bus.device().save(), saved);
+            bus.port_write(DOR, 1, 0x14).unwrap();
+            assert!(!bus.device().dma_request_pending());
+            let gated = bus.device().save();
+            assert!(bus.device_mut().take_dma_request().is_none());
+            bus.port_write(DOR, 1, 0x1C).unwrap();
+            assert!(bus.device().dma_request_pending());
+            let request = bus.device_mut().take_dma_request().unwrap();
+            assert!(!bus.device().dma_request_pending());
+            let consumed = bus.device().save();
+            bus.device_mut().restore(&saved).unwrap();
+            finish_test_dma(&mut bus, SECTOR_SIZE, true);
+            assert!(!bus.device().dma_request_pending());
+            assert!(bus.device().irq_pending());
+            bus.device_mut().reset();
+            let reset = bus.device().save();
+            for (snapshot, pending, enable) in [
+                (&saved, true, false),
+                (&gated, false, true),
+                (&consumed, false, false),
+            ] {
+                // Restore over an outstanding request so consumed snapshots must clear it.
+                bus.device_mut().restore(&saved).unwrap();
+                bus.device_mut().restore(snapshot).unwrap();
+                assert_eq!(bus.device().dma_request_pending(), pending);
+                assert_eq!(
+                    bus.device_mut().take_dma_request(),
+                    pending.then(|| request.clone())
+                );
+                if enable {
+                    bus.port_write(DOR, 1, 0x1C).unwrap();
+                    assert!(bus.device().dma_request_pending());
+                    assert_eq!(bus.device_mut().take_dma_request(), Some(request.clone()));
+                }
+            }
+            bus.device_mut().restore(&saved).unwrap();
+            assert!(bus.device().dma_request_pending());
+            bus.device_mut().reset();
+            assert_eq!(bus.device().save(), reset);
+            assert!(!bus.device().dma_request_pending());
+            assert!(bus.device_mut().take_dma_request().is_none());
+            bus.port_write(DOR, 1, 0x1C).unwrap();
+            assert!(!bus.device().dma_request_pending());
+            assert!(bus.device_mut().take_dma_request().is_none());
+        }
     }
 
     fn finish_test_dma(bus: &mut MockBus, transferred: usize, terminal_count: bool) {

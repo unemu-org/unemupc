@@ -519,6 +519,167 @@ match directly; both diagnostic settings pass the unchanged PCM goldens.
 No expected value was updated.
 
 
+### Scheduler boundary work reduction (2026-11-25)
+
+**READ:** successful accesses now settle only the bus target and its declared
+access dependents, in bus order. Pre-access synchronization and global deadline
+invalidation remain. Run entry, rejected accesses, explicit snapshots and DMA
+completion retain full settling. A conservative `Device::dma_request_pending`
+hint avoids idle mutable probes for SB16 and the floppy controller; other
+requesters keep their original behavior by default. Due sample requests and
+immediate follow-on completions still drain before time advances or INTA.
+See `crates/bus/src/lib.rs` (`settle_accessed`),
+`crates/machine/src/lib.rs` (`settle`, `service_dma_pass`) and
+`design/scheduler.md` §Adoption.
+
+**MEASURED:** fresh before/after release runs used exactly the eight names and
+off/on commands listed above, sequentially, once per setting before and after the
+change, with required open fixtures and the same local DOOM media. Both sides use
+the unchanged
+CPU pin `786b5fd04dd895a696f951fcdf26828f55bfb3d6`; the earlier tables above
+were recorded at their stated older pin. Build time is excluded. Shared-host
+activity is uncontrolled: these single observations do not establish a wall-time
+speedup. Off omits the feature and sets `UNEMUPC_HOST_PROFILE=0`; on enables
+`host-profile` and sets `UNEMUPC_HOST_PROFILE=1`. All 32 exact-name invocations
+passed. Test-process times include assembly, all captures and assertions.
+
+| Workload | Before off / on s | After off / on s |
+| --- | ---: | ---: |
+| FreeDOS 386 | 2.32 / 1.81 | 3.29 / 3.08 |
+| FreeDOS 486 | 4.78 / 4.29 | 4.34 / 4.11 |
+| SB16 386 (four captures) | 64.42 / 42.02 | 43.81 / 41.70 |
+| SB16 486 (four captures) | 28.64 / 33.51 | 26.48 / 28.44 |
+| test386 386 | 43.56 / 45.74 | 41.66 / 44.60 |
+| test386 486 DX | 0.62 / 0.63 | 0.75 / 0.66 |
+| test386 486 CPUID | 0.63 / 0.63 | 0.79 / 0.65 |
+| DOOM 386 named demo | 18.65 / 19.88 | 21.79 / 19.20 |
+
+The next table uses the same exclusive profiled boundaries as the original
+audit. Every cell is **before → after**. Sound rows distinguish whole and split
+captures; the demo interval subtracts the startup checkpoint from the total.
+The total must not be added to those component rows.
+
+| Interval | Profiled wall s | CPU s | Scheduler s | Lazy syncs | DMA probes |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| FreeDOS 386 | 1.7905 → 3.0594 | 1.7262 → 2.9806 | 0.0512 → 0.0541 | 2,994,175 → 325,935 | 269,398 → 140 |
+| SB16 386 8-bit whole | 10.4757 → 11.8191 | 2.1296 → 2.0441 | 0.0706 → 0.0436 | 3,262,845 → 292,608 | 484,216 → 6 |
+| SB16 386 8-bit split | 7.6905 → 9.2857 | 1.7102 → 2.0674 | 0.0534 → 0.0454 | 3,265,893 → 295,380 | 484,492 → 6 |
+| SB16 386 16-bit whole | 13.0928 → 10.9768 | 2.0227 → 2.0010 | 0.0648 → 0.0435 | 3,262,969 → 292,582 | 484,228 → 4 |
+| SB16 386 16-bit split | 10.0726 → 8.8785 | 1.9433 → 2.0154 | 0.0617 → 0.0427 | 3,266,025 → 295,354 | 484,512 → 4 |
+| FreeDOS 486 | 4.2674 → 4.0863 | 4.1388 → 3.9961 | 0.1028 → 0.0669 | 4,600,090 → 501,823 | 384,128 → 137 |
+| SB16 486 8-bit whole | 9.7965 → 7.6433 | 4.2568 → 3.6762 | 0.1166 → 0.0612 | 5,170,374 → 468,410 | 721,626 → 6 |
+| SB16 486 8-bit split | 7.8119 → 6.5865 | 4.6725 → 3.4859 | 0.1364 → 0.0599 | 5,172,476 → 470,318 | 721,820 → 6 |
+| SB16 486 16-bit whole | 8.2253 → 7.3095 | 3.9200 → 3.4791 | 0.1035 → 0.0596 | 5,170,494 → 468,384 | 721,634 → 4 |
+| SB16 486 16-bit split | 6.8940 → 6.1539 | 3.8895 → 3.3771 | 0.1062 → 0.0579 | 5,172,606 → 470,292 | 721,838 → 4 |
+| test386 386 | 45.7305 → 44.5900 | 44.5313 → 43.6914 | 1.0000 → 0.7093 | 53,235,186 → 7,098,134 | 0 → 0 |
+| test386 486 DX | 0.6207 → 0.6516 | 0.6188 → 0.6497 | 0.0001 → 0.0001 | 413 → 140 | 0 → 0 |
+| test386 486 CPUID | 0.6227 → 0.6444 | 0.6209 → 0.6422 | 0.0001 → 0.0001 | 413 → 140 | 0 → 0 |
+| DOOM 386 startup | 15.6603 → 15.0881 | 13.6858 → 13.6720 | 1.6070 → 1.0496 | 108,627,915 → 11,243,260 | 7,962,472 → 140 |
+| DOOM 386 total | 19.3941 → 18.8103 | 16.6489 → 16.7083 | 2.1372 → 1.4932 | 139,415,294 → 14,190,235 | 12,367,404 → 140 |
+| DOOM 386 demo interval | 3.7338 → 3.7223 | 2.9631 → 3.0364 | 0.5302 → 0.4436 | 30,787,379 → 2,946,975 | 4,404,932 → 0 |
+
+**MEASURED invariants:** before/after CPU calls, retired instructions, completed
+steps, exit counts, deadline-query counts, tick passes, actual device ticks and
+halted advances match in every profiled interval. This change reduces the work
+around queries rather than removing the queries or changing CPU budgets. The
+four-way comparisons (before/after, off/on) retain identical FreeDOS retired/frame
+hashes, all sound retired/PCM/IRQ tuples, test386 checkpoints and DOOM guest
+checkpoints. The DOOM endpoint remains 217,100,000 completed steps and
+209,533,406 retired, including exactly 50,000,000 demo steps and 49,861,978
+demo retirements. No expected golden value was changed.
+
+**MEASURED regression proof:** the new synchronization-scaling test failed on
+unchanged production code: one access visited an unrelated dormant device twice
+instead of once. With the fix it checks 1 and 1,000 accesses across 32 devices,
+including a declared dependent and an explicit full snapshot settle. The new bus
+ordering test checks directed, deduplicated post-access visits in ascending bus
+order. Mock-bus SB16 and floppy tests check passive readiness, byte/word sample
+deadlines, pause/resume, DOR gating, request consumption, reset and completion.
+A mock machine checks zero probes through 50 ordinary CPU boundaries and two
+immediate completions at the same deadline. All five new tests passed in the
+950-test focused suite. Temporarily replacing selective settling with a full
+sweep, removing the machine readiness guard and making both device hints always
+positive produced 943 passes / 7 failures: all five new regressions and two
+existing cache/synchronization checks failed. Plain copies restored the sources,
+which were touched before final builds. No workspace copy was created; all
+builds used the wrapper's single worktree target.
+
+**MEASURED final checks:** the restored sources passed `cargo build --offline
+--all-targets` (49.71s Cargo time), `cargo test --offline --workspace` (2,854
+passed, 0 failed, 52 ignored; 273s including wrapper time), all-target/all-feature
+clippy with warnings denied (13s), and format checking (2s). All Cargo commands
+used the supplied devShell environment and shared-host wrapper, sequentially.
+The bead gate passed in 353s: plan 1s, format 1s, guards 15s, affected all-feature
+clippy 0s, production CLI clippy 3s, tests 255s, rustdoc 76s. Cargo deny was
+reserved for the supervisor.
+
+The affected plan selected the four changed emulation crates (`bus`, `device`,
+`devices`, `machine`) and their 15-crate dependency closure, the golden tier,
+and release device tests. The runner passed 2,670 selected tests (8 excluded),
+all 902 release device tests, and its empty doctest selection. Runner steps were
+whitespace 0s, tests 228s, doctests 7s, release devices 19s. The slowest test
+binaries/cases were assembly's high-IRQ delivery-log probe (85.49s),
+`pc-harness::test386_golden`'s i386 golden (47.81s), and
+`machine-file::generic386`'s sound golden (46.52s).
+
+
+**MEASURED review follow-up:** the observer now forwards the requester's
+readiness hint. Its new idle-FDC test runs 50 CPU boundaries and checks zero
+mutable DMA probes; removing the forwarding method produces 101 probes and
+fails that assertion. SB16 (byte and word) and FDC (read and write) tests now
+restore queued, paused/DOR-gated and consumed snapshots over an outstanding
+request, compare readiness and the exact next request, and check the retained
+request after resume or gate reopening. The FDC test also resets with a queued
+request and compares the reset snapshot with a reset after completion.
+
+Eight isolated mutations failed their intended test: missing observer
+forwarding; lost queued, lost pause and requeued consumed SB16 state; lost
+queued, lost DOR gate and retained consumed FDC state; and retained queued FDC
+state on reset. Each mutation produced one test failure, with no compilation
+failure. Plain copies restored the source files, then touched them before the
+final builds. No workspace copy or additional target directory was created.
+
+The same eight release workloads were rerun once off and once on after this
+coverage follow-up (16 exact-name invocations, all passed). The original
+before/after measurements above are retained. The following test-process times
+exclude compilation; shared-host activity remains uncontrolled.
+
+| Workload | Review rerun off / on s |
+| --- | ---: |
+| FreeDOS 386 | 1.88 / 2.66 |
+| FreeDOS 486 | 3.26 / 4.99 |
+| SB16 386 (four captures) | 33.37 / 44.62 |
+| SB16 486 (four captures) | 24.62 / 35.04 |
+| test386 386 | 46.20 / 40.14 |
+| test386 486 DX | 0.64 / 0.63 |
+| test386 486 CPUID | 0.63 / 0.63 |
+| DOOM 386 named demo | 19.15 / 18.81 |
+
+Every profiled interval retains the previous optimized lazy-sync and DMA-probe
+counts. DOOM total remains 14,190,235 lazy syncs and 140 probes; the demo interval
+remains 2,946,975 syncs and zero probes. Off/on FreeDOS retired/frame hashes, all
+sound retired/PCM/IRQ tuples, test386 checkpoints and the DOOM endpoint match.
+The DOOM endpoint remains 209,533,406 retired and 217,100,000 steps. No golden
+expectation or production behavior was changed in this follow-up.
+
+
+**MEASURED follow-up validation:** the restored sources passed the all-target
+build (35.16s including wrapper time), workspace tests (2,855 passed, 0 failed,
+52 ignored; 252.65s), all-target/all-feature clippy with warnings denied (6.50s)
+and format checking (0.96s). The gate passed in 348s: plan 0s, format 1s,
+guards 11s, affected clippy 1s, production CLI clippy 5s, tests 283s and
+rustdoc 45s. Cargo deny was reserved for the supervisor. Every Cargo invocation
+used the devShell environment and shared-host wrapper, sequentially and offline.
+
+The updated affected plan includes the shared observer's five harness consumers,
+keeps the same 15-crate dependency closure and golden tier, and selects release
+device tests. The runner passed 2,671 selected tests (8 excluded), all 902 release
+device tests and its empty doctest selection. Runner steps were whitespace 0s,
+tests 261s, doctests 8s and release devices 13s. The slowest cases were assembly's
+high-IRQ delivery-log probe (91.87s), the generic 386 sound golden (57.91s),
+the generic 486 CPUID sound golden (57.37s), and the i386 test386 golden (47.44s).
+
+
 ## Nominal CPU clocks and turbo (2026-11-24)
 
 `cpu.clock_mhz` accepts numeric MHz with exact integer-kHz resolution and

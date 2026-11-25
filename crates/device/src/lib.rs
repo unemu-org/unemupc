@@ -689,6 +689,17 @@ pub trait Device {
         None
     }
 
+    /// Whether a DMA probe may return work after due transitions are dispatched.
+    ///
+    /// False skips the mutable borrow and its access synchronization. An opted-in
+    /// requester must report every timed request through `next_event`, and this
+    /// query must include requests queued by accesses and immediate completions.
+    /// The conservative default keeps probing devices without a readiness hint.
+    /// This query must neither consume requests nor advance device state (§7.7).
+    fn dma_request_pending(&self) -> bool {
+        true
+    }
+
     /// Finish a DMA transfer the machine ran on this device's behalf (§7.7): the
     /// [`DmaOutcome`] reports how many bytes reached memory (device→memory) or
     /// carries the bytes read out of memory (memory→device). The requester

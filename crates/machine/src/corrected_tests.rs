@@ -1210,6 +1210,7 @@ struct DmaTrigger {
     completions: std::rc::Rc<std::cell::Cell<u8>>,
     now: VClock,
     completed_at: std::rc::Rc<std::cell::RefCell<Vec<VClock>>>,
+    probes: std::rc::Rc<std::cell::Cell<usize>>,
 }
 impl Device for DmaTrigger {
     fn name(&self) -> &'static str {
@@ -1251,7 +1252,11 @@ impl Device for DmaTrigger {
     fn restore(&mut self, _: &[u8]) -> Result<(), device::DeviceError> {
         Ok(())
     }
+    fn dma_request_pending(&self) -> bool {
+        self.queued
+    }
     fn take_dma_request(&mut self) -> Option<device::DmaRequest> {
+        self.probes.set(self.probes.get() + 1);
         std::mem::take(&mut self.queued).then(|| device::DmaRequest {
             channel: 2,
             op: DmaOp::ToMemory(vec![0xAB]),
@@ -1303,6 +1308,7 @@ fn out_drains_dma_and_follow_on_completion_before_inta() {
                 completions: completions.clone(),
                 now: VClock::ZERO,
                 completed_at: completed_at.clone(),
+                probes: Default::default(),
             }),
             Box::new(devices::Dma8237::new()),
         ],
@@ -1713,6 +1719,7 @@ fn dma_deadline_inside_a_multi_clock_cpu_step_completes_before_clock_advances() 
                 completions: Default::default(),
                 now: VClock::ZERO,
                 completed_at: completed_at.clone(),
+                probes: Default::default(),
             }),
             Box::new(controller),
         ],
@@ -1736,4 +1743,123 @@ fn dma_deadline_inside_a_multi_clock_cpu_step_completes_before_clock_advances() 
     let controller = machine.bus.device_mut(1).unwrap();
     assert_eq!(controller.port_read(8, 1).unwrap() & 4, 4);
     assert_eq!(controller.port_read(4, 1).unwrap(), 2);
+}
+
+#[test]
+fn post_access_work_scales_with_accessed_devices() {
+    for accesses in [1, 1000] {
+        let calls: Vec<_> = (0..32)
+            .map(|_| std::rc::Rc::new(std::cell::RefCell::new(Vec::new())))
+            .collect();
+        let devices = calls
+            .iter()
+            .map(|calls| {
+                Box::new(SyncProbe {
+                    calls: calls.clone(),
+                    queries: Default::default(),
+                }) as Box<dyn Device>
+            })
+            .collect();
+        let mut bus = Bus::new(
+            devices,
+            DecodeMap {
+                ports: vec![PortRange {
+                    width: bus::PortWidth::default(),
+                    ports: 0x123..=0x123,
+                    device: 0,
+                }],
+                mmio: Vec::new(),
+            },
+        );
+        bus.add_access_coupling(0, 1).unwrap();
+        let program = (0..accesses)
+            .map(|index| {
+                step(
+                    accesses - index,
+                    1,
+                    CpuStop::PortOut {
+                        port: 0x123,
+                        size: 1,
+                        value: 0,
+                    },
+                    false,
+                )
+            })
+            .collect();
+        let cpu = MockCpu::new(Vec::new()).with_step_program(program);
+        let mut machine = Machine::new(
+            cpu,
+            bus,
+            Box::new(chipset::NoInterruptController),
+            Vec::new(),
+            None,
+        );
+        machine.run_bounded(Some(accesses)).unwrap();
+        for (index, calls) in calls.iter().enumerate() {
+            let expected = if index < 2 { 1 + 2 * accesses } else { 1 };
+            assert_eq!(
+                calls.borrow().len() as u64,
+                expected,
+                "device {index}, {accesses} accesses"
+            );
+        }
+        machine.bus.settle();
+        for calls in &calls {
+            assert_eq!(calls.borrow().last(), Some(&VClock(accesses)));
+        }
+    }
+}
+
+#[test]
+fn idle_dma_probes_wait_for_a_deadline_and_drain_immediate_completions() {
+    let probes = std::rc::Rc::new(std::cell::Cell::new(0));
+    let completed_at = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let cpu = MockCpu::new(Vec::new()).with_step_program(
+        (0..50)
+            .map(|_| step(1, 1, CpuStop::BudgetExhausted, false))
+            .collect(),
+    );
+    let mut controller = devices::Dma8237::new();
+    for (port, byte) in [
+        (0x0C, 0),
+        (4, 0),
+        (4, 0),
+        (5, 1),
+        (5, 0),
+        (0x0B, 0x46),
+        (0x0A, 2),
+    ] {
+        controller.port_write(port, 1, byte).unwrap();
+    }
+    let bus = Bus::new(
+        vec![
+            Box::new(DmaTrigger {
+                deadline: Some(VClock(100)),
+                queued: false,
+                completions: Default::default(),
+                now: VClock::ZERO,
+                completed_at: completed_at.clone(),
+                probes: probes.clone(),
+            }),
+            Box::new(controller),
+        ],
+        DecodeMap::default(),
+    );
+    let mut machine = Machine::new(
+        cpu,
+        bus,
+        Box::new(chipset::NoInterruptController),
+        Vec::new(),
+        None,
+    )
+    .with_step_limit(NonZeroU64::MIN)
+    .with_dma_wirings(vec![DmaWiring {
+        requester: 0,
+        controller: 1,
+    }]);
+    machine.run_bounded(Some(50)).unwrap();
+    assert_eq!(probes.get(), 0);
+    machine.advance_to(VClock(101)).unwrap();
+    assert_eq!(probes.get(), 2);
+    assert_eq!(*completed_at.borrow(), [VClock(100), VClock(100)]);
 }
