@@ -17,7 +17,7 @@ use device::ByteStreamKind;
 #[path = "support/fixtures.rs"]
 mod fixtures;
 
-const CPU_REV: &str = "8f23fdcd6f9ce2a1fda2b105104d8a67a82bf126";
+const CPU_REV: &str = "786b5fd04dd895a696f951fcdf26828f55bfb3d6";
 const CAP: u64 = 100_000_000;
 const PAGING_STOP_POST: &[u8] = &[
     0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x08, 0x09, 0x20, 0x21, 0x22, 0x0B, 0x0C, 0x0D, 0x0E,

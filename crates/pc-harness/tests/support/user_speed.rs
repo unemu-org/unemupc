@@ -72,7 +72,7 @@ pub struct Case {
 impl Case {
     pub fn rig(self, board: BoardModel, chip: CpuChip) -> assembly::AssembledMachine {
         assert!(include_str!("../../../../Cargo.lock")
-            .contains("8f23fdcd6f9ce2a1fda2b105104d8a67a82bf126"));
+            .contains("786b5fd04dd895a696f951fcdf26828f55bfb3d6"));
         let mut config = speed::board(self.rom, board);
         config.cpu.chip = chip;
         let mut rig = assembly::assemble_with_options(
