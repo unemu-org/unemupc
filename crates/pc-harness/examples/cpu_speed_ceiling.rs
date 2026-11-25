@@ -16,7 +16,7 @@ mod user_speed;
 
 fn main() {
     assert!(
-        include_str!("../../../Cargo.lock").contains("786b5fd04dd895a696f951fcdf26828f55bfb3d6")
+        include_str!("../../../Cargo.lock").contains("5bdb7a4d9a9a65e6f545e632788a50cdf68cda5c")
     );
     for (board, chip) in [(BoardModel::Ibm5170, CpuChip::I80286)]
         .into_iter()
