@@ -19,7 +19,7 @@ mod fixtures;
 #[path = "support/host_profile.rs"]
 mod host_profile;
 
-const CPU_REV: &str = "8064e28f1a9a2e4af7f1304a61e1eb1c9f9b13af";
+const CPU_REV: &str = "fc356a6870dcedd1c71439c3cf9d64b995bcebe5";
 const CAP: u64 = 100_000_000;
 const PAGING_STOP_POST: &[u8] = &[
     0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x08, 0x09, 0x20, 0x21, 0x22, 0x0B, 0x0C, 0x0D, 0x0E,
