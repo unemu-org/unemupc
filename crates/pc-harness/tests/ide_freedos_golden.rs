@@ -18,7 +18,7 @@
 //! See `backlog/docs/design/firmware-and-machine-classes.md` §9 and
 //! `backlog/docs/design/spec.md` §7.5 for the keyboard input path.
 //! Firmware and media are pinned by machines/at-ide.toml; the CPU revision is
-//! pinned at ab193c1591e3876db0e5042282f1bc1871b7d75c in Cargo.lock.
+//! pinned at 4bf91c8df4830c7194d02d61ffe1d745442ba74a in Cargo.lock.
 //! Prompt polls use the existing DOS session cadence.
 
 use assembly::{
@@ -53,7 +53,7 @@ fn screen_hash(text: &str) -> u64 {
 #[ignore = "slow: BIOS POST, XTIDE detection and an interactive FreeDOS DIR C: session"]
 fn freedos_lists_the_readonly_ide_marker() {
     assert!(
-        include_str!("../../../Cargo.lock").contains("#ab193c1591e3876db0e5042282f1bc1871b7d75c")
+        include_str!("../../../Cargo.lock").contains("#4bf91c8df4830c7194d02d61ffe1d745442ba74a")
     );
     for path in [
         "unemu-at-bios/bios-unemu-at.bin",

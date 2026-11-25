@@ -5,7 +5,7 @@
 //! Intel 80286 Programmer's Reference Manual, Appendix A, Jcc and JMP, and
 //! Appendix B, CALL (far, indirect) and PUSH (immediate).
 //! See machines/README.md §Playing DOS games. CPU revision:
-//! ab193c1591e3876db0e5042282f1bc1871b7d75c.
+//! 4bf91c8df4830c7194d02d61ffe1d745442ba74a.
 
 use assembly::{
     ConsoleProbe, DeviceConfig, DeviceId, DeviceKind, ImageSource, LotechEmsCfg, MmioWindow,
@@ -199,7 +199,7 @@ fn freedos_mem_reports_lotech_expanded_memory() {
         return;
     };
     assert!(
-        include_str!("../../../Cargo.lock").contains("#ab193c1591e3876db0e5042282f1bc1871b7d75c")
+        include_str!("../../../Cargo.lock").contains("#4bf91c8df4830c7194d02d61ffe1d745442ba74a")
     );
     for path in [
         "unemu-at-bios/bios-unemu-at.bin",
