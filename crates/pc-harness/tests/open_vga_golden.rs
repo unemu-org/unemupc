@@ -22,7 +22,7 @@ mod fixtures;
 #[path = "support/at_games.rs"]
 mod support;
 
-const CPU_REV: &str = "6a38ae4964555495c2b5c82ef72fea34e686c0b4";
+const CPU_REV: &str = "8ebba63712ad34cb51208302e65597189594b583";
 const FETCH_SCRIPT: &str = include_str!("../../../vendor/vgabios/fetch.sh");
 
 // Both counts moved with the switch from the Kiselev AT-reset BIOS to the
