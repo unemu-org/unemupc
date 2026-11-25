@@ -14,3 +14,7 @@ layer = "emulation"
 
 [dependencies]
 thiserror.workspace = true
+
+[features]
+default = []
+host-profile = []

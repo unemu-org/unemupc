@@ -168,6 +168,287 @@ The repin removes the old FNSTCW/FNDISI refusals. See
 [measurements and scope](design/protected-mode-gaps.md#dos-extender-qualification)
 and [client contract](../../vendor/dos-extender-test/README.md).
 
+## Speed: whole-machine host profiling (2026-11-25)
+
+The workload tests require the explicit Cargo feature `host-profile` and
+`UNEMUPC_HOST_PROFILE=1` (unset or any other value leaves counters off).
+The feature is absent from every default feature set and propagates through
+assembly, machine, bus and device. Without it, the diagnostic module, hook
+storage, span calls, exit accounting and scheduler events are compiled out.
+Workload labels are closures evaluated only after runtime opt-in succeeds.
+The host collector in
+`crates/pc-harness/tests/support/host_profile.rs` binds a passive `ProfileHook`
+to the bus. Core code reads no host clock: timestamps, accumulation and output
+live in test support. Nothing from a callback controls a CPU budget, interrupt,
+device deadline or virtual time; diagnostics are absent from snapshots.
+A default release symbol check found no `ProfileHook`, `ProfileSpan`,
+`HostProfiler` or `device::profile` symbols in the generic386 binary, while
+port and MMIO dispatch symbols remain present. The feature-enabled binary
+contains 19 profiling symbols as a positive control. An instrumented build
+with only the environment switch disabled still retains those call sites;
+the zero-instrumentation baseline omits the feature.
+
+The six time buckets are **exclusive**, including recursive bus accesses:
+CPU (`Cpu::run_steps`, including the x86jit adapter), scheduler/device/DMA work
+(the remaining `Machine::run_bounded` time), port dispatch, MMIO dispatch,
+frame capture/conversion, and observation. The last includes delivery-log
+drains, audio mixing and the host workload loop after assembly. Device
+synchronization and trace recording inside an I/O access remain in its dispatch
+bucket; CPU-side delivery recording remains in CPU time. These boundaries
+are call instrumentation, not instruction-level self-time samples. Diagnostics
+add timestamp/callback overhead, so compare the separate off/on timings before
+interpreting small buckets. Assembly, fixture loading and private-media
+preparation are outside the counter interval.
+
+CPU exits count machine-visible run returns: port I/O, MMIO, interrupt window,
+HLT, exhausted **step** budget, other and error. This machine path does not use
+a JIT-block budget. Retired instructions and completed steps are counted
+separately because REP iterations can consume steps without retiring another
+instruction. Additional counters count deadline queries, tick passes, actual
+device ticks, halted jumps, lazy device synchronizations and DMA probes.
+
+The FreeDOS and sound probes remain the existing goldens. The extra ignored
+`user_media_doom_demo_386` / `user_media_doom_demo_486` tests continue the local
+startup probe for 50,000,000 virtual steps after its first qualifying picture.
+Each run is clamped to that endpoint, and completion is checked before
+frame qualification; a later blank or low-colour frame cannot extend the
+interval. This is a fixed guest workload with either diagnostic setting.
+They keep the
+immutable private base and volatile sector overlay and publish no game bytes,
+media hashes or screens. DOOM and Windows local diagnostics report explicit
+error categories, addresses and counters; neither formats byte-bearing CPU
+errors or delivery records. Windows no longer prints instruction bytes,
+register payloads, port payloads or decoded screens. A counter checkpoint
+separates startup from the extended interval. The extended workload explicitly types `doom -demo demo1`;
+the existing startup qualification still types `doom`.
+
+Reproduce with release tests, requiring the open fixtures. Use the project
+cargo wrapper on a shared host, and run each timing workload separately:
+`generic386_seabios_freedos_reaches_prompt`,
+`generic486_dx_seabios_freedos_reaches_prompt`,
+`generic386_seabios_sb16_opl3_golden`,
+`generic486_dx_seabios_sb16_opl3_golden` in `machine-file`'s `generic386` /
+`generic486` test binaries; `test386_i386_golden`, `test386_i486_dx_golden`,
+`test386_i486_cpuid_golden` in `pc-harness`'s `test386_golden` binary. Run the
+local `user_media_doom_demo_386` by exact name with `--ignored` and locally
+supplied `UNEMUPC_USER_DOOM_DIR`. For counters add `--features host-profile`,
+set `UNEMUPC_HOST_PROFILE=1`
+and pass `--nocapture`; repeat without the feature and with
+`UNEMUPC_HOST_PROFILE=0` for the baseline.
+
+**MEASURED:** release builds on ARM64 macOS, CPU pin
+`8f23fdcd6f9ce2a1fda2b105104d8a67a82bf126`. Each exact-name workload ran
+sequentially, once off and once on; compilation is excluded. Other activity
+on the shared host was uncontrolled. These are single observations, not
+confidence intervals. `sample PID 3` on the running test386 process failed with
+“sample cannot examine process” for “unknown reasons, even though it appears
+to exist”; no elevated retry was made. The earlier sound sampling attempt
+was also denied for insufficient privileges. **Symbol self/total samples are unavailable.** The ranked boundaries
+below are counter measurements; attribution within them is marked READ.
+
+| Workload | Profiled interval s | CPU s | Scheduler s | Port s | MMIO s | Frame s | Observation s |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| FreeDOS 386 | 1.7593 | 1.6925 | 0.0512 | 0.0049 | 0.0014 | 0.0014 | 0.0080 |
+| SB16 386 8-bit whole | 8.8001 | 1.5307 | 0.0500 | 0.0197 | 0.0014 | 0.0000 | 7.1983 |
+| SB16 386 8-bit split | 7.0791 | 1.5440 | 0.0497 | 0.0156 | 0.0013 | 0.0000 | 5.4684 |
+| SB16 386 16-bit whole | 8.7996 | 1.5366 | 0.0499 | 0.0177 | 0.0014 | 0.0000 | 7.1940 |
+| SB16 386 16-bit split | 7.0703 | 1.5453 | 0.0500 | 0.0154 | 0.0013 | 0.0000 | 5.4583 |
+| FreeDOS 486 | 3.2215 | 3.1312 | 0.0732 | 0.0072 | 0.0014 | 0.0009 | 0.0076 |
+| SB16 486 8-bit whole | 6.0807 | 2.9187 | 0.0766 | 0.0157 | 0.0013 | 0.0000 | 3.0684 |
+| SB16 486 8-bit split | 5.4950 | 2.9424 | 0.0772 | 0.0159 | 0.0013 | 0.0000 | 2.4581 |
+| SB16 486 16-bit whole | 6.0752 | 2.9026 | 0.0764 | 0.0152 | 0.0013 | 0.0000 | 3.0796 |
+| SB16 486 16-bit split | 5.5305 | 2.9491 | 0.0767 | 0.0149 | 0.0014 | 0.0000 | 2.4884 |
+| test386 386 | 40.3954 | 39.3999 | 0.8229 | 0.0819 | 0.0000 | 0.0000 | 0.0907 |
+| test386 486 CPUID | 0.6350 | 0.6329 | 0.0001 | 0.0000 | 0.0000 | 0.0000 | 0.0020 |
+| test386 486 DX | 0.6250 | 0.6229 | 0.0001 | 0.0000 | 0.0000 | 0.0000 | 0.0020 |
+| DOOM 386 startup | 15.8260 | 13.8488 | 1.6121 | 0.1630 | 0.0117 | 0.0289 | 0.1615 |
+| DOOM 386 total | 19.4460 | 16.6908 | 2.1478 | 0.1666 | 0.1143 | 0.0869 | 0.2396 |
+| DOOM 386 demo interval | 3.6200 | 2.8419 | 0.5357 | 0.0037 | 0.1026 | 0.0581 | 0.0781 |
+
+The FreeDOS intervals include serial draining after the VGA prompt: the
+prompt itself retains its exact goldens of 10,718,712 / 13,218,759 retired;
+the table below includes the additional UART-drain instructions. Whole and
+split sound captures retain identical retired counts, PCM frame counts,
+hashes and IRQ delays; split observations deliberately change host work.
+The DOOM demo row is the difference between startup and final checkpoints:
+exactly 50,000,000 additional completed steps, 49,861,978 retired instructions.
+The total includes startup, and must not be added to its component rows.
+
+| Workload | Retired | CPU calls | Retired/call | Mean supplied step budget | Budget=1 calls | Exits: port / MMIO / IRQ window / HLT / budget |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| FreeDOS 386 | 10776504 | 181669 | 59.319 | 32498.5 | 21322 | 138604 / 21319 / 170 / 0 / 21576 |
+| SB16 386 8-bit whole | 8432283 | 166918 | 50.518 | 49926.2 | 20542 | 125691 / 20540 / 13 / 1 / 20673 |
+| SB16 386 8-bit split | 8432283 | 166971 | 50.501 | 49865.0 | 20595 | 125691 / 20540 / 13 / 1 / 20726 |
+| SB16 386 16-bit whole | 8432311 | 166924 | 50.516 | 49927.6 | 20542 | 125699 / 20540 / 13 / 1 / 20671 |
+| SB16 386 16-bit split | 8432311 | 166979 | 50.499 | 49862.6 | 20595 | 125699 / 20540 / 13 / 1 / 20726 |
+| FreeDOS 486 | 13499463 | 269364 | 50.116 | 37013.9 | 21325 | 226291 / 21319 / 166 / 0 / 21588 |
+| SB16 486 8-bit whole | 11033817 | 254814 | 43.301 | 56704.6 | 20542 | 213592 / 20540 / 13 / 1 / 20668 |
+| SB16 486 8-bit split | 11033817 | 254850 | 43.295 | 56671.7 | 20579 | 213592 / 20540 / 13 / 1 / 20704 |
+| SB16 486 16-bit whole | 11033845 | 254820 | 43.301 | 56705.3 | 20542 | 213600 / 20540 / 13 / 1 / 20666 |
+| SB16 486 16-bit split | 11033845 | 254859 | 43.294 | 56669.7 | 20578 | 213600 / 20540 / 13 / 1 / 20705 |
+| test386 386 | 79664383 | 3549051 | 22.447 | 65230.6 | 1 | 3549004 / 0 / 0 / 1 / 46 |
+| test386 486 CPUID | 1413097 | 49 | 28838.714 | 54291.8 | 0 | 21 / 0 / 0 / 1 / 27 |
+| test386 486 DX | 1413097 | 49 | 28838.714 | 54291.8 | 0 | 21 / 0 / 0 / 1 / 27 |
+| DOOM 386 startup | 159671428 | 5748927 | 27.774 | 24212.7 | 167662 | 5421329 / 167559 / 412 / 0 / 159627 |
+| DOOM 386 total | 209533406 | 8563195 | 24.469 | 18464.7 | 1514844 | 5538942 / 1514663 / 442 / 0 / 1509148 |
+| DOOM 386 demo interval | 49861978 | 2814268 | 17.718 | 6722.8 | 1347182 | 117613 / 1347104 / 30 / 0 / 1349521 |
+
+Other and error exits are zero throughout. All halted-advance counters are
+zero: these traces spend their active time polling or computing; the final
+HLTs do not expose a significant idle fast-forward opportunity. In the demo
+interval, 1,347,104 MMIO exits accompany 1,347,182 one-step calls. Completion
+of deferred MMIO, rather than device deadlines, explains most one-step
+budgets. The large mean budgets and I/O-dominated returns in FreeDOS and
+test386 also rule out a generally tiny scheduler budget as the main cause.
+
+| Selected interval | Tick passes | Actual device ticks | Lazy synchronizations | DMA probes |
+| --- | ---: | ---: | ---: | ---: |
+| FreeDOS 386 | 87,472 | 81 | 2,994,175 | 269,398 |
+| FreeDOS 486 | 114,475 | 61 | 4,600,090 | 384,128 |
+| SB16 386 8-bit whole | 75,183 | 66 | 3,262,845 | 484,216 |
+| test386 386 | 4,061,141 | 18 | 53,235,186 | 0 |
+| DOOM 386 demo interval | 1,590,164 | 1,982 | 30,787,379 | 4,404,932 |
+
+Devices are not blindly ticked once per CPU return. There are nevertheless
+many deadline scans, same-time synchronizations, IRQ samples and DMA probes.
+For example, the complete DOOM run has 10,850,430 deadline queries,
+139,415,294 lazy synchronizations and 12,367,404 DMA probes. These counts
+identify work to reduce without changing when hardware transitions occur.
+
+The feature-absent / feature-enabled and runtime-enabled **test-process**
+times (seconds, excluding build) were FreeDOS 386 1.76 / 1.78,
+FreeDOS 486 3.21 / 3.24,
+SB16 386 32.86 / 32.36,
+SB16 486 25.12 / 23.80,
+test386 386 40.03 / 40.40,
+test386 486 DX 0.64 / 0.64,
+test386 486 CPUID 0.62 / 0.64,
+DOOM 386 demo 18.70 / 19.88.
+Sound process times include all four captures. Process intervals include
+assembly and assertions; the counter intervals start after assembly.
+These pairs show the scale of perturbation and host variation, not a precise
+instrumentation-overhead estimate. The named-demo timestamps include
+descheduling. The earlier 227M/47s result cannot be compared directly across
+these workloads and uncontrolled host loads. The named demo types
+`doom -demo demo1`: first qualification and final retired counts match with
+and without the feature. No media fingerprint is published.
+
+Ranked costs and source anchors (**MEASURED** at the named boundary; inner
+symbols are **READ**, since sampling was denied):
+
+1. **Sound observation/capture.** Whole captures spend 50.5–50.7% (486) or
+   81.8% (386) in observation. The enabled probes also time `capture_audio`
+   directly: 386 whole 8/16-bit 7.193/7.190s, split 5.464/5.454s;
+   486 whole 3.060/3.073s, split 2.452/2.482s. All probes ran sequentially.
+   Audio capture accounts for over 99.9% of the 386 observation bucket;
+   golden assertions are a few milliseconds.
+   Boundary: `crates/assembly/src/observation.rs:345`. READ:
+   `crates/assembly/src/sb16_audio.rs:66` creates a new segment for each sample;
+   `crates/audio/src/sources.rs:271` scans all retained segments for each output
+   frame, including future/past segments; `crates/audio/src/lib.rs:372` releases
+   history only after the render call. This gives a quadratic scan candidate
+   when a long capture has accumulated one-sample FM segments, plus per-segment
+   allocation at `crates/audio/src/sources.rs:378`. The smaller split-capture
+   observation times support that explanation. No inner-symbol time or
+   allocation count was measured.
+2. **CPU execution and re-entry.** 96.2–97.2% of FreeDOS, 97.5–99.7% of
+   test386, 87.5% of DOOM startup and 78.5% of its extended interval are in
+   `crates/machine/src/lib.rs:1032` →
+   `crates/cpu/src/x86jit_backend.rs:978`. The demo's CPU-only throughput is
+   about 17.5M retired/s; its whole-machine throughput is
+   about 13.8M/s in this sample.
+   A flat arithmetic ceiling does not describe BIOS port polling, protected
+   setup, trapped VGA stores or paged test386 code. The current ceiling
+   example itself uses a machine loop with a minimal device set
+   (`crates/pc-harness/examples/cpu_speed_ceiling.rs:112`), so the difference
+   is the workload and active hardware, not simply presence of that loop.
+3. **Scheduler and coupled-device synchronization.** DOOM total 2.148s
+   (11.0%), extended interval 0.536s (14.8%). READ:
+   `crates/machine/src/lib.rs:787` / `:828` / `:1234` advance time, sample IRQs,
+   settle coupled devices and probe DMA; `crates/bus/src/lib.rs:511` scans
+   cached deadlines, and `:543` performs same-time synchronization. Active
+   CPU boundaries still incur these scans when few actual device ticks occur.
+4. **Bus dispatch.** Port work is 0.167s for total DOOM, 0.082s for test386
+   386; MMIO dispatch is 0.103s in the extended demo interval. READ:
+   `crates/bus/src/lib.rs:329` / `:421` include decode, access synchronization,
+   device operations and enabled trace writes. These small direct times do
+   not include CPU re-entry or the subsequent scheduler/settle work caused
+   by millions of exits.
+5. **Frames and other observation.** DOOM total frame conversion is 0.087s
+   (0.4%), extended interval 0.058s (1.6%); FreeDOS is around 1ms. READ:
+   `crates/assembly/src/observation.rs:455` renders only on explicit capture;
+   `crates/devices/src/vga.rs:956` updates raster latches without rendering
+   pixels. There is no full-frame conversion per VGA write or scanline here.
+   The local DOOM loop requests both text probing and a pixel frame at a
+   boundary, so it can render twice. Delivery drains are timed around
+   `crates/machine/src/delivery_tap.rs:377`; recording inside the CPU remains
+   in CPU time. READ: `crates/device/src/trace.rs:48` returns immediately when
+   tracing is off. These workload tests explicitly enable rings and delivery
+   logs; diagnostics do not silently enable either. In x86jit,
+   `x86jit-core/src/vm/legacy.rs:2482` makes an enabled delivery log select
+   the cold epilogue and `:3126` records each unit; its cost is unseparated
+   CPU time, not proven negligible by the small drain bucket.
+
+Proposed **unemupc beads** (proposals only; no tracker mutations):
+
+| Priority | Proposed work | Evidence and required proof |
+| --- | --- | --- |
+| P1 | Make native-audio history traversal linear in rendered frames plus segments | Dominant sound capture; cursor/early future-segment stop and timely release, then consider contiguous-segment reuse. Preserve exact PCM, boundaries, pauses, late-write errors and split-capture goldens; add a scaling benchmark before changing it. |
+| P2 | Avoid repeated whole-bus synchronization and idle DMA probes at ordinary CPU boundaries | Millions of lazy syncs for tens/thousands of actual ticks. Keep accesses, coupled pins, DMA sample deadlines, IRQ order and completion semantics identical; add mock-bus ordering tests and all machine goldens. |
+| P3 | Reuse a single display capture per workload observation boundary | Duplicate local text/pixel capture and frame allocations exist, but measured frame cost is small. Preserve snapshot timing and frame bytes; keep graphics lazy when no consumer reads it. |
+| P3 | Benchmark explicit delivery-log/trace policies separately | Tests request them for evidence. Measure CPU-side recording with an ablation before proposing a default change; preserve the diagnostic report contract. No default-on trace bug was found. |
+
+Proposed **x86jit requests** (separate repository, exact pin unchanged):
+
+| Priority | Request | Evidence and required proof |
+| --- | --- | --- |
+| P1 | Profile and optimize machine-profile port/MMIO return and resume paths, with instruction/REP-bounded benchmarks | CPU dominates; test386 has 3.55M port returns and DOOM's extended interval 1.35M MMIO returns/completions. Preserve pending access, interrupt-window, fault and retired/step contracts; no batching across device deadlines. |
+| P1 | Add representative mixed-mode, polling and VGA-trap ceiling cases plus per-mode/backend counters | Flat 32-bit ceilings overstate these guest mixes. Sampling was unavailable, so no specific interpreter helper is proven hottest; obtain symbol profiles on an unrestricted host before rewriting it. |
+| P2 | Measure and reduce enabled delivery-recording epilogue overhead | READ cold-path selection and per-unit recording above; retain the exact delivery stream/register evidence and append-only ABI. Quantify separately from the embedder's drain time. |
+
+**Verification:** the shared profiling identity test compares CPU diagnostics,
+retired and step counts, RAM, device snapshots, trace events, frame bytes and
+virtual clocks with the hook off/on. It also checks exit totals and nonzero
+phase measurements. A recursive-span test checks exclusive charging. Both
+passed after restoring the regression mutations.
+
+Three regression tests cover lazy label construction, payload-free error
+formatting (including a synthetic `UnsupportedInstruction`), and an exact
+non-aligned endpoint after startup. All passed. A temporary mutation eagerly
+built the disabled label, formatted the full error and removed the endpoint
+clamp: exactly these three tests failed (7 passed / 3 failed). Plain copies
+restored the files, which were touched before rebuilding; the restored
+focused suite passed all 10 tests. No workspace copies or extra target trees
+were created.
+
+All eight exact-name release workloads passed without the feature and with
+`host-profile` plus runtime opt-in (16 invocations). The paired FreeDOS
+retired/frame hashes, sound retired/PCM/IRQ golden tuples and DOOM startup/final
+retired counts were compared directly and match. Counter counts match the
+earlier audit; the changed time rows are fresh single samples under an
+uncontrolled shared-host load. Private DOOM timing covers the 386; the 486 wrapper is compiled by the broad
+suite. The local Windows stage was not run; its sanitized formatter and synthetic port tests are covered by the test suite.
+No fixture, CPU pin or emulated hardware behavior was changed.
+
+**MEASURED fix-round checks:** the default-build bead gate passed in 325s:
+plan 0s, format 1s, guards 12s, all-feature clippy 6s, production CLI clippy 3s,
+tests 226s, rustdoc 76s. The affected runner passed 2,665 tests (8 excluded)
+and 900 release device tests; its steps were whitespace 0s, tests 206s,
+doctests 7s and release devices 12s. Its slowest cases were the assembly
+high-IRQ delivery-log probe (80.20s), test386 i386 (44.47s), and the 386
+sound golden (41.38s).
+
+With `host-profile` and runtime opt-in, the same affected golden selection
+passed 2,671 tests (8 excluded), including the six identity/exclusive-time
+tests compiled only with the feature. Runner steps were guards 6s,
+whitespace 0s, tests 264s and doctests 6s. The release-device invocation
+initially failed before compilation because the temporary host wrapper
+passed features for nonselected packages. Rerunning that step with the
+selected device dependency's `device/host-profile` passed all 900 tests
+(6.917s test time). This was a runner invocation correction; repository
+sources were unchanged. Cargo deny remains reserved for the supervisor.
+
+
 ## Nominal CPU clocks and turbo (2026-11-24)
 
 `cpu.clock_mhz` accepts numeric MHz with exact integer-kHz resolution and

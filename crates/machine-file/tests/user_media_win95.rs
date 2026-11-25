@@ -12,6 +12,9 @@ use device::{AccessDir, TraceEvent};
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, path::PathBuf, process::Command, time::Instant};
 
+#[path = "support/private_diagnostics.rs"]
+mod private_diagnostics;
+
 #[derive(Default, Debug)]
 struct Ports {
     accesses: BTreeMap<&'static str, u64>,
@@ -124,13 +127,6 @@ fn decoded_text(assembled: &assembly::AssembledMachine) -> String {
     match assembled.capture_text(DeviceId::Vga).unwrap().frame {
         video::Frame::Text(grid) => grid.rows_as_strings().join("\n"),
         _ => String::new(),
-    }
-}
-
-fn redact(text: &str, key: Option<&str>) -> String {
-    match key.filter(|key| !key.is_empty()) {
-        Some(key) => text.replace(key, "[redacted]"),
-        None => text.into(),
     }
 }
 
@@ -256,7 +252,10 @@ fn user_media_win95_stage1() {
         let text = decoded_text(&assembled);
         match result {
             Err(error) => {
-                reason = format!("execution stop: {error}");
+                reason = format!(
+                    "execution stop: {}",
+                    private_diagnostics::error_summary(&error)
+                );
                 execution_error = true;
                 break;
             }
@@ -325,48 +324,14 @@ fn user_media_win95_stage1() {
     };
     let eip = assembled.machine.cpu().reg(cpu::CpuReg::Rip);
     let linear = state.cs().base.wrapping_add(eip as u32);
-    let mut code = [0u8; 16];
-    // The current diagnostic snapshot truncates IP to 16 bits and its memory
-    // reader bypasses paging. Avoid presenting unrelated bytes as code.
-    let physical = if state.a20 {
-        linear
-    } else {
-        linear & !0x10_0000
-    };
-    let code = (!system.paging())
-        .then(|| {
-            assembled
-                .machine
-                .cpu()
-                .read_mem(u64::from(physical), &mut code)
-                .ok()
-                .map(|()| code)
-        })
-        .flatten();
     eprintln!("FINDINGS: {reason}; command={}; mode={mode}; CS:EIP={:04x}:{:08x}; linear={:08x}; CPL={}; CR0={:08x}; retired={}; wall={:?}", launched.is_some(), state.cs().selector, eip, linear, system.cpl, system.cr0, state.retired, started.elapsed());
     eprintln!(
-        "FINDINGS instruction: {:?}; bytes at EIP={:?}",
-        if eip <= 0xffff && !system.paging() {
-            state.instruction
-        } else {
-            None
-        },
-        code
-    );
-    eprintln!("FINDINGS CPU: system={:?}; registers AX/CX/DX/BX/SP/BP/SI/DI={:08x?}; flags={:04x}; A20={}; IRQ queued/ready={}/{}", state.system, [cpu::CpuReg::Rax, cpu::CpuReg::Rcx, cpu::CpuReg::Rdx, cpu::CpuReg::Rbx, cpu::CpuReg::Rsp, cpu::CpuReg::Rbp, cpu::CpuReg::Rsi, cpu::CpuReg::Rdi].map(|reg| assembled.machine.cpu().reg(reg)), state.flags, state.a20, state.irq_queued, state.irq_ready);
-    eprintln!(
-        "FINDINGS device accesses: {:?}; command/register writes (all numbers hex)={:x?}",
-        ports.accesses, ports.writes
-    );
-    eprintln!("FINDINGS last 64 port accesses: {:x?}", ports.recent);
-    eprintln!(
-        "FINDINGS deliveries: {:?}",
-        assembled.machine.recent_deliveries()
-    );
-    let key = std::env::var("UNEMUPC_USER_WIN95_KEY").ok();
-    eprintln!(
-        "FINDINGS decoded text (private, do not publish):\n{}",
-        redact(&decoded_text(&assembled), key.as_deref())
+        "FINDINGS counters: device accesses={:?}; deliveries={}",
+        ports.accesses,
+        assembled
+            .machine
+            .recent_deliveries()
+            .map_or(0, |log| log.entries.len())
     );
     if execution_error {
         // A CPU failure must not be published as a successfully finished session.
@@ -390,15 +355,6 @@ fn user_media_win95_stage1() {
         success,
         "Windows 95 stage 1 recorded its first stop before setup's first screen"
     );
-}
-
-#[test]
-fn private_screen_redacts_optional_key() {
-    assert_eq!(
-        redact("key=SYNTHETIC-KEY", Some("SYNTHETIC-KEY")),
-        "key=[redacted]"
-    );
-    assert_eq!(redact("no key", None), "no key");
 }
 
 #[test]

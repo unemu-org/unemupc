@@ -5,6 +5,9 @@
 //! IBM VGA/XGA Technical Reference, Video BIOS and RAM Loadable Character Generator.
 //! See machine-files.md §Generic 386 ISA board and §Generic 486 ISA board.
 
+#[path = "../../../pc-harness/tests/support/host_profile.rs"]
+mod host_profile;
+
 use assembly::{BoardModel, CmosRam, CpuChip, DeviceId, DeviceKind, FirmwareStatus};
 use cpu::Cpu;
 use std::path::PathBuf;
@@ -1104,6 +1107,9 @@ fn freedos_prompt(chip: CpuChip, ide: bool, config: assembly::MachineConfig) {
     };
     let mut assembled = machine_file::assemble_with_observation(&config, &policy).unwrap();
     assembled.machine.enable_delivery_log().unwrap();
+    let _profile = host_profile::WorkloadProfile::from_env(&mut assembled, || {
+        format!("{} FreeDOS ide={ide}", chip.name())
+    });
     let started = std::time::Instant::now();
     let mut entered = false;
     let mut prompt = None;
@@ -1757,3 +1763,7 @@ pub use generic_services::{
     seabios_apm_protected_power_off, seabios_ata_protected_driver, seabios_int13_disk_services,
     seabios_mouse_aux_and_bios_handler,
 };
+
+pub fn user_media_doom_demo(chip: CpuChip) {
+    user_media::doom_demo(chip);
+}

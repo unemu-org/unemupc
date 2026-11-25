@@ -11,6 +11,9 @@ use cpu::Cpu;
 use device::{AccessDir, Device, TraceEvent};
 use std::{path::PathBuf, process::Command, time::Instant};
 
+#[path = "private_diagnostics.rs"]
+mod private_diagnostics;
+
 struct PrivateDisk(PathBuf);
 
 impl Drop for PrivateDisk {
@@ -120,6 +123,14 @@ impl SoundActivity {
 }
 
 pub fn doom(chip: CpuChip, sound: bool) {
+    doom_workload(chip, sound, 0);
+}
+
+pub fn doom_demo(chip: CpuChip) {
+    doom_workload(chip, false, 50_000_000);
+}
+
+fn doom_workload(chip: CpuChip, sound: bool, demo_steps: u64) {
     if std::env::var_os("UNEMUPC_USER_DOOM_DIR").is_none() {
         eprintln!("skipping: set UNEMUPC_USER_DOOM_DIR to an extracted DOOM directory");
         return;
@@ -188,11 +199,13 @@ pub fn doom(chip: CpuChip, sound: bool) {
         }
     }
     assembled.machine.enable_delivery_log().unwrap();
+    let _profile = super::host_profile::WorkloadProfile::from_env(&mut assembled, || {
+        format!("{} DOOM sound={sound} demo_steps={demo_steps}", chip.name())
+    });
     let keyboard = assembled.device_index[&DeviceId::Keyboard];
     let started = Instant::now();
     let mut entered = false;
     let mut stage = 0;
-    let mut last_io = None;
     let identifiers = [
         "DOOM",
         "V_Init",
@@ -204,6 +217,7 @@ pub fn doom(chip: CpuChip, sound: bool) {
     let mut seen = [false; 6];
     let mut dos4gw = false;
     let mut graphics = false;
+    let mut demo = DemoInterval::default();
     let mut launch_retired = 0;
     let mut next_progress = 40_000_000;
     let mut activity = SoundActivity::default();
@@ -211,7 +225,7 @@ pub fn doom(chip: CpuChip, sound: bool) {
     // controls guest execution. It never prints the private guest screen.
     for cap in (100_000..=budget(chip, 45_000_000)).step_by(100_000) {
         let dma_before = sound.then(|| dma_position(&assembled));
-        let result = assembled.machine.run_bounded(Some(cap));
+        let result = assembled.machine.run_bounded(Some(demo.cap(cap)));
         let mut events = assembled.machine.bus_mut().take_open_bus_trace();
         let mut dma_programmed = false;
         for (id, index) in &assembled.device_index {
@@ -243,20 +257,31 @@ pub fn doom(chip: CpuChip, sound: bool) {
                 activity.dma_advanced = true;
             }
         }
-        if let Some(event) = events
-            .into_iter()
-            .filter(|e| matches!(e, device::TraceEvent::Port { .. }))
-            .max_by_key(|e| match e {
-                device::TraceEvent::Port { at, .. } => *at,
-                _ => unreachable!(),
-            })
-        {
-            last_io = Some(event);
-        }
         if let Err(error) = result {
             let state = assembled.machine.cpu().diagnostic_state();
-            eprintln!("FINDINGS: {error}; CS:IP={:04x}:{:08x}; linear={:08x}; system={:?}; retired={}; wall={:?}; last port I/O={last_io:?}; deliveries={:?}", state.cs().selector, assembled.machine.cpu().reg(cpu::CpuReg::Rip), state.cs().base.wrapping_add(assembled.machine.cpu().reg(cpu::CpuReg::Rip) as u32), state.system, assembled.machine.cpu().retired(), started.elapsed(), assembled.machine.recent_deliveries().map(|log| log.entries.last().cloned()));
+            eprintln!(
+                "FINDINGS: {}; CS:IP={:04x}:{:08x}; retired={}; steps={}; deliveries={}",
+                private_diagnostics::error_summary(&error),
+                state.cs().selector,
+                assembled.machine.cpu().reg(cpu::CpuReg::Rip),
+                assembled.machine.cpu().retired(),
+                assembled.machine.virtual_time(),
+                assembled
+                    .machine
+                    .recent_deliveries()
+                    .map_or(0, |log| log.entries.len())
+            );
             panic!("DOOM stopped before graphics qualification");
+        }
+        if demo.complete(assembled.machine.virtual_time()) {
+            eprintln!(
+                "{} DOOM demo interval complete: retired={}; steps={}; wall={:?}",
+                chip.name(),
+                assembled.machine.cpu().retired(),
+                assembled.machine.virtual_time(),
+                started.elapsed()
+            );
+            return;
         }
         let text = freedos_text(&assembled);
         if !entered && text.contains("Enter new date") {
@@ -277,8 +302,22 @@ pub fn doom(chip: CpuChip, sound: bool) {
             );
             stage = 1;
         } else if stage == 1 && text.contains("C:\\>") {
-            let keys = [0x20, 0x18, 0x18, 0x32, 0x1c];
-            let keys: Vec<_> = keys.into_iter().flat_map(|key| [key, key | 0x80]).collect();
+            // Select a named demo so the timed interval does not depend on
+            // the title screen's attract delay. Startup qualification keeps
+            // its existing command.
+            let keys: &[u8] = if demo_steps == 0 {
+                &[0x20, 0x18, 0x18, 0x32, 0x1c]
+            } else {
+                &[
+                    0x20, 0x18, 0x18, 0x32, 0x39, 0x0c, 0x20, 0x12, 0x32, 0x18, 0x39, 0x20, 0x12,
+                    0x32, 0x18, 0x02, 0x1c,
+                ]
+            };
+            let keys: Vec<_> = keys
+                .iter()
+                .copied()
+                .flat_map(|key| [key, key | 0x80])
+                .collect();
             assembly::inject_scancodes(&mut assembled.machine, keyboard, &keys);
             launch_retired = assembled.machine.cpu().retired();
             eprintln!(
@@ -335,17 +374,32 @@ pub fn doom(chip: CpuChip, sound: bool) {
                     palette[index as usize] = true;
                 }
                 let distinct = palette.into_iter().filter(|v| *v).count();
-                if distinct >= 32 && (!sound || activity.complete()) {
+                // Register programming can expose a nontrivial 320x200 frame
+                // before the BIOS commits mode 13h in the BDA. The extended
+                // demo probe waits for that commit before starting its interval.
+                if demo.target.is_none()
+                    && distinct >= 32
+                    && (!sound || activity.complete())
+                    && (demo_steps == 0 || bda_mode[0] == 0x13)
+                {
                     assert_eq!(bda_mode[0], 0x13);
                     assert!(
                         seen.into_iter().all(|value| value),
                         "missing startup identifiers"
                     );
-                    eprintln!("{} DOOM picture: distinct indices={distinct}; retired={}; wall={:?}; DOS/4G banner={dos4gw}", chip.name(), assembled.machine.cpu().retired(), started.elapsed());
-                    if sound {
-                        eprintln!("{} DOOM sound: {activity:?}", chip.name());
+                    if demo.target.is_none() {
+                        if let Some(profile) = &_profile {
+                            profile.checkpoint(" startup");
+                        }
+                        eprintln!("{} DOOM picture: distinct indices={distinct}; retired={}; wall={:?}; DOS/4G banner={dos4gw}", chip.name(), assembled.machine.cpu().retired(), started.elapsed());
+                        if sound {
+                            eprintln!("{} DOOM sound: {activity:?}", chip.name());
+                        }
                     }
-                    return;
+                    if demo_steps == 0 {
+                        return;
+                    }
+                    demo.qualify(assembled.machine.virtual_time(), demo_steps);
                 }
             }
         }
@@ -354,12 +408,13 @@ pub fn doom(chip: CpuChip, sound: bool) {
             eprintln!("{} progress: CS:IP={:04x}:{:08x}; linear={:08x}; system={:?}; retired={}; wall={:?}", chip.name(), state.cs().selector, assembled.machine.cpu().reg(cpu::CpuReg::Rip), state.cs().base.wrapping_add(assembled.machine.cpu().reg(cpu::CpuReg::Rip) as u32), state.system, assembled.machine.cpu().retired(), started.elapsed());
             next_progress += 40_000_000;
         }
-        if assembled
-            .machine
-            .cpu()
-            .retired()
-            .saturating_sub(launch_retired)
-            >= 250_000_000
+        if demo.target.is_none()
+            && assembled
+                .machine
+                .cpu()
+                .retired()
+                .saturating_sub(launch_retired)
+                >= 250_000_000
         {
             break;
         }
@@ -369,20 +424,39 @@ pub fn doom(chip: CpuChip, sound: bool) {
         eprintln!("FINDINGS sound: {activity:?}");
     }
     let state = assembled.machine.cpu().diagnostic_state();
-    eprintln!(
-        "FINDINGS location: CS:IP={:04x}:{:08x}; linear={:08x}; system={:?}; deliveries={:?}",
-        state.cs().selector,
-        assembled.machine.cpu().reg(cpu::CpuReg::Rip),
-        state
-            .cs()
-            .base
-            .wrapping_add(assembled.machine.cpu().reg(cpu::CpuReg::Rip) as u32),
-        state.system,
-        assembled
-            .machine
-            .recent_deliveries()
-            .map(|log| log.entries.last().cloned())
-    );
-    eprintln!("FINDINGS: instruction budget exhausted; retired={retired}; wall={:?}; rate={:.0} instructions/s; startup={seen:?}; graphics={graphics}; last port I/O={last_io:?}", started.elapsed(), retired as f64 / started.elapsed().as_secs_f64());
+    eprintln!("FINDINGS: instruction budget exhausted; CS:IP={:04x}:{:08x}; retired={retired}; steps={}; wall={:?}; startup={seen:?}; graphics={graphics}; deliveries={}", state.cs().selector, assembled.machine.cpu().reg(cpu::CpuReg::Rip), assembled.machine.virtual_time(), started.elapsed(), assembled.machine.recent_deliveries().map_or(0, |log| log.entries.len()));
     panic!("DOOM did not reach a non-trivial mode 13h picture within the bounded probe");
+}
+
+#[derive(Default)]
+struct DemoInterval {
+    target: Option<u64>,
+}
+
+impl DemoInterval {
+    fn qualify(&mut self, now: u64, steps: u64) {
+        self.target.get_or_insert(now + steps);
+    }
+
+    fn cap(&self, next: u64) -> u64 {
+        self.target.map_or(next, |target| target.min(next))
+    }
+
+    fn complete(&self, now: u64) -> bool {
+        self.target.is_some_and(|target| now >= target)
+    }
+}
+
+#[test]
+fn demo_endpoint_bounds_execution_after_picture_disappears() {
+    let mut rig = assembly::assemble(&assembly::at_vga_text(vec![0xfa, 0xeb, 0xfe])).unwrap();
+    rig.machine.run_bounded(Some(7)).unwrap();
+    let mut demo = DemoInterval::default();
+    demo.qualify(rig.machine.virtual_time(), 11);
+    // The next observation would overshoot, and the startup picture is gone.
+    rig.machine.run_bounded(Some(demo.cap(100))).unwrap();
+    assert!(demo.complete(rig.machine.virtual_time()));
+    assert_eq!(rig.machine.virtual_time(), 18);
+    demo.qualify(18, 11);
+    assert_eq!(demo.target, Some(18));
 }

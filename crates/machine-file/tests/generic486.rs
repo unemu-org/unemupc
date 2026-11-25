@@ -253,3 +253,9 @@ fn generic486_cpuid_seabios_apm_protected_power_off() {
 fn generic486_cpuid_seabios_mouse_aux_and_bios_handler() {
     generic_isa::seabios_mouse_aux_and_bios_handler(assembly::CpuChip::I80486DxCpuid);
 }
+
+#[test]
+#[ignore = "local-only commercial media; set UNEMUPC_USER_DOOM_DIR"]
+fn user_media_doom_demo_486() {
+    generic_isa::user_media_doom_demo(assembly::CpuChip::I80486Dx);
+}

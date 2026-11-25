@@ -34,6 +34,7 @@ audio.workspace = true
 chipset.workspace = true
 
 [features]
+host-profile = ["device/host-profile", "bus/host-profile", "machine/host-profile"]
 default = []
 test-support = ["journal/test-support"]
 reference-scheduler = ["machine/reference-scheduler"]

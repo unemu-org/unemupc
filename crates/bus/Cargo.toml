@@ -15,3 +15,7 @@ layer = "emulation"
 [dependencies]
 thiserror.workspace = true
 device.workspace = true
+
+[features]
+default = []
+host-profile = ["device/host-profile"]

@@ -24,5 +24,6 @@ devices.workspace = true
 chipset.workspace = true
 
 [features]
+host-profile = ["device/host-profile", "bus/host-profile"]
 default = []
 reference-scheduler = []

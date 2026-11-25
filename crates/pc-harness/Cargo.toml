@@ -14,6 +14,7 @@ layer = "pc"
 side = "core"
 
 [features]
+host-profile = ["assembly/host-profile", "machine/host-profile", "device/host-profile", "machine-file/host-profile"]
 test-support = ["machine-file/test-support"]
 
 [dependencies]

@@ -15,6 +15,8 @@
 #![forbid(unsafe_code)]
 
 pub mod clock;
+#[cfg(feature = "host-profile")]
+pub mod profile;
 
 pub mod media;
 pub use media::{InMemoryMedia, SectorMedia, SectorWrite};

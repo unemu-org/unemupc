@@ -852,6 +852,11 @@ impl<C: Cpu> Machine<C> {
     /// check, unless [`Self::reset_cpu`] already completed it. An attached
     /// memory-map hook is flushed on every return, see [`Self::with_memory_map`].
     pub fn run_bounded(&mut self, cap: Option<u64>) -> Result<RunOutcome, MachineError> {
+        #[cfg(feature = "host-profile")]
+        let _span = self
+            .bus
+            .profile()
+            .span(device::profile::ProfilePhase::Scheduler);
         let outcome = self.run_until(cap);
         let flushed = self.sync_memory_map(MemoryMapSync::Flush);
         let outcome = outcome?;
@@ -968,6 +973,10 @@ impl<C: Cpu> Machine<C> {
                             .0
                             .checked_add(clocks)
                             .ok_or_else(|| scheduler_error("clock exhausted"))?;
+                        #[cfg(feature = "host-profile")]
+                        self.bus
+                            .profile()
+                            .event(device::profile::ProfileEvent::HaltedAdvance);
                         self.advance_to(VClock(target))?;
                         self.halted_clocks = self
                             .halted_clocks
@@ -1013,9 +1022,49 @@ impl<C: Cpu> Machine<C> {
                 return Err(scheduler_error("virtual counter exhausted"));
             }
             let before = self.cpu.completed_steps();
-            let run = self.cpu.run_steps(budget, options);
+            #[cfg(feature = "host-profile")]
+            let profile = self.bus.profile();
+            #[cfg(feature = "host-profile")]
+            let retired_before = profile.enabled().then(|| self.cpu.retired());
+            let run = {
+                #[cfg(feature = "host-profile")]
+                let _span = profile.span(device::profile::ProfilePhase::Cpu);
+                self.cpu.run_steps(budget, options)
+            };
+            #[cfg(feature = "host-profile")]
+            if let Some(retired_before) = retired_before {
+                use device::profile::ProfileExit;
+                let exit = match &run {
+                    Ok(cpu::CpuStepRun { stop, .. }) => match stop {
+                        CpuStepStop::IrqReady => ProfileExit::InterruptWindow,
+                        CpuStepStop::Exit(stop) => match stop {
+                            CpuStop::PortIn { .. } | CpuStop::PortOut { .. } => ProfileExit::PortIo,
+                            CpuStop::MmioRead { .. } | CpuStop::MmioWrite { .. } => {
+                                ProfileExit::Mmio
+                            }
+                            CpuStop::BudgetExhausted => ProfileExit::Budget,
+                            CpuStop::Halt => ProfileExit::Halt,
+                            _ => ProfileExit::Other,
+                        },
+                    },
+                    Err(_) => ProfileExit::Error,
+                };
+                profile.cpu_run(
+                    self.cpu.retired() - retired_before,
+                    self.cpu.completed_steps() - before,
+                    budget,
+                    exit,
+                );
+            }
             self.close_reset_fetch_window();
-            self.read_deliveries();
+            {
+                #[cfg(feature = "host-profile")]
+                let _span = self
+                    .bus
+                    .profile()
+                    .span(device::profile::ProfilePhase::Observation);
+                self.read_deliveries();
+            }
             let run = match run {
                 Ok(run) => run,
                 Err(error) => {
@@ -1185,6 +1234,10 @@ impl<C: Cpu> Machine<C> {
     fn service_dma_pass(&mut self) -> Result<bool, BusError> {
         let mut transferred = false;
         for i in 0..self.dma_wirings.len() {
+            #[cfg(feature = "host-profile")]
+            self.bus
+                .profile()
+                .event(device::profile::ProfileEvent::DmaProbe);
             let wiring = self.dma_wirings[i];
             let request = self
                 .bus

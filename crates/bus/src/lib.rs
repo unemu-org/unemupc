@@ -150,6 +150,8 @@ pub struct AccessCouplingError {
 
 /// The bus: owns devices + the decode map and dispatches accesses (§3.3).
 pub struct Bus {
+    #[cfg(feature = "host-profile")]
+    profile: device::profile::ProfileHook,
     devices: Vec<Box<dyn Device>>,
     map: DecodeMap,
     deadlines: Vec<Option<NextEvent>>,
@@ -180,6 +182,8 @@ impl Bus {
     /// [`Bus::with_undecoded_ports`] to select strict faulting instead.
     pub fn new(devices: Vec<Box<dyn Device>>, map: DecodeMap) -> Self {
         Self {
+            #[cfg(feature = "host-profile")]
+            profile: Default::default(),
             deadlines: vec![None; devices.len()],
             access_dependents: vec![Vec::new(); devices.len()],
             pins_dirty: true,
@@ -189,6 +193,18 @@ impl Bus {
             now: std::rc::Rc::new(std::cell::Cell::new(VClock::ZERO)),
             open_bus_trace: device::TraceBuffer::default(),
         }
+    }
+
+    /// Bind passive host diagnostics; hardware state and deadlines are unchanged.
+    #[cfg(feature = "host-profile")]
+    pub fn set_profile(&mut self, profile: device::profile::ProfileHook) {
+        self.profile = profile;
+    }
+
+    /// Shared passive diagnostics for rendering and observation at bus boundaries.
+    #[cfg(feature = "host-profile")]
+    pub fn profile(&self) -> &device::profile::ProfileHook {
+        &self.profile
     }
 
     /// Declare that an access to `device` can change `dependent`'s next event.
@@ -311,6 +327,8 @@ impl Bus {
     /// recorded on the open-bus trace when its trace policy records; under [`UndecodedPortAccess::Fault`] it
     /// raises [`BusError::UnmappedPort`].
     pub fn port_read(&mut self, port: u16, size: u8) -> Result<u32, BusError> {
+        #[cfg(feature = "host-profile")]
+        let _span = self.profile.span(device::profile::ProfilePhase::PortIo);
         let (device, chunk) = self.port_chunk(port, size);
         let value = match device {
             Some(idx) => {
@@ -344,6 +362,8 @@ impl Bus {
     /// trace; under
     /// [`UndecodedPortAccess::Fault`] it raises [`BusError::UnmappedPort`].
     pub fn port_write(&mut self, port: u16, size: u8, value: u32) -> Result<(), BusError> {
+        #[cfg(feature = "host-profile")]
+        let _span = self.profile.span(device::profile::ProfilePhase::PortIo);
         let (device, chunk) = self.port_chunk(port, size);
         let cycle_value = if size > chunk {
             value & open_bus_value(chunk)
@@ -399,6 +419,8 @@ impl Bus {
     /// Widths outside 1–8 bytes are passed unchanged to the first device for
     /// validation.
     pub fn mmio_read(&mut self, addr: u64, size: u8) -> Result<u64, BusError> {
+        #[cfg(feature = "host-profile")]
+        let _span = self.profile.span(device::profile::ProfilePhase::Mmio);
         let (idx, chunk) = self.mmio_chunk(addr, size)?;
         self.sync_access(idx);
         let value = self.devices[idx].mmio_read(addr, chunk)?;
@@ -415,6 +437,8 @@ impl Bus {
     /// Uses the same ordering, fault and width rules as [`Bus::mmio_read`],
     /// slicing the value little-endian at each decode-window boundary.
     pub fn mmio_write(&mut self, addr: u64, size: u8, value: u64) -> Result<(), BusError> {
+        #[cfg(feature = "host-profile")]
+        let _span = self.profile.span(device::profile::ProfilePhase::Mmio);
         let (idx, chunk) = self.mmio_chunk(addr, size)?;
         self.sync_access(idx);
         if chunk == size {
@@ -429,9 +453,14 @@ impl Bus {
 
     /// Advance every device to virtual time `now` (§6).
     pub fn tick_all(&mut self, now: VClock) {
+        #[cfg(feature = "host-profile")]
+        self.profile.event(device::profile::ProfileEvent::TickDue);
         self.now.set(now);
         self.deadlines.fill(None);
         for dev in &mut self.devices {
+            #[cfg(feature = "host-profile")]
+            self.profile
+                .event(device::profile::ProfileEvent::DeviceTick);
             dev.tick(now);
         }
     }
@@ -447,6 +476,8 @@ impl Bus {
     /// `now` must not be earlier than the bus time. A same-instant call visits
     /// only due At deadlines; no PIT edge has elapsed for legacy devices.
     pub fn tick_due(&mut self, now: VClock) -> bool {
+        #[cfg(feature = "host-profile")]
+        self.profile.event(device::profile::ProfileEvent::TickDue);
         let mut changed = std::mem::take(&mut self.pins_dirty);
         let previous = self.now.get();
         debug_assert!(now >= previous, "bus time must not move backwards");
@@ -459,6 +490,9 @@ impl Bus {
                 NextEvent::Dormant => false,
             };
             if due {
+                #[cfg(feature = "host-profile")]
+                self.profile
+                    .event(device::profile::ProfileEvent::DeviceTick);
                 dev.tick(now);
                 if event != NextEvent::EveryPitClock {
                     *slot = Some(dev.next_event(now));
@@ -475,6 +509,9 @@ impl Bus {
     /// answers; querying a CPU budget does not. Whole-clock arithmetic is widened
     /// so an exhausted clock still returns EveryPitClock for the caller to reject.
     pub fn next_event(&mut self) -> NextEvent {
+        #[cfg(feature = "host-profile")]
+        self.profile
+            .event(device::profile::ProfileEvent::DeadlineQuery);
         let now = self.now.get();
         self.devices
             .iter()
@@ -509,6 +546,9 @@ impl Bus {
             .take()
             .unwrap_or_else(|| dev.next_event(self.now.get()));
         if event != NextEvent::EveryPitClock {
+            #[cfg(feature = "host-profile")]
+            self.profile
+                .event(device::profile::ProfileEvent::DeviceSync);
             dev.sync(self.now.get());
         }
         self.pins_dirty = true;

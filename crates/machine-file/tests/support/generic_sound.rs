@@ -336,9 +336,17 @@ fn capture(chip: CpuChip, word: bool, splits: &[u64]) -> Option<Capture> {
     let clock = config.clock.clone();
     let mut rig = machine_file::assemble_with_observation(&config, &policy).unwrap();
     rig.machine.enable_delivery_log().unwrap();
+    let _profile = super::host_profile::WorkloadProfile::from_env(&mut rig, || {
+        format!("{} SB16 word={word} splits={}", chip.name(), splits.len())
+    });
+    let mut audio_nanos = 0;
     for &cap in splits {
         rig.machine.run_bounded(Some(cap)).unwrap();
+        let started = _profile.as_ref().map(|_| std::time::Instant::now());
         rig.capture_audio().unwrap();
+        if let Some(started) = started {
+            audio_nanos += started.elapsed().as_nanos();
+        }
     }
     assert_eq!(
         rig.machine
@@ -346,7 +354,16 @@ fn capture(chip: CpuChip, word: bool, splits: &[u64]) -> Option<Capture> {
             .unwrap(),
         machine::RunOutcome::Halted
     );
+    let started = _profile.as_ref().map(|_| std::time::Instant::now());
     rig.capture_audio().unwrap();
+    if let Some(started) = started {
+        audio_nanos += started.elapsed().as_nanos();
+        eprintln!(
+            "HOST AUDIO {} word={word} splits={}: nanos={audio_nanos}",
+            chip.name(),
+            splits.len()
+        );
+    }
     let mut result = [0; 16];
     rig.machine.cpu().read_mem(0x500, &mut result).unwrap();
     eprintln!("{} word={word} results={result:02X?}", chip.name());

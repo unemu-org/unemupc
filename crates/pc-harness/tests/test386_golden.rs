@@ -16,6 +16,8 @@ use device::ByteStreamKind;
 
 #[path = "support/fixtures.rs"]
 mod fixtures;
+#[path = "support/host_profile.rs"]
+mod host_profile;
 
 const CPU_REV: &str = "786b5fd04dd895a696f951fcdf26828f55bfb3d6";
 const CAP: u64 = 100_000_000;
@@ -104,6 +106,9 @@ fn run(chip: CpuChip) {
     )
     .unwrap();
     assembled.machine.enable_delivery_log().unwrap();
+    let _profile = host_profile::WorkloadProfile::from_env(&mut assembled, || {
+        format!("{} test386", chip.name())
+    });
     let started = std::time::Instant::now();
     // A final halt alone cannot distinguish completion from an unrelated
     // failure; sample paging behavior and the conditional ARPL write as well.

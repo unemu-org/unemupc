@@ -347,6 +347,11 @@ impl Observation {
         machine: &mut ::machine::Machine<C>,
         until: device::VClock,
     ) -> Result<(), AudioError> {
+        #[cfg(feature = "host-profile")]
+        let _span = machine
+            .bus()
+            .profile()
+            .span(device::profile::ProfilePhase::Observation);
         if until > machine.clock() {
             return Err(AudioError::FutureTime);
         }
@@ -452,6 +457,8 @@ impl Observation {
         bus: &Bus,
         device: DeviceId,
     ) -> Result<Frame, ObservationError> {
+        #[cfg(feature = "host-profile")]
+        let _span = bus.profile().span(device::profile::ProfilePhase::Frame);
         let route = self.text_route(device)?;
         let producer = bus
             .device(route.device_index)
