@@ -187,41 +187,112 @@ past halted time. Live frontend switching would need a versioned run-control
 operation; the contract and GUI are unchanged. Nominal MHz does not add host
 pacing or per-instruction cycle accounting.
 
-**MEASURED**, release, ARM64 macOS host class, CPU pin
-`5a17667764080c2fe7a33d446584a3e175b7923d`: three 10-million-instruction
-samples after warm-up gave minimum real16 throughput 98.772 / 96.295 / 99.158
-million instructions/s for 286 / 386 / 486. Protected throughput was 9.967
-(protected16), 8.082 and 7.908 (protected32), respectively. Thus every listed
-preset fits the real16 register loop, while the protected32 386 loop fits
-through 25 MHz and none of the listed 486 clocks fits that loop. These are
-workload-specific ceilings, not a game-performance promise.
-See [clock mapping, sources, presets and measurement method](design/machine-files.md#nominal-cpu-clocks).
+**MEASURED 2026-11-25**, release, ARM64 macOS host class, x86jit pin
+`8f23fdcd6f9ce2a1fda2b105104d8a67a82bf126`. The complete current run of
+`cargo run --release -p pc-harness --example cpu_speed_ceiling` preserves the
+original cases and adds six user-mode mixes on the 386 and both 486 entries.
+Each cell lists **all three samples in MIPS**, in sample order. All **105 samples**
+retired exactly **10,000,000 instructions**. The original controls keep their
+100,000-step warm-up cap; the new cases warm up for 100,000 retired
+instructions after guest setup.
+The new cases also assert their complete general-register result, memory
+counters, stack balance, segment caches, PE/PG/CPL/VM/IOPL, page permissions
+and accessed/dirty bits after warm-up and every sample.
 
-**MEASURED 2026-11-24 after TLB repin
-`6a38ae4964555495c2b5c82ef72fea34e686c0b4`**, release, ARM64 macOS host class:
-three 10-million-retired-instruction samples give paged protected32
-**3.003–3.125 MIPS** on the 386 and **1.900–2.466 MIPS** on the early 486DX,
-versus the previous 1.832–1.888 / 1.837–1.854 MIPS. The core now has a
-per-vCPU TLB and reusable paged source proofs. Real16 is 79.794–86.301 MIPS
-across the boards, protected16 8.310–9.001, protected32 7.502–7.700 (386)
-and 6.134–6.744 (486). All 24 samples retire exactly 10 million instructions.
-Unpaged rates are below the previous baseline; shared-host load was not
-controlled, so this does not isolate a CPU regression. The benchmark keeps its guest clock ratios and
-10-million-instruction sample size. See
-[all rates, wall times and baseline comparison](design/machine-files.md#measured-speed-ceilings).
+| Case | IBM 5170 / 80286 | Generic 386 / 80386DX | Generic 486 / early 80486DX | Generic 486 / CPUID 80486DX |
+| --- | --- | --- | --- | --- |
+| `real16` | 87.546, 91.844, 92.148 | 89.493, 92.410, 90.516 | 94.656, 94.329, 95.441 | 93.495, 97.108, 97.193 |
+| `protected16` | 9.337, 9.370, 9.474 | — | — | — |
+| `protected32` | — | 7.940, 7.955, 8.175 | 7.766, 7.821, 7.874 | 7.704, 7.904, 7.924 |
+| `paged32` | — | 3.303, 3.304, 3.308 | 3.220, 3.191, 3.249 | 3.252, 3.250, 3.264 |
+| `flat32` | — | 35.502, 35.463, 35.060 | 30.038, 29.219, 29.544 | 29.639, 29.858, 30.226 |
+| `flat-paged32` | — | 12.714, 12.476, 12.651 | 11.416, 11.457, 11.254 | 11.431, 11.489, 11.417 |
+| `flat32-cpl3` | — | 25.887, 25.535, 25.967 | 22.176, 22.309, 21.963 | 22.058, 21.510, 22.036 |
+| `flat-paged32-cpl3` | — | 14.478, 14.445, 14.642 | 12.406, 12.452, 12.424 | 12.322, 12.401, 12.315 |
+| `flat-paged32-cpl3-farcall` | — | 1.616, 1.632, 1.639 | 1.523, 1.522, 1.515 | 1.517, 1.527, 1.527 |
+| `paged-protected16-cpl3` | — | 1.009, 1.020, 1.016 | 0.959, 0.959, 0.962 | 0.963, 0.971, 0.970 |
+| `paged-v86` | — | 1.072, 1.072, 1.071 | 1.022, 1.026, 1.019 | 1.031, 1.029, 1.030 |
+| `paged-v86-iopl0` | — | 1.029, 1.030, 1.034 | 0.981, 0.983, 0.981 | 0.988, 0.984, 0.981 |
 
-**MEASURED 2026-11-25**, release, ARM64 macOS host class, CPU pin
-`ab193c1591e3876db0e5042282f1bc1871b7d75c`: new flat32 fixtures use
-base-zero, 4 GiB CS/DS/ES/SS at CPL 0, with PG=0 or identity-mapped PG=1.
-All original cases remain. The example asserts the cached segment state,
-PE/PG and exact ten-million-instruction intervals: **36 samples** in all.
-Unpaged flat32 measures **37.333–37.409 MIPS** on the 386 and
-**23.923–24.535 MIPS** on the early 486; flat paged32 measures
-**3.227–3.442 / 2.962–3.261 MIPS**. Original protected32 is
-7.706–8.291 / 7.663–7.809 MIPS. Its F8000h-based 64 KiB code segment
-cannot engage the Flat32 interpreter class. The original 486 paged case
-has a wide 1.065–2.632 MIPS spread; shared-host load was not controlled.
-See [all current rates, assertions and reproduction](design/machine-files.md#measured-speed-ceilings).
+The old CPL 0 cases remain register-only controls. The representative flat
+cases use native 32-bit ALU and memory operations, flat ring-3 code/data/stack
+segments, **near calls/returns only**, and balanced stack traffic. The separate
+`flat-paged32-cpl3-farcall` stress case replaces one near pair with a
+same-selector far CALL/RETF pair. Its rate is not a Win32 throughput estimate.
+The paged 16-bit case uses 64 KiB D=0 LDT code/data/stack segments, RPL 3,
+repeated DS/ES loads and CALL/RETF between two code segments. Paged V86 uses
+paragraph segment arithmetic and the same 16-bit user work. Code, data and
+user stacks have U pages; tables, TSS and monitor stack stay supervisor-only.
+These workload ceilings describe the fixtures, not a whole Windows session.
+
+All builds and checks for this run finished before timing; other shared-host
+activity was not controlled. **0 of 35 CPU/case triples spread by more than 10%**,
+using `(max MIPS - min MIPS) / min MIPS`; the largest spread was
+**5.3%**. The table retains all three samples.
+
+| Case | Near CALL / RET per 100 retired | Far CALL / RETF per 100 retired | Explicit DS / ES loads per 100 retired |
+| --- | --- | --- | --- |
+| `flat32-cpl3` | 8 / 8 | 0 / 0 | 0 / 0 |
+| `flat-paged32-cpl3` | 8 / 8 | 0 / 0 | 0 / 0 |
+| `flat-paged32-cpl3-farcall` (stress) | 4 / 4 | 4 / 4 | 0 / 0 |
+| `paged-protected16-cpl3` | 4 / 4 | 4 / 4 | 4 / 4 |
+| `paged-v86` | 4 / 4 | 4 / 4 | 4 / 4 |
+| `paged-v86-iopl0` (I/O stress) | 4 / 4 | 4 / 4 | 4.4 / 4 |
+
+IOPL 0 includes 0.4 monitor DS loads and 0.4 IRETDs per 100 retired;
+IRETD implicitly restores the six V86 segment caches in addition to the
+explicit loads counted above. Protected16 and V86 retain this frequent far
+transfer and reload traffic because it is characteristic of 16-bit Windows
+and DOS code. No case reloads CR3 in its loop, clears A/D bits repeatedly,
+writes its code or straddles pages with operands; code, data and stack use
+separate pages.
+
+**READ, rechecked at the pin above:** x86jit
+`x86jit-core/src/interp/legacy.rs:4359` marks segment loads as context changes,
+`:4520` does so for far CALL, and `:4585` for RETF, including same-selector
+transfers. `x86jit-core/src/vm/legacy/paging.rs:581` invalidates on that outcome;
+`:51` clears retained blocks and the TLB. The far-call stress case forces
+800,000 explicit invalidations per 10-million-instruction sample, and the
+16-bit/V86 bodies add both DS/ES loads. This repeatedly discards fetch/decode/
+lift work and translations; warm-up cannot remove the recurring cost. A cache
+retention change belongs upstream. At this pin, ordinary Flat32 execution
+selects a separate path (`vm/legacy/paging.rs:510`); eligible cached RAM operands
+avoid preview/retry (`interp/legacy/paging.rs:2185`, `:2418`), while unproved
+instructions retain preview/retry at `:2441`.
+Exact host-time percentages for these mechanisms remain unmeasured.
+
+The V86 pair unrolls ten bodies with identical user work and loop branches.
+IOPL 0 takes one denied `IN AL,80h` per ten iterations to a minimal CPL 0 #GP
+monitor, which returns AL=5Ah, advances saved IP and IRETDs. The faulting IN
+retires zero instructions; the monitor retires nine. IOPL 3 uses MOV AL,5Ah
+and eight NOP control slots instead, keeping both periods at 250 retired
+instructions. Each timed sample therefore completes 400,000 user iterations
+and **40,000 monitor round trips** in the trapped case. New non-V86 periods
+are 25 retired instructions per iteration. Setup REP work is outside timing.
+
+The paired workload cost is `(trapped_seconds - control_seconds) / 40,000`:
+
+| CPU entry | Paired additional host µs per trapped I/O, samples 1 / 2 / 3 |
+| --- | --- |
+| `generic-386-isa` | 9.595 / 9.639 / 8.279 |
+| `generic-486-isa` | 10.304 / 10.649 / 9.514 |
+| `generic-486-isa/80486dx-cpuid` | 10.714 / 11.193 / 12.062 |
+
+These paired deltas can include shared-host drift, even with adjacent control/
+trapped samples. They describe this workload with exactly 40,000 round trips
+per sample. The nine retired monitor instructions are deterministic.
+
+The normal-tier `cpu_user_speed_golden` tests run each new case for exactly
+10,000 retired instructions on all three CPU entries and check the same state
+oracle, including 40 round trips for IOPL 0. The protected16 test also stops
+after 14 retired instructions inside its far callee, checking CS=17h, base
+F9000h, D=0, CPL=3 and PG=1. A near CALL to the same physical callee plus RET
+passes the old boundary-only oracle, but fails
+this checkpoint (CS=0Fh instead of 17h); restored fixtures pass all six tests.
+Rebuild the project-owned ROMs with
+`bash crates/pc-harness/tests/fixtures/build-user-speed.sh` inside the devShell.
+See [Windows 95 speed budget](design/windows95-on-486.md#3-speed-budget-estimate-from-measured-rates)
+and [clock mapping and historical baselines](design/machine-files.md#measured-speed-ceilings).
 
 ## FreeDOS on generic ISA boards (2026-11-24)
 

@@ -27,11 +27,13 @@ Evidence labels:
    functional CPU blocker. x86jit ships V86 with paging, 32-bit gates,
    the TSS I/O bitmap at CPL > IOPL, INVLPG and WP. The typed refusals that
    remain are ones Windows 95 is not expected to reach (ASSUMED, section 4).
-3. Speed is the real cost. Installed Windows 95 uses paging; the DOS launcher and mini-Windows
-   setup front end can run unpaged (ASSUMED). MEASURED paged
-   protected32 is 1.9-3.4 MIPS against a virtual 486DX-33 rate of about
-   16.5 MIPS (`status.md:71-75`, `:99-117`). The desktop would run at roughly
-   0.1-0.2x real time and a full setup would take hours of wall time.
+3. Speed is the real cost. Installed Windows 95 uses paging; the DOS launcher
+   and mini-Windows setup front end can run unpaged (ASSUMED). **MEASURED** at
+   x86jit `ce6bbbee`, the paged user-mode mixes on the two 486 entries span
+   0.521–1.331 MIPS against the virtual 486DX-33 rate of about 16.5 MIPS.
+   The conditional CPU-bound wall-time estimate is now 4.2–16.0 hours for 20–30 billion
+   instructions; the Windows regime mix and instruction budget remain
+   ASSUMED (section 3).
 4. SeaBIOS is a proven Windows 95 firmware in QEMU (ASSUMED, common practice),
    and our build keeps the relevant services: INT 15h 88h/E801h/E820h, APM 1.2,
    INT 13h with EDD 3.0, ISA ATA on both channels, INT 15h C2h mouse.
@@ -74,31 +76,103 @@ DOS launcher, in order of preference:
 
 ## 3. Speed budget (ESTIMATE from MEASURED rates)
 
-| Phase | CPU regime | Host rate today | Against the virtual 16.5 MIPS |
+**MEASURED 2026-11-25**, release, ARM64 macOS host class, exact x86jit pin
+`8f23fdcd6f9ce2a1fda2b105104d8a67a82bf126`. These are all current rates,
+including the original CPL 0 controls and the new user regimes. Each cell is
+samples 1 / 2 / 3 in MIPS; every sample retires exactly 10,000,000 instructions.
+There are 105 samples in total. See [status.md](../status.md#nominal-cpu-clocks-and-turbo-2026-11-24)
+for the fixture method, state checks, monitor counts and paired I/O deltas.
+
+| Case | IBM 5170 / 80286 | Generic 386 / 80386DX | Generic 486 / early 80486DX | Generic 486 / CPUID 80486DX |
+| --- | --- | --- | --- | --- |
+| `real16` | 87.546, 91.844, 92.148 | 89.493, 92.410, 90.516 | 94.656, 94.329, 95.441 | 93.495, 97.108, 97.193 |
+| `protected16` | 9.337, 9.370, 9.474 | — | — | — |
+| `protected32` | — | 7.940, 7.955, 8.175 | 7.766, 7.821, 7.874 | 7.704, 7.904, 7.924 |
+| `paged32` | — | 3.303, 3.304, 3.308 | 3.220, 3.191, 3.249 | 3.252, 3.250, 3.264 |
+| `flat32` | — | 35.502, 35.463, 35.060 | 30.038, 29.219, 29.544 | 29.639, 29.858, 30.226 |
+| `flat-paged32` | — | 12.714, 12.476, 12.651 | 11.416, 11.457, 11.254 | 11.431, 11.489, 11.417 |
+| `flat32-cpl3` | — | 25.887, 25.535, 25.967 | 22.176, 22.309, 21.963 | 22.058, 21.510, 22.036 |
+| `flat-paged32-cpl3` | — | 14.478, 14.445, 14.642 | 12.406, 12.452, 12.424 | 12.322, 12.401, 12.315 |
+| `flat-paged32-cpl3-farcall` | — | 1.616, 1.632, 1.639 | 1.523, 1.522, 1.515 | 1.517, 1.527, 1.527 |
+| `paged-protected16-cpl3` | — | 1.009, 1.020, 1.016 | 0.959, 0.959, 0.962 | 0.963, 0.971, 0.970 |
+| `paged-v86` | — | 1.072, 1.072, 1.071 | 1.022, 1.026, 1.019 | 1.031, 1.029, 1.030 |
+| `paged-v86-iopl0` | — | 1.029, 1.030, 1.034 | 0.981, 0.983, 0.981 | 0.988, 0.984, 0.981 |
+
+The new mixes exercise ALU, data loads/stores, calls, returns and stack
+traffic. Representative Win32 uses near CALL/RET only (8 pairs per 100
+retired), native dword operations and retained flat data selectors. The
+explicitly separate `flat-paged32-cpl3-farcall` stress case uses 4 far pairs
+and 4 near pairs per 100; it is excluded from the Win32 estimate below.
+16-bit Windows reloads DS/ES from its LDT each iteration. Protected16 and V86
+each execute 4 far pairs, 4 near pairs and 4 loads of each of DS/ES per 100
+retired. IOPL 0 adds 0.4 monitor DS loads and 0.4 IRETD segment restores per
+100. These 16-bit cases intentionally retain the frequent transfers/reloads.
+At this pin each far transfer or segment load marks a context change that
+clears paged retained blocks and the TLB; see the file/line analysis in
+[status.md](../status.md#nominal-cpu-clocks-and-turbo-2026-11-24). Warm-up cannot
+remove that recurring cost. Both V86 cases use the same ten unrolled bodies; nine control slots match the nine retired CPL 0
+monitor instructions, so each sample does the same user work and the trapped
+case makes exactly 40,000 round trips. IOPL 0 faults on IN AL,80h; the monitor
+emulates AL=5Ah and resumes after the instruction. There are no software INTs.
+The control slots are MOV AL,5Ah plus eight NOPs at IOPL 3. The faulting IN
+itself retires zero instructions.
+
+The rates differ with the instruction mix; the CPL 0 register-only control is
+an upper bound for its own workload. All builds and checks for this run finished
+before timing; other shared-host activity was not controlled. **0 of 35 CPU/case triples spread by more than 10%**,
+using `(max MIPS - min MIPS) / min MIPS`; the largest spread was
+**5.3%**. The table retains all three samples.
+
+The paired additional host cost per I/O is:
+
+| CPU entry | Paired additional host µs per trapped I/O, samples 1 / 2 / 3 |
+| --- | --- |
+| `generic-386-isa` | 9.595 / 9.639 / 8.279 |
+| `generic-486-isa` | 10.304 / 10.649 / 9.514 |
+| `generic-486-isa/80486dx-cpuid` | 10.714 / 11.193 / 12.062 |
+
+These paired deltas can include host-load drift. The complete trapped-workload
+rates and nine retired monitor instructions remain measured.
+
+| Phase | CPU regime | Measured host MIPS, both 486 entries | Against virtual 16.5 MIPS |
 | --- | --- | --- | --- |
-| DOS, real-mode stub | Real16 | 80-86 MIPS (`status.md:103`) | faster than real time |
-| Setup GUI, detection, file copy | protected16, unpaged (ASSUMED: mini Windows 3.1 in Standard mode) | 8.3-9.0 MIPS (`status.md:103`) | about 0.5x |
-| First boot, VMM and VxDs | flat32 CPL 0, paged | 3.0-3.4 MIPS (`status.md:116`) | about 0.2x |
-| KRNL386, USER, GDI, setup's second half | protected16 CPL 3, paged | not measured; at most the paged rate | at most 0.2x |
-| BIOS and DOS calls under Windows | V86, paged | not measured | at most 0.2x |
+| DOS, real-mode stub | Real16 | 93.495–97.193 | 5.666–5.890x |
+| First boot, VMM and VxDs | Flat32 CPL 0, paged; register-only control | 11.254–11.489 | 0.682–0.696x |
+| KRNL386, USER, GDI, setup under the VMM | Protected16 CPL 3, LDT, paged | 0.959–0.971 | 0.058–0.059x |
+| Win32 programs | Flat32 CPL 3, paged; near calls only | 12.315–12.452 | 0.746–0.755x |
+| BIOS and DOS calls under Windows | V86, paged, IOPL 3 control | 1.019–1.031 | 0.062–0.062x |
+| Mini-Windows setup front end | Protected16 CPL 3, unpaged (ASSUMED) | unmeasured | unmeasured |
 | Idle desktop | HLT | free (decision-14) | n/a |
 
-ASSUMED: setup plus first boot on a real 486DX-33 is 30-60 minutes, of which
-perhaps 20-30 are CPU bound, so 20-30 billion instructions. At today's rates
-that is 2-4 hours of wall time for one full run. Correctness work can proceed
-at that speed with staged runs; daily use cannot.
+| Separate stress case | Measured host MIPS, both 486 entries |
+| --- | --- |
+| `flat-paged32-cpl3-farcall` | 1.515–1.527 |
+| `paged-v86-iopl0` | 0.981–0.988 |
 
-**MEASURED** in the instrumented local stage-1 test (not a CPU microbenchmark):
+**ASSUMED:** setup plus first boot on a real 486DX-33 is 30–60 minutes,
+with 20–30 minutes CPU bound, about 20–30 billion instructions. Dividing that
+budget by the representative paged user-mix extremes on the two 486 entries
+(0.959–12.452 MIPS: protected16, near-call Flat32 and IOPL-3 V86) gives
+**0.45–8.69 hours of host wall time** for the CPU-bound portion. The far-call Flat32
+and one-IN-per-ten-iterations V86 stress cases are excluded from this estimate.
+This is a conditional extrapolation: the instruction budget, regime proportions
+and actual I/O-trap frequency are unverified, and the range includes shared-host
+contention. Full setup also has storage and instrumentation costs. The unpaged
+mini-Windows phase remains unmeasured. Actual Windows throughput requires a
+completed guest run.
+
+Previously **MEASURED** in the instrumented stage-1 test (not remeasured here):
 DOS prompt/command injection at 130,127,767 retired in 40.55 s, about 3.21 MIPS;
 protected setup refusal at 249,085,227 retired in 82.03 s, about 3.04 MIPS
 across the whole run. These figures include full port/delivery tracing, scanout
 polling and host contention. They do not replace the CPU-only rates above or
 establish a paged Windows throughput. Setup's first screen was not reached.
 
-x86jit's stated order is Flat32 CPL 3, then paged memory cost, then
-protected16. For Windows 95 the order of benefit is different: paged memory
-cost first (everything is paged), then paged protected16 at CPL 3 (USER, GDI,
-KRNL386 and all of setup), then Flat32 CPL 3 (Explorer and Win32 programs).
+Flat32 at CPL 3 executes on this pin. Future CPU throughput comparisons should
+keep these mixed paged cases: they cover the data, segment and call traffic
+that the original register-only controls leave unmeasured. For Windows 95,
+paged protected16/LDT and V86 monitor costs remain relevant alongside paged
+Win32 throughput.
 
 ## 4. Gap table
 
@@ -130,7 +204,7 @@ desktop; "Later" = after the first desktop.
 | 20 | SB16 driver | DSP version, mixer IRQ/DMA readback, playback | READ: DSP 4.05, mixer 80h/81h readback (`sb16.rs:44`), OPL3. MIDI (MPU-401) and input are not modelled (`sb16.rs:23`). ASSUMED: playback works; the MPU-401 child device may fail to start | U | S playback, M MPU-401 | Later |
 | 21 | Numeric errors | ASSUMED: Windows 95 may keep CR0.NE = 0 and expect IRQ13 | READ: external routing refused on both 486 entries (`protected-mode-gaps.md:465`); upc-18x.11 and xj-31k.4 (x86jit) already cover it. Unmasked x87 exceptions are rare at the desktop | X then U | M | Later |
 | 22 | CPU, functional | V86 under paging, 32-bit gates, I/O bitmap, ARPL as #UD in V86, ring transitions, demand paging, CR3 reloads, INVLPG | READ at the pin: all shipped (x86jit `deferred.md:261-278`, `design/task-switches.md:64-68`, `design/v86.md:131`; ours `protected-mode-gaps.md:462-468`). Remaining typed refusals: V86 16-bit gates, AM+AC, DR7 with enable bits or GD (x86jit `interp/legacy.rs:4117-4128`), TR6 writes (`:4133-4141`), TR3-TR5, 16-bit BSWAP, page tables on device or ROM, the TSS T bit. ASSUMED: Windows 95 reaches none without a debugger | X | unknown | Setup if hit |
-| 23 | CPU, speed | Paged execution in all three regimes | Section 3. Paged protected16 CPL 3 and paged V86 have no benchmark here | X (bench: U) | L | Practical use |
+| 23 | CPU, speed | Paged execution in all three regimes | MEASURED at `ce6bbbee`: all three paged user regimes and an IOPL 0 monitor pair; section 3 records every sample | X (bench: U) | L | Practical use |
 | 24 | CPUID | Either 486 entry | READ: the CPUID entry reports FPU only (x86jit `model.rs:401`), so no VME is advertised. Start with `80486dx` | - | - | - |
 | 25 | Snapshots | A checkpoint after setup would save hours | Deferred (`deferred.md:69`). Disk journal generations at reboots replace it for now | U | L | Not proposed |
 

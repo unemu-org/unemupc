@@ -5,22 +5,28 @@
 //! (page translation) define the additional 32-bit cases.
 //! See `backlog/docs/design/machine-files.md` §Measured speed ceilings.
 
-use assembly::{AssemblyOptions, BoardModel};
+use assembly::{AssemblyOptions, BoardModel, CpuChip};
 use cpu::{Cpu, CpuReg};
 use machine::RunOutcome;
 use std::time::Instant;
 #[path = "../tests/support/speed.rs"]
 mod speed;
+#[path = "../tests/support/user_speed.rs"]
+mod user_speed;
 
 fn main() {
     assert!(
         include_str!("../../../Cargo.lock").contains("8f23fdcd6f9ce2a1fda2b105104d8a67a82bf126")
     );
-    for board in [
-        BoardModel::Ibm5170,
-        BoardModel::Generic386Isa,
-        BoardModel::Generic486Isa,
-    ] {
+    for (board, chip) in [(BoardModel::Ibm5170, CpuChip::I80286)]
+        .into_iter()
+        .chain(user_speed::CHIPS)
+    {
+        let label = if chip == CpuChip::I80486DxCpuid {
+            "generic-486-isa/80486dx-cpuid"
+        } else {
+            board.id()
+        };
         let protected = if board == BoardModel::Ibm5170 {
             (
                 "protected16",
@@ -56,7 +62,8 @@ fn main() {
             ]);
         }
         for (mode, rom) in cases {
-            let config = speed::board(rom, board);
+            let mut config = speed::board(rom, board);
+            config.cpu.chip = chip;
             let mut rig = assembly::assemble_with_options(
                 &config,
                 AssemblyOptions {
@@ -111,9 +118,43 @@ fn main() {
                 assert_eq!(retired, 10_000_000);
                 println!(
                     "{} {mode} sample={sample}: retired={retired} seconds={elapsed:.6} MIPS={:.3}",
-                    board.id(),
+                    label,
                     retired as f64 / elapsed / 1e6
                 );
+            }
+        }
+        if board != BoardModel::Ibm5170 {
+            let mut rigs = Vec::new();
+            for case in user_speed::CASES {
+                let mut rig = case.rig(board, chip);
+                let start_retired = rig.machine.cpu().retired();
+                let warm_cap = rig.machine.virtual_time() + 100_000;
+                assert_eq!(
+                    rig.machine.run_bounded(Some(warm_cap)).unwrap(),
+                    RunOutcome::RetiredCapReached
+                );
+                case.check(&rig, case.iterations(100_000));
+                rigs.push((case, rig, start_retired));
+            }
+            // Keep the V86 control and trapped samples adjacent to limit host-load drift.
+            for sample in 1..=3 {
+                for (case, rig, start_retired) in &mut rigs {
+                    let before = rig.machine.cpu().retired();
+                    let cap = rig.machine.virtual_time() + 10_000_000;
+                    let start = Instant::now();
+                    assert_eq!(
+                        rig.machine.run_bounded(Some(cap)).unwrap(),
+                        RunOutcome::RetiredCapReached
+                    );
+                    let elapsed = start.elapsed().as_secs_f64();
+                    let retired = rig.machine.cpu().retired() - before;
+                    assert_eq!(retired, 10_000_000);
+                    case.check(
+                        rig,
+                        case.iterations(rig.machine.cpu().retired() - *start_retired),
+                    );
+                    println!("{label} {} sample={sample}: retired={retired} seconds={elapsed:.6} MIPS={:.3}", case.name, retired as f64 / elapsed / 1e6);
+                }
             }
         }
     }
