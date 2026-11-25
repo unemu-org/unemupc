@@ -1,5 +1,29 @@
 # Status
 
+## Optional 80387 on the generic 386 ISA board (2026-11-25)
+
+`generic-386-isa` accepts `cpu.fpu = "80387"` as well as its unchanged
+`"none"` default. Machine-file inheritance, TOML/YAML lowering, config-image
+encoding and the capability sheet preserve the selection. The new vocabulary
+requires config compatibility release 0.0.6. No shipped machine file changes.
+IBM 5170 keeps none/80287; the 486 board keeps integrated-only.
+
+**MEASURED at x86jit `4bf91c8d`:** the project-owned reset-vector probe reports
+FNSTSW AX=0000h, FNSTCW=037Fh, SMSW/MOV EAX,CR0 ET=1, and x87 7×6=42.
+An unmasked divide by zero delivers one INT 75h through IRQ13; F0h releases
+WAIT without clearing the sampled status, and no internal #MF is delivered.
+The absent-FPU variant reports FFFFh and ET=0. Isolation tests preserve the
+old constructor's absent-FPU state and both selections across CPU-only reset.
+CMOS 14h bit 1 follows the socket through the mock RTC bus; SeaBIOS's BDA
+bit is not asserted for an empty socket. See
+[interface coverage](design/firmware-and-machine-classes.md#optional-80387-interface-coverage).
+
+**MEASURED:** the 80387 SeaBIOS POST variant completes in 2.35 seconds with
+CMOS14=02h and the unchanged text frame hash. The named ignored FreeDOS
+variant reaches `A:\>` in 2.71 seconds at 10,718,776 retired instructions,
+with the existing no-FPU boot text hash unchanged. These wall times describe
+host-side test measurements only.
+
 ## SB16 on generic ISA boards (2026-11-25)
 
 **MEASURED**, x86jit `6a38ae49`: shared SeaBIOS boot probes pass on 80386DX,
@@ -5748,8 +5772,8 @@ See `bd ready --exclude-type epic` and `bd list --type epic`. Don't duplicate th
 Present 286/287 Machine CPUs now use x86jit External numeric-error routing:
 ERROR# latches IRQ13, and any F0h write clears the board latch and releases the
 CPU wait interlock without clearing x87 status. WAIT suspension advances devices
-and virtual time using the HLT idle path. The 386 socket wiring is ready for a
-future present coprocessor, with no new configuration option. Unsupported CPU
+and virtual time using the HLT idle path. The generic 386 board now exposes
+its optional 80387 through `cpu.fpu = "80387"` (default `"none"`). Unsupported CPU
 models retain Internal routing. F1h reset, F8h–FFh internal bus transfers and
 unsupported protected-mode 287 forms remain outside coverage.
 

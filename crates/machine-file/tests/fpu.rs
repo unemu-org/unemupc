@@ -129,7 +129,7 @@ fn explicit_cmos_image_is_preserved_with_80287() {
 
 #[test]
 fn unsupported_fpu_names_have_exact_typed_diagnostics() {
-    for name in ["80387", "8087", "present", "80288", "NONE"] {
+    for name in ["8087", "present", "80288", "NONE"] {
         let toml = format!("schema = 1\n[cpu]\nfpu = '{name}'\n");
         let yaml = format!("schema: 1\ncpu: {{fpu: '{name}'}}\n");
         let errors: [ParseError; 2] = [
@@ -140,7 +140,7 @@ fn unsupported_fpu_names_have_exact_typed_diagnostics() {
             assert_eq!(
                 error.message(),
                 format!(
-                    "unsupported cpu.fpu `{name}`; allowed values: `none`, `80287`, `integrated`"
+                    "unsupported cpu.fpu `{name}`; allowed values: `none`, `80287`, `80387`, `integrated`"
                 )
             );
         }
@@ -330,4 +330,114 @@ fn at_numeric_errors_reach_irq13_and_wait_keeps_device_time_running() {
         assembled.machine.virtual_time(),
         started.elapsed()
     );
+}
+
+fn generic386_config(fpu: &str) -> MachineConfig {
+    struct ProbeImage;
+    impl ImageReader for ProbeImage {
+        fn read(&mut self, _: &Path) -> io::Result<Vec<u8>> {
+            let mut bytes = vec![0xf4; 0x18000];
+            bytes.extend_from_slice(include_bytes!("fixtures/i386-387.bin"));
+            Ok(bytes)
+        }
+    }
+    let text = format!("schema = 1\n[board]\nmodel = 'generic-386-isa'\n[cpu]\nfpu = '{fpu}'\n[firmware.bios]\nimage = 'probe.bin'\n[[card]]\nkind = 'uart-16550'\n");
+    let yaml = format!("schema: 1\nboard: {{model: generic-386-isa}}\ncpu: {{fpu: '{fpu}'}}\nfirmware: {{bios: {{image: probe.bin}}}}\ncard: [{{kind: uart-16550}}]\n");
+    let path = Path::new("probe.toml");
+    let toml = lower(
+        &parse_toml(path, &text).unwrap(),
+        &Origins::from_toml(path, &text).unwrap(),
+        &mut ProbeImage,
+    )
+    .unwrap();
+    let path = Path::new("probe.yaml");
+    let yaml = lower(
+        &parse_yaml(path, &yaml).unwrap(),
+        &Origins::from_yaml(path, &yaml).unwrap(),
+        &mut ProbeImage,
+    )
+    .unwrap();
+    assert_eq!(toml, yaml);
+    toml
+}
+
+#[test]
+fn generic386_80387_reset_probe_initialization_arithmetic_and_irq13() {
+    generic386_fpu_probe(true);
+}
+
+#[test]
+fn generic386_no_fpu_reset_probe_all_ones_and_et_clear() {
+    generic386_fpu_probe(false);
+}
+
+fn generic386_fpu_probe(present: bool) {
+    use cpu::Cpu;
+    let config = generic386_config(if present { "80387" } else { "none" });
+    let mut assembled = assemble_with_options(
+        &config,
+        AssemblyOptions {
+            allow_unlisted_firmware: true,
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        assembled.machine.run_bounded(Some(500)).unwrap(),
+        machine::RunOutcome::Halted
+    );
+    let mut result = [0; 22];
+    assembled
+        .machine
+        .cpu()
+        .read_mem(0x500, &mut result)
+        .unwrap();
+    let words: Vec<u16> = result
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|v| u16::from_le_bytes(*v))
+        .collect();
+    assert_eq!(words[0], if present { 0 } else { 0xffff }, "FNSTSW AX");
+    assert_eq!(words[1], if present { 0x037f } else { 0xffff }, "FNSTCW");
+    let et = if present { 0x10 } else { 0 };
+    assert_eq!(words[2] & 0x10, et, "SMSW ET");
+    let cr0 = u32::from_le_bytes(result[6..10].try_into().unwrap());
+    assert_eq!(cr0, u32::from(et), "reset CR0 model");
+    assert_eq!(words[5], if present { 42 } else { 0 }, "7 * 6");
+    assert_eq!(words[6], u16::from(present), "INT 75h count");
+    assert_eq!(words[7], 0, "no internal #MF");
+    if present {
+        assert_eq!(words[8] & 0x84, 0x84, "unmasked zero divide status");
+        assert_eq!(words[8], words[9], "F0h preserves exception status");
+    }
+    assert_eq!(words[10], 0xa55a, "WAIT resumed after F0h");
+    assert!(!assembled.machine.cpu().numeric_error_pending());
+}
+
+#[test]
+fn wrong_board_80387_has_positioned_diagnostic() {
+    for board in ["ibm-5170", "generic-486-isa"] {
+        let model = if board == "ibm-5170" {
+            "80286"
+        } else {
+            "80486dx"
+        };
+        let text = format!("schema = 1\n[board]\nmodel = '{board}'\n[cpu]\nmodel = '{model}'\nfpu = '80387'\n[firmware.bios]\nimage = 'probe.bin'\n[[card]]\nkind = 'uart-16550'\n");
+        let path = Path::new("probe.toml");
+        let error = lower(
+            &parse_toml(path, &text).unwrap(),
+            &Origins::from_toml(path, &text).unwrap(),
+            &mut Images,
+        )
+        .unwrap_err();
+        assert_eq!(error.field, "cpu.fpu");
+        assert_eq!(error.origin.file, path);
+        assert_eq!(error.origin.line, Some(6));
+        assert!(
+            error
+                .message
+                .contains("80387 requires board generic-386-isa"),
+            "{error}"
+        );
+    }
 }

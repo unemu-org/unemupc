@@ -1370,6 +1370,8 @@ mod tests {
     fn child_cpu_fpu_override_is_merged_with_its_origin() {
         for (parent, child, expected) in [
             ("none", "80287", FpuModel::I80287),
+            ("none", "80387", FpuModel::I80387),
+            ("80387", "none", FpuModel::None),
             ("80287", "none", FpuModel::None),
         ] {
             let resolved = merged(

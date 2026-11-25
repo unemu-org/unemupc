@@ -303,7 +303,8 @@ for the hardware references, no-card policy and snapshot behavior.
 
 `model = "generic-386-isa"` selects `MachineClass::At386` and defaults to
 `cpu.model = "80386dx"` (x86jit `CpuModel::I80386`); selecting a 286 or an
-80287 is refused. The IBM 5170 retains its 80286 CPU and existing rules.
+80287 is refused. The optional 387 socket accepts `cpu.fpu = "80387"`;
+`"none"` remains the default. The IBM 5170 retains its 80286 CPU and existing rules.
 The 386 board has the same AT IRQ/DMA wiring and device order, with a
 128-byte DS12887-class RTC replacing the 64-byte RTC, then port 92h,
 the byte debug console at 402h and emulator-only fw_cfg at 510h/511h.
@@ -350,7 +351,7 @@ uses 15 MiB of extended RAM and the `seabios-1.17.0-unemu1-isa` catalogue entry.
 At CPU pin `b7c10b6f` (x86jit), reset installs the core's
 `CpuState::i386_reset`: CS=F000h, hidden base FFFF0000h, EIP=FFF0h and
 EDX=0303h. Intel 80386 PRM §10.1 specifies DH=03h; DL=03h is the core's
-assumed stepping. CR0.ET reflects the FPU model (clear on this no-FPU board).
+assumed stepping. CR0.ET reflects the FPU model (clear by default, set with the optional 80387).
 The bare CPU adapter reapplies the retained A20 gate after installing the
 image: with A20 disabled its reset fetch addresses FFEFFFF0h, deliberately
 unmapped. The assembled board explicitly chooses a different **emulator
@@ -598,7 +599,7 @@ No CPU boundary or device change was needed.
 `"80486dx"` is the early DX without CPUID, and `"80486dx-cpuid"` is the
 DX with toggleable EFLAGS.ID and CPUID. Unknown names retain their TOML/YAML
 source position. Omitting the model is a validation error. The FPU domain is
-`"integrated"` (also the default for this board); `"none"` and `"80287"` are
+`"integrated"` (also the default for this board); `"none"`, `"80287"` and `"80387"` are
 rejected. Other boards reject `"integrated"`.
 
 The shipped `machines/generic-486-seabios.toml` explicitly selects the early
@@ -754,7 +755,7 @@ format, recovery diagnostics, host failures and offline tools follow
 | Field | Type | Default | v1 | Lowers to |
 |---|---|---|---|---|
 | `model` | string | from the board on 286/386; required on 486 | `"80286"`, `"80386dx"`, `"80486dx"`, `"80486dx-cpuid"` | `CpuConfig.chip` |
-| `fpu` | string | `"integrated"` on 486; `"none"` otherwise | `"none"` or `"80287"` on `ibm-5170`; `"none"` on 386; `"integrated"` on 486 | `CpuConfig.fpu`; derived CMOS 14h bit 1 follows the choice |
+| `fpu` | string | `"integrated"` on 486; `"none"` otherwise | `"none"` or `"80287"` on `ibm-5170`; `"none"` or `"80387"` on 386; `"integrated"` on 486 | `CpuConfig.fpu`; derived CMOS 14h bit 1 follows the choice |
 | `clock_mhz` | number | 33 on generic boards; unset on IBM AT | yes | Approximate CPU throughput from nominal MHz; see below. |
 | `turbo` | `{ clock_mhz = number }` | absent | yes | Alternate button position; selected through a run option, never stored as initial state. |
 | `rate` | `"A/B"` string or a positive integer `A` | board default (`"8/13"` on `ibm-5170`) | yes | `ClockConfig` A/B. Both parts must be positive. It is a ratio of completed steps per PIT input clock, not a frequency. |
@@ -772,8 +773,11 @@ other form. Turbo is inherited independently.
 which the CPU core does not have". A model that does not match the board is
 rejected. `fpu = "none"` leaves the optional 80287 socket
 empty; `fpu = "80287"` selects the core's existing present x87 engine, which
-does not claim generation-specific 80287 fidelity. Other names receive a typed
-`ParseError` with the exact message ``unsupported cpu.fpu `80387`; allowed values: `none`, `80287`, `integrated` ``
+does not claim generation-specific 80287 fidelity. On `generic-386-isa`,
+`fpu = "80387"` populates the optional socket with the existing present x87
+engine; `"none"` remains the default. Other boards reject `"80387"` with a
+positioned `cpu.fpu` diagnostic. Other names receive a typed
+`ParseError` with the exact message ``unsupported cpu.fpu `8087`; allowed values: `none`, `80287`, `80387`, `integrated` ``
 (substituting the rejected name). TOML and YAML share this enum and diagnostic.
 Explicit NVRAM images are preserved, even if their equipment bit disagrees.
 Derived CMOS 14h bit 1 is set for every selected FPU, including both 486 DX
@@ -788,7 +792,7 @@ and retired counts are unchanged (diskless POST 5,885,053; keyboard-reset resume
 On the I286 machine profile, an empty socket returns FFFFh for FNSTCW m16
 and FNSTSW m16/AX, completing BIOS presence probes; other output stores
 leave memory unchanged and WAIT completes (`decision-25 (x86jit)`).
-EM/TS/MP retain the architectural #NM controls. A present 80287 uses external
+EM/TS/MP retain the architectural #NM controls. A present 80287 or 80387 uses external
 ERROR# routing through the board IRQ13 latch; F0h releases BUSY and clears the
 latch without clearing numeric status. F1h reset and F8h–FFh bus transactions
 remain unmodelled; see [coprocessor controls](machine-config.md#coprocessor-controls).

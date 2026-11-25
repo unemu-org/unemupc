@@ -106,6 +106,7 @@ pub fn materialize(hardware: &mut Table, config: &assembly::MachineConfig) -> Re
         match config.cpu.fpu {
             assembly::FpuChip::None => "none",
             assembly::FpuChip::I80287 => "80287",
+            assembly::FpuChip::I80387 => "80387",
             assembly::FpuChip::Integrated => "integrated",
         }
         .into(),

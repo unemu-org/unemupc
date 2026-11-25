@@ -217,6 +217,28 @@ impl X86JitCpu {
         Self::new_machine_bare(1 << 32, cs, ip, segments, false, false, CpuModel::I80386)
     }
 
+    /// Build an Intel 80386DX with an optional 80387 coprocessor.
+    ///
+    /// Intel 387 DX User's Manual, System Interface, and Intel 80386
+    /// Programmer's Reference Manual, Chapter 11: ERROR# uses external
+    /// board logic. See `backlog/docs/design/machine-config.md` §Coprocessor controls.
+    pub fn new_i386_bare_with_fpu(
+        cs: u16,
+        ip: u16,
+        segments: RealSegments,
+        fpu_present: bool,
+    ) -> Result<Self, CpuError> {
+        Self::new_machine_bare(
+            1 << 32,
+            cs,
+            ip,
+            segments,
+            fpu_present,
+            false,
+            CpuModel::I80386,
+        )
+    }
+
     /// Build an Intel486 DX with its on-chip FPU and explicit CPUID policy.
     /// Intel486 DX Programmer's Reference Manual, §10.1 Initialization:
     /// both variants reset with CR0.CD/NW/ET set. External FERR routing is
@@ -1854,6 +1876,46 @@ mod tests {
         assert_eq!(cpu.reg(CpuReg::Rsp), u64::from(RealSegments::DEFAULT_SP));
         assert_eq!(cpu.completed_steps(), 54);
         assert_eq!(cpu.retired(), 54);
+    }
+
+    #[test]
+    fn i386_optional_fpu_policy_survives_entry_and_reset() {
+        for present in [false, true] {
+            let expected = if present {
+                FpuModel::Present
+            } else {
+                FpuModel::None
+            };
+            let mut cpu =
+                X86JitCpu::new_i386_bare_with_fpu(0, 0x1000, RealSegments::flat(0), present)
+                    .unwrap();
+            assert_eq!(cpu.vm.fpu_model(), expected);
+            assert_eq!(cpu.cpu.fpu_model(), expected);
+            assert_eq!(cpu.cpu.cpu.legacy.cr0, 0x10);
+            assert_eq!(
+                cpu.cpu.numeric_error_route(),
+                if present {
+                    NumericErrorRoute::External
+                } else {
+                    NumericErrorRoute::Internal
+                }
+            );
+            let mut old = X86JitCpu::new_i386_bare(0, 0x1000, RealSegments::flat(0)).unwrap();
+            if !present {
+                assert_eq!(format!("{:?}", cpu.cpu.cpu), format!("{:?}", old.cpu.cpu));
+            }
+            cpu.reset().unwrap();
+            old.reset().unwrap();
+            assert_eq!(cpu.vm.fpu_model(), expected);
+            assert_eq!(cpu.cpu.fpu_model(), expected);
+            assert_eq!(
+                cpu.cpu.cpu.legacy.cr0 & 0x10,
+                if present { 0x10 } else { 0 }
+            );
+            if !present {
+                assert_eq!(format!("{:?}", cpu.cpu.cpu), format!("{:?}", old.cpu.cpu));
+            }
+        }
     }
 
     #[test]

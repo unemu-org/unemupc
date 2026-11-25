@@ -26,7 +26,7 @@ type AppVersion = Release;
 pub type Row = (&'static str, Release);
 pub const BASELINE: Release = Release(0, 0, 1);
 pub const NEXT_RELEASE: Release = Release(0, 0, 6);
-pub const NEWEST_ROW: Release = Release(0, 0, 5);
+pub const NEWEST_ROW: Release = Release(0, 0, 6);
 /// Core config release. Application composition supplies CoreDescription::version to readers.
 pub fn package() -> Release {
     Release(
@@ -290,6 +290,7 @@ pub fn cpu_model(value: schema::CpuModel) -> AppVersion {
 pub fn fpu_model(value: schema::FpuModel) -> AppVersion {
     match value {
         schema::FpuModel::None | schema::FpuModel::I80287 => BASELINE,
+        schema::FpuModel::I80387 => Release(0, 0, 6),
         schema::FpuModel::Integrated => Release(0, 0, 5),
     }
 }
@@ -644,7 +645,15 @@ mod tests {
             cpu_model(CpuModel::I80486DxCpuid),
             cpu_model(CpuModel::I80286),
         ];
-        all.extend([FpuModel::None, FpuModel::I80287, FpuModel::Integrated].map(fpu_model));
+        all.extend(
+            [
+                FpuModel::None,
+                FpuModel::I80287,
+                FpuModel::I80387,
+                FpuModel::Integrated,
+            ]
+            .map(fpu_model),
+        );
         all.extend(
             [
                 CardKind::Mda,

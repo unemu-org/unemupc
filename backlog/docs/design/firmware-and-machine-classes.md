@@ -944,12 +944,31 @@ remain ASSUMED until checked in the corresponding device work.
   - an FDC without CCR;
   - an 8-bit card limit and IRQ ≤ 7;
   - the 8088 CPU model (`xj-50w.2 (x86jit)`).
-- **`generic-386-isa`, phase B:** board wiring, 128-byte QEMU CMOS,
+- **`generic-386-isa`, phase B:** optional 80387 (`cpu.fpu = "80387"`,
+  empty socket by default), board wiring, 128-byte QEMU CMOS,
   extended RAM, port 92h/A20, fw_cfg/SERCON, writable shadow RAM, pristine
   high BIOS copy, 8254 read-back and register-level VGA now assemble.
   SeaVGABIOS delivery, execution of the 386 reset fetch (`xj-srh.12 (x86jit)`),
   the rest of the 386 real-mode integer ISA and boot qualification remain
   pending. See §3.6 for the source-backed requirements.
+
+### Optional 80387 interface coverage
+
+The generic 386 ISA board accepts `cpu.fpu = "none"` (default) or `"80387"`.
+The 387 uses the pinned CPU core's present x87 engine. Intel 387 DX User's
+Manual, System Interface, and Intel 80386 Programmer's Reference Manual,
+Chapter 11, ground the external ERROR# interface: AT-style logic latches IRQ13
+and an F0h write releases the wait interlock while preserving x87 status.
+Derived CMOS 14h bit 1 and reset CR0.ET follow the selected model. No shipped
+machine file changes its default. The 286 socket remains 80287-only and the
+486 remains integrated-only.
+
+The project-owned `i386-387.asm` reset probe decodes FNINIT/FNSTSW AX, FNSTCW,
+SMSW, MOV EAX,CR0, integer arithmetic through x87, and INT 75h delivery with
+status preserved across F0h. No generation-specific arithmetic or signal-cycle
+timing is claimed; F1h reset and coprocessor bus transfers remain unmodelled.
+SeaBIOS's unconditional BDA equipment bit is not an absent-FPU oracle.
+
 
 ## 5. Config expression
 

@@ -388,8 +388,17 @@ provides CPL-0 hardware task switches through far JMP/CALL to a TSS or task
 gate, IRET with NT and IDT task gates, including busy bits and MSW.TS
 (READ: `xj-srh.18 (x86jit)`, `decision-24 (x86jit)`).
 
-`CpuConfig.fpu` is `FpuChip::None` by default or `FpuChip::I80287` when the
-optional coprocessor is installed. IBM Personal Computer AT Technical Reference,
+`CpuConfig.fpu` defaults to `FpuChip::None` on the 286 and 386 boards.
+`ibm-5170` accepts `I80287`; `generic-386-isa` accepts `I80387` for its optional
+387 socket. The 486 board requires `Integrated`. An 80387 on another board
+is rejected. Intel 387 DX User's Manual, System Interface, and Intel 80386
+Programmer's Reference Manual, Chapter 11 Coprocessor Interface, describe the
+386/387 interface. The 386 adapter selects `FpuModel::Present` or `None` both
+on the VM and seeded vCPU, and CPU-only reset preserves the selection with
+CR0.ET set for the 387 and clear without it. The old `new_i386_bare` constructor
+retains its absent-FPU behavior; `new_i386_bare_with_fpu` makes the choice explicit.
+
+IBM Personal Computer AT Technical Reference,
 Section 2, Coprocessor, describes the optional 80287. On `ibm-5170`, assembly
 selects `FpuModel::None` or `FpuModel::Present` respectively, both at VM
 construction and on the vCPU after real-mode entry seeding. Emulation remains
@@ -400,11 +409,12 @@ produce FFFFh; other output stores leave memory unchanged and WAIT completes.
 This is the I286 board policy from `decision-25 (x86jit)`, grounded in Intel
 80286 and 80287 Programmer's Reference Manual, Part I Appendix A and Part II
 Appendix B, item 10. FFFFh is the chosen all-high bus default, not a universal
-electrical value. EM/TS/MP retain #NM controls; I386 absent outputs still
-refuse execution. CPU-only reset preserves the selected FPU policy.
+electrical value. EM/TS/MP retain #NM controls. The pinned core also supplies
+FFFFh for the 386 absent-FPU status/control transfers. CPU-only reset preserves
+the selected FPU policy.
 
 Bare rigs and standalone `new_real16_bare` / `new_i286_bare` constructors retain
-their present-FPU behaviour; the assembly choice applies only to `Ibm5170`.
+their present-FPU behaviour; the optional 287 assembly choice applies only to `Ibm5170`.
 Of the Rust presets, only `bios(..., Some(floppy))` selects this board and
 changes its default FPU. `bios(..., None)`, test386 and all demo rigs stay bare.
 
@@ -476,8 +486,8 @@ IRQ13 wire reaches slave 8259A input 5 through `InterruptController`. An F0h
 write of any value clears that latch and releases the CPU wait interlock through
 `Cpu::ack_external_numeric_error`, without changing x87 SW.ES. The guest must
 still clear the numeric exception (for example, FNCLEX). EOI is independent.
-The generic 386 board has the same socket wiring, but still offers no populated
-coprocessor configuration. No 387 machine-file option is introduced.
+The generic 386 board uses the same external logic for the optional 80387
+ERROR# output, selected by `cpu.fpu = "80387"`. Its default remains `"none"`.
 
 A blocked WAIT retires nothing. The machine suspends it using the HLT idle
 path: device deadlines advance deterministic virtual ticks, charged as halted
@@ -506,7 +516,7 @@ claim whole-machine replay coverage.
 Coverage: F0h and the IRQ13 latch are modelled. F1h reset and F8h–FFh CPU-internal
 coprocessor bus transactions remain unmodelled (floating reads, ignored writes);
 F2h–F7h remain undecoded. This is functional board wiring, not signal-cycle timing
-or generation-specific 287 arithmetic. The CPU's existing protected-mode x87
+or generation-specific 287/387 arithmetic. The CPU's existing protected-mode x87
 scope refusals remain unchanged. The Kiselev BIOS's `bios.asm:int_75` sends both
 PIC EOIs then executes INT 02h; it leaves F0h and numeric clearing to that handler.
 The owned `at-irq13.asm` guest tests both a direct INT 75h handler and this BIOS
@@ -664,7 +674,7 @@ bus-speed and CPU-type work is a *field addition*, never a re-architecture.
 ```
 CpuConfig {
     chip:         ModelledChip,   // marker for the modelled part (today: one variant)
-    fpu:          FpuChip,        // None (default) or I80287 on ibm-5170
+    fpu:          FpuChip,        // None, I80287, I80387, or Integrated; board-validated
     reset_vector: SegOff,         // CS:IP the CPU starts at
     segments:     SeedSegments,   // DS/ES/SS + SP seeded at reset (see below)
 }
@@ -1258,7 +1268,8 @@ types, equipment and memory sizes from the attached drives, selected primary
 display, CPU coprocessor choice and memory map. IBM Personal Computer AT
 Technical Reference, System Board, Real-Time Clock/CMOS RAM Information, Equipment Byte (Hex 14), assigns
 bit 1 to an installed math coprocessor. Derived seeds set it for
-`Ibm5170` with `FpuChip::I80287` and include it in the AT checksum.
+`Ibm5170` with `FpuChip::I80287`, `Generic386Isa` with `I80387`, and
+`Generic486Isa` with `Integrated`, and include it in the AT checksum.
 IBM fixed-disk types additionally require the capable system BIOS provider
 described above. `derive_cmos_config` returns a fallible, complete 64-byte seed, including
 12h/19h/1Ah and the AT checksum at 2Eh/2Fh (sum of 10h–2Dh). An explicit NVRAM

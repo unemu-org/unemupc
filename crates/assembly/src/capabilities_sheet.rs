@@ -163,6 +163,8 @@ pub fn fields(draft: &Draft) -> Vec<Field> {
         Value::Name(
             if config.cpu.fpu == FpuChip::None {
                 "none"
+            } else if config.cpu.fpu == FpuChip::I80387 {
+                "80387"
             } else if config.cpu.fpu == FpuChip::Integrated {
                 "integrated"
             } else {
@@ -467,6 +469,7 @@ pub fn value_label(draft: &Draft, path: &str, value: &Value) -> String {
                 "ibm-5170" => "IBM 5170 (AT)",
                 "80286" => "Intel 80286",
                 "80287" => "Intel 80287",
+                "80387" => "Intel 80387",
                 "installed" => "Installed",
                 "none" => "None",
                 "auto" => "Automatic",

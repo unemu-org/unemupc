@@ -65,6 +65,7 @@ named_values! {
 pub enum FpuModel {
     None,
     I80287,
+    I80387,
     Integrated,
 }
 
@@ -74,9 +75,10 @@ impl<'de> Deserialize<'de> for FpuModel {
         match name.as_str() {
             "none" => Ok(Self::None),
             "80287" => Ok(Self::I80287),
+            "80387" => Ok(Self::I80387),
             "integrated" => Ok(Self::Integrated),
             _ => Err(de::Error::custom(format!(
-                "unsupported cpu.fpu `{name}`; allowed values: `none`, `80287`, `integrated`"
+                "unsupported cpu.fpu `{name}`; allowed values: `none`, `80287`, `80387`, `integrated`"
             ))),
         }
     }

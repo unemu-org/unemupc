@@ -634,7 +634,10 @@ fn generic386_coprocessor_choices_match_board_validation() {
     let draft = Draft::new(board());
     assert_eq!(
         describe(&draft, "cpu.fpu").unwrap().domain,
-        Domain::Values(vec![Value::Name("none".into())])
+        Domain::Values(vec![
+            Value::Name("none".into()),
+            Value::Name("80387".into())
+        ])
     );
     let ibm = Draft::new(crate::bios(vec![0xF4; 0x10000], None));
     assert_eq!(
@@ -765,5 +768,85 @@ fn generic486_requires_integrated_fpu_and_matching_cpu() {
             config.validate(),
             Err(ConfigError::BoardConfiguration { .. })
         ));
+    }
+}
+
+#[test]
+fn generic386_optional_80387_cmos_and_capability_domain() {
+    check_cmos_fpu(CpuChip::I80386, FpuChip::I80387, 2);
+    let draft = crate::capabilities::Draft::new(board());
+    assert_eq!(
+        crate::capabilities::describe(&draft, "cpu.fpu")
+            .unwrap()
+            .domain,
+        crate::capabilities::Domain::Values(vec![
+            crate::capabilities::Value::Name("none".into()),
+            crate::capabilities::Value::Name("80387".into()),
+        ])
+    );
+    let mut populated = draft;
+    populated.set("cpu.fpu", crate::capabilities::Value::Name("80387".into()));
+    let result = crate::capabilities::validate_draft(&populated);
+    assert!(!result.has_errors(), "{:?}", result.diagnostics);
+    assert_eq!(result.config.cpu.fpu, FpuChip::I80387);
+    let fields = crate::capabilities::fields(&populated);
+    assert_eq!(
+        fields
+            .iter()
+            .find(|field| field.path == "cpu.fpu")
+            .unwrap()
+            .value,
+        crate::capabilities::Value::Name("80387".into())
+    );
+    assert_eq!(
+        crate::capabilities::value_label(
+            &populated,
+            "cpu.fpu",
+            &crate::capabilities::Value::Name("80387".into())
+        ),
+        "Intel 80387"
+    );
+}
+
+#[test]
+fn board_coprocessor_validation_matrix() {
+    for model in [
+        BoardModel::Bare,
+        BoardModel::Ibm5170,
+        BoardModel::Generic386Isa,
+        BoardModel::Generic486Isa,
+    ] {
+        let mut config = if model == BoardModel::Ibm5170 {
+            crate::bios(vec![0xF4; 0x8000], Some(vec![0; 1_474_560]))
+        } else {
+            board()
+        };
+        config.board = model;
+        config.cpu.chip = model.cpu_chip();
+        if model == BoardModel::Generic486Isa {
+            let uart = config
+                .devices
+                .iter()
+                .find(|d| d.id == DeviceId::Uart)
+                .unwrap()
+                .clone();
+            config.devices = model.motherboard_devices();
+            config.devices.push(uart);
+        }
+        for fpu in [
+            FpuChip::None,
+            FpuChip::I80287,
+            FpuChip::I80387,
+            FpuChip::Integrated,
+        ] {
+            config.cpu.fpu = fpu;
+            let valid = match model {
+                BoardModel::Bare => fpu != FpuChip::I80387,
+                BoardModel::Ibm5170 => matches!(fpu, FpuChip::None | FpuChip::I80287),
+                BoardModel::Generic386Isa => matches!(fpu, FpuChip::None | FpuChip::I80387),
+                BoardModel::Generic486Isa => fpu == FpuChip::Integrated,
+            };
+            assert_eq!(config.validate().is_ok(), valid, "{model:?} {fpu:?}");
+        }
     }
 }

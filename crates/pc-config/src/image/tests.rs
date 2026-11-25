@@ -230,3 +230,34 @@ fn a_digest_reads_and_writes_the_store_text_form() {
         );
     }
 }
+
+#[test]
+fn optional_80387_survives_projection_defaults_and_image_roundtrip() {
+    let document = crate::parse_toml(
+        "probe.toml",
+        "schema = 1\n[board]\nmodel = 'generic-386-isa'\n[cpu]\nfpu = '80387'\n",
+    )
+    .unwrap();
+    let mut hardware = encode::machine(&document);
+    assert_eq!(hardware["cpu"]["fpu"].as_str(), Some("80387"));
+    let mut config =
+        assembly::capabilities::Draft::for_board(assembly::BoardModel::Generic386Isa).config;
+    config.cpu.fpu = assembly::FpuChip::I80387;
+    defaults::materialize(&mut hardware, &config).unwrap();
+    assert_eq!(hardware["cpu"]["fpu"].as_str(), Some("80387"));
+    let image = Config {
+        schema: 1,
+        platform: "ibm-pc".into(),
+        machine: hardware,
+        firmware: vec![],
+        media: vec![],
+        slots: vec![],
+        nvram: None,
+    };
+    let decoded = Config::decode(image.encode().unwrap().parse().unwrap()).unwrap();
+    assert_eq!(decoded.machine, image.machine);
+    assert_eq!(
+        crate::compat::machine(&decoded.encode().unwrap().parse().unwrap()).unwrap(),
+        crate::compat::Release(0, 0, 6)
+    );
+}

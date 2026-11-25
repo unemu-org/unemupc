@@ -195,7 +195,7 @@ impl Origins {
 
     /// Keep, of the per-value origins of one whole layer, those that
     /// diagnostics name beside a table's position: pins, firmware offsets
-    /// and parts, CPU clocks, mouse attachments and the display switch. Each syntax's
+    /// and parts, CPU clocks and coprocessor, mouse attachments and the display switch. Each syntax's
     /// table-origins decoder ends with it.
     pub fn keep_pins(&mut self, values: Origins) {
         for (field, origin) in values.fields {
@@ -204,6 +204,7 @@ impl Origins {
                 || field.starts_with("firmware.bios.parts")
                 || field.ends_with(".mouse")
                 || field == "board.display_switch"
+                || field == "cpu.fpu"
                 || field == "cpu.clock_mhz"
                 || field == "cpu.turbo.clock_mhz"
                 || field == "cpu.rate"

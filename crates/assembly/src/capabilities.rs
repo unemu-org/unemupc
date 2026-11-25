@@ -312,8 +312,8 @@ pub fn describe(draft: &Draft, path: &str) -> Option<FieldDescriptor> {
         "cpu.fpu" => {
             return Some(names(if draft.config.board == BoardModel::Generic486Isa {
                 &["integrated"]
-            } else if draft.config.board.is_generic_isa() {
-                &["none"]
+            } else if draft.config.board == BoardModel::Generic386Isa {
+                &["none", "80387"]
             } else {
                 &["none", "80287"]
             }))
@@ -632,6 +632,8 @@ pub fn validate_draft(draft: &Draft) -> Validation {
             ("cpu.fpu", Value::Name(name)) => {
                 config.cpu.fpu = if name == "none" {
                     FpuChip::None
+                } else if name == "80387" {
+                    FpuChip::I80387
                 } else if name == "integrated" {
                     FpuChip::Integrated
                 } else {

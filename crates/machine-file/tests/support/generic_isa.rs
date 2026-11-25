@@ -341,6 +341,19 @@ pub fn seabios_reaches_diskless_post_end(chip: CpuChip) {
     let Some(config) = shipped(chip) else {
         return;
     };
+    diskless_post(chip, config);
+}
+
+#[allow(dead_code)]
+pub fn seabios_80387_post() {
+    let Some(mut config) = shipped(CpuChip::I80386) else {
+        return;
+    };
+    config.cpu.fpu = assembly::FpuChip::I80387;
+    diskless_post(CpuChip::I80386, config);
+}
+
+fn diskless_post(chip: CpuChip, config: assembly::MachineConfig) {
     let policy = assembly::ObservationPolicy {
         routes: vec![
             assembly::ObservationRequest {
@@ -393,8 +406,17 @@ pub fn seabios_reaches_diskless_post_end(chip: CpuChip) {
     let cmos = machine.machine.bus_mut().port_read(0x71, 1).unwrap();
     // SeaBIOS sets the BDA coprocessor flag unconditionally; CMOS still
     // records the configured socket, so the two differ on a no-FPU 386.
-    assert_eq!(equipment & 2, 2);
-    assert_eq!(cmos & 2, if chip == CpuChip::I80386 { 0 } else { 2 });
+    if config.cpu.fpu != assembly::FpuChip::None {
+        assert_eq!(equipment & 2, 2);
+    }
+    assert_eq!(
+        cmos & 2,
+        if config.cpu.fpu == assembly::FpuChip::None {
+            0
+        } else {
+            2
+        }
+    );
     eprintln!(
         "{} FPU: BDA equipment={equipment:04x}; CMOS14={cmos:02x}",
         chip.name()
@@ -995,6 +1017,19 @@ pub fn seabios_freedos_reaches_prompt(chip: CpuChip, ide: bool) {
     let Some(config) = freedos_config(chip, ide) else {
         return;
     };
+    freedos_prompt(chip, ide, config);
+}
+
+#[allow(dead_code)]
+pub fn seabios_80387_freedos() {
+    let Some(mut config) = freedos_config(CpuChip::I80386, false) else {
+        return;
+    };
+    config.cpu.fpu = assembly::FpuChip::I80387;
+    freedos_prompt(CpuChip::I80386, false, config);
+}
+
+fn freedos_prompt(chip: CpuChip, ide: bool, config: assembly::MachineConfig) {
     let policy = assembly::ObservationPolicy {
         routes: vec![
             assembly::ObservationRequest {

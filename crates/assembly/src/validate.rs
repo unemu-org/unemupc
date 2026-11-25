@@ -641,6 +641,12 @@ impl MachineConfig {
     }
 
     fn check_board(&self) -> Result<(), ConfigError> {
+        if self.cpu.fpu == crate::FpuChip::I80387 && self.board != BoardModel::Generic386Isa {
+            return Err(ConfigError::BoardConfiguration {
+                board: self.board.id(),
+                reason: "80387 requires board generic-386-isa",
+            });
+        }
         if self.board == BoardModel::Bare {
             return Ok(());
         }
@@ -670,10 +676,12 @@ impl MachineConfig {
                 reason: "integrated FPU requires an Intel486 DX board",
             });
         }
-        if self.board == BoardModel::Generic386Isa && self.cpu.fpu != crate::FpuChip::None {
+        if self.board == BoardModel::Generic386Isa
+            && !matches!(self.cpu.fpu, crate::FpuChip::None | crate::FpuChip::I80387)
+        {
             return Err(ConfigError::BoardConfiguration {
                 board: self.board.id(),
-                reason: "requires cpu.fpu = none",
+                reason: "requires cpu.fpu = none or 80387",
             });
         }
         let mut expected = self.board.motherboard_devices();

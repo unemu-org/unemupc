@@ -150,7 +150,7 @@ impl From<SegmentSeed> for RealSegments {
     }
 }
 
-/// Optional AT math coprocessor or integrated Intel486 DX FPU.
+/// Optional 80287/80387 math coprocessor or integrated Intel486 DX FPU.
 ///
 /// IBM Personal Computer AT Technical Reference, Section 2, Coprocessor:
 /// the 80287 occupies an optional socket. Intel486 DX Programmer's Reference
@@ -163,6 +163,9 @@ pub enum FpuChip {
     None,
     /// Installed 80287, using the core's existing present x87 engine.
     I80287,
+    /// Installed 80387. Intel 387 DX User's Manual, System Interface;
+    /// Intel 80386 Programmer's Reference Manual, Chapter 11 Coprocessor Interface.
+    I80387,
     /// On-chip Intel486 DX FPU; not an optional socket.
     Integrated,
 }

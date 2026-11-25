@@ -85,3 +85,14 @@ fn user_media_doom_386() {
 fn user_media_doom_sound_386() {
     generic_isa::user_media_doom(assembly::CpuChip::I80386, true);
 }
+
+#[test]
+fn generic386_80387_seabios_reaches_diskless_post_end() {
+    generic_isa::seabios_80387_post();
+}
+
+#[test]
+#[ignore = "slow optional 80387 FreeDOS qualification"]
+fn generic386_80387_seabios_freedos_reaches_prompt() {
+    generic_isa::seabios_80387_freedos();
+}

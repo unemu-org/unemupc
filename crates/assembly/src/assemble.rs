@@ -757,10 +757,11 @@ pub fn build_cpu_with_mapping_trace(
             config.cpu.segments.into(),
             config.cpu.fpu == crate::FpuChip::I80287,
         )?,
-        (_, crate::CpuChip::I80386) => X86JitCpu::new_i386_bare(
+        (_, crate::CpuChip::I80386) => X86JitCpu::new_i386_bare_with_fpu(
             config.cpu.reset.cs(),
             config.cpu.reset.ip(),
             config.cpu.segments.into(),
+            config.cpu.fpu == crate::FpuChip::I80387,
         )?,
         (_, chip @ (crate::CpuChip::I80486Dx | crate::CpuChip::I80486DxCpuid)) => {
             X86JitCpu::new_i486_bare(

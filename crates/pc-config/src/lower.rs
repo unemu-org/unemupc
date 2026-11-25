@@ -1278,6 +1278,7 @@ impl<R: ImageReader> Context<'_, R> {
                     .filter_map(|i| self.images.get(*i).cloned())
                     .collect()
             }
+            BoardConfiguration { reason, .. } if reason.contains("80387") => vec!["cpu.fpu".into()],
             BoardConfiguration { .. } => vec!["board.model".into()],
             InvalidCpuRate { .. } | StepBoundedCpuRequired(_) => vec!["cpu".into()],
             RegionOutOfSpace { .. } => self.images.clone(),
@@ -1676,6 +1677,7 @@ fn lower_tracked_mode<R: ImageReader>(
                 None if board == BoardModel::Generic486Isa => assembly::FpuChip::Integrated,
                 None | Some(v1::FpuModel::None) => assembly::FpuChip::None,
                 Some(v1::FpuModel::I80287) => assembly::FpuChip::I80287,
+                Some(v1::FpuModel::I80387) => assembly::FpuChip::I80387,
                 Some(v1::FpuModel::Integrated) => assembly::FpuChip::Integrated,
             },
             reset: ResetSpec::reset_vector(),
