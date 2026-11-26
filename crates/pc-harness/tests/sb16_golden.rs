@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Creative Sound Blaster Series Hardware Programming Guide, §2 DSP ports,
 //! §3 DMA output, §6 41h/Cxh. A synthetic AT ROM plays RAM through the real 8237.
-//! PCM is pinned against x86jit revision ef36cb3ca661eae084f839233c3a3e1a0d4da524.
+//! PCM is pinned against x86jit revision be0b80d9e13e3ba23da6b540915173488cd1c879.
 
 use assembly::{
     AssemblyOptions, AudioSinkKind, DeviceConfig, DeviceId, DeviceKind, DmaSpec, ObservationPolicy,
