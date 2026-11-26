@@ -14,7 +14,7 @@ use machine::{RunOutcome, SchedulerEngine};
 
 #[path = "support/fixtures.rs"]
 mod fixtures;
-const CPU_REV: &str = "e21be8232393d1f9b60ac42d12fa1a37da7131ec";
+const CPU_REV: &str = "67d6697bf110d36142d78a285637ae404f001a8f";
 const CAP: u64 = 50_000;
 const COMMON: &str = "i486-pm-test\n\
 reset signature ok\n\
