@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! IBM Personal Computer AT Technical Reference, System Board, Speaker;
 //! Intel 8254 datasheet, Mode 3. Synthetic ROMs exercise the actual AT wiring.
-//! PCM is pinned against x86jit revision 67d6697bf110d36142d78a285637ae404f001a8f.
+//! PCM is pinned against x86jit revision 1554ae980fa12589fa665b8acf8b2bb602b37b2f.
 
 use assembly::{AssemblyOptions, AudioSinkKind, ObservationPolicy, RunPolicy};
 use machine_file::assemble_with_observation_and_options;
