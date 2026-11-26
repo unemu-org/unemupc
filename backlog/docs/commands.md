@@ -77,9 +77,40 @@ Linux also needs `pkg-config` and `libasound2-dev`; the Nix devShell supplies
 both through `pkg-config` and `alsa-lib`.
 
 The window title is the resolved machine name (the file stem when unnamed).
-While the effective speed differs from 100%, it appends the speed, for example
-`at-games-open — 200%` or `at-games-open — unlimited`.
-It shows the first configured display, cropped to the visible picture,
+While the effective speed differs from 100%, it appends the selected speed,
+for example `at-games-open — set 200%` or `at-games-open — unlimited`. Once
+the machine has run for a full second at one pace, the title also shows what
+it measured over the last second, refreshed about once a second:
+
+```text
+doom-486-local — 100% · 18 fps
+doom-486-local — 52% · 9 fps
+doom-486-local — set 200% · 199% · 36 fps
+doom-486-local — unlimited · 214% · 31 fps
+```
+
+- **Speed** (`100%`): virtual time advanced over host time elapsed, in whole
+  percent of the configured clock. 100% means the host keeps the machine's
+  clock; below it the host falls behind, so the slowness is the host's, not
+  the emulated machine's. Time the guest spends halted counts as kept time,
+  since the machine's clock runs on while it waits for an interrupt; the
+  number therefore says nothing about how busy the guest is.
+- **fps**: presented frames whose picture changed since the previous
+  presented frame, per host second: the guest's redraw rate, at most the
+  window's 60 Hz paint rate. A still screen reads `0 fps`.
+
+Pausing shows `— paused` and no numbers. Each of these clears the numbers,
+and the title then shows only the name and speed label until a full second
+has passed since the machine ran again:
+
+- pausing;
+- hiding the window (occluded, minimised or suspended);
+- the machine stopping: power-off, a halt that waits for reset, or an error;
+- a change of the effective speed: the Unlimited toggle, the start or end of
+  the Unlimited hold, including a hold that ends because the window lost
+  focus.
+
+The window shows the first configured display, cropped to the visible picture,
 scaled with nearest sampling to the machine's stated aspect and letterboxed
 in black. This is a bare picture window, with no menus, overlays or GUI
 chrome beyond the operating system's window frame; the maintainer's GUI

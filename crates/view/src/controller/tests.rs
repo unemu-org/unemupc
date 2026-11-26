@@ -408,8 +408,8 @@ fn fast_command_chords_hold_toggle_and_consume_letters_on_macos() {
 fn fast_window_title_tracks_effective_speed_and_returns_to_machine_name() {
     for (speed, expected) in [
         (Speed::Normal, "at-games-open"),
-        (Speed::Double, "at-games-open — 200%"),
-        (Speed::Quadruple, "at-games-open — 400%"),
+        (Speed::Double, "at-games-open — set 200%"),
+        (Speed::Quadruple, "at-games-open — set 400%"),
         (Speed::Unlimited, "at-games-open — unlimited"),
     ] {
         let (mut c, _) = controller_at_speed("", speed);
@@ -457,4 +457,138 @@ fn fast_command_modifier_notification_alone_ends_hold() {
     key(&mut c, KeyT, Released);
     let messages = tick(&mut c, 20);
     assert!(!messages.contains("key: Key(23)"), "{messages}");
+}
+
+/// A guest that redraws 18 times a virtual second.
+const DOOM_LIKE: &str = "clock 18000000\nframe 1000000";
+
+/// The 60 Hz paint deadline `frame` of the session's host time.
+fn frame_time(frame: u64) -> Duration {
+    Duration::from_nanos((frame * 1_000_000_000).div_ceil(60))
+}
+
+/// Present the 60 Hz frames `frames` of the session's host time.
+fn present(c: &mut Controller, frames: std::ops::RangeInclusive<u64>) {
+    for frame in frames {
+        assert!(
+            c.tick(frame_time(frame), &mut Vec::new()).unwrap(),
+            "frame {frame}"
+        );
+    }
+}
+
+/// Present `frames` and check that none of them shows rates yet.
+fn present_without_rates(c: &mut Controller, frames: std::ops::RangeInclusive<u64>) {
+    for frame in frames {
+        present(c, frame..=frame);
+        assert_eq!(c.window_title("doom"), "doom", "frame {frame}");
+    }
+}
+
+/// Press or release a whole Ctrl+Alt chord at host time `elapsed`.
+fn chord_at(c: &mut Controller, code: KeyCode, elapsed: Duration) {
+    for (key, state) in [
+        (ControlLeft, Pressed),
+        (AltLeft, Pressed),
+        (code, Pressed),
+        (code, Released),
+        (AltLeft, Released),
+        (ControlLeft, Released),
+    ] {
+        c.key(key, state, elapsed, &mut Vec::new()).unwrap();
+    }
+}
+
+#[test]
+fn title_shows_speed_and_fps_only_after_a_full_second() {
+    let (mut c, _) = controller(DOOM_LIKE);
+    present_without_rates(&mut c, 0..=59);
+    present(&mut c, 60..=60);
+    assert_eq!(c.window_title("doom"), "doom — 100% · 18 fps");
+    // The reading holds until the next window closes.
+    present(&mut c, 61..=119);
+    assert_eq!(c.window_title("doom"), "doom — 100% · 18 fps");
+}
+
+#[test]
+fn title_marks_the_selected_speed_apart_from_the_measured_one() {
+    let (mut c, _) = controller_at_speed(DOOM_LIKE, Speed::Double);
+    present(&mut c, 0..=60);
+    assert_eq!(c.window_title("doom"), "doom — set 200% · 200% · 36 fps");
+    // A new pace shows only its label until a window at that pace closes.
+    chord(&mut c, KeyU);
+    assert_eq!(c.window_title("doom"), "doom — unlimited");
+    chord(&mut c, KeyU);
+    assert_eq!(c.window_title("doom"), "doom — set 200%");
+}
+
+#[test]
+fn paused_title_shows_the_label_and_no_rates_until_a_new_second() {
+    let (mut c, _) = controller(DOOM_LIKE);
+    present(&mut c, 0..=60);
+    chord(&mut c, KeyP);
+    assert!(c.paused);
+    assert_eq!(c.window_title("doom"), "doom — paused");
+    // Resumed with no frame presented while paused: the pause itself must
+    // drop the reading and the window it was measuring.
+    chord_at(&mut c, KeyP, Duration::from_secs(5));
+    assert!(!c.paused);
+    assert_eq!(c.window_title("doom"), "doom");
+    // The paused seconds do not count against the kept clock.
+    present_without_rates(&mut c, 300..=359);
+    present(&mut c, 360..=360);
+    assert_eq!(c.window_title("doom"), "doom — 100% · 18 fps");
+}
+
+#[test]
+fn hidden_window_drops_the_rates_until_a_full_second_after_it_shows_again() {
+    let (mut c, _) = controller(DOOM_LIKE);
+    present(&mut c, 0..=60);
+    c.occlude(true, frame_time(60));
+    assert_eq!(c.window_title("doom"), "doom");
+    c.occlude(false, Duration::from_secs(5));
+    present_without_rates(&mut c, 300..=359);
+    present(&mut c, 360..=360);
+    assert_eq!(c.window_title("doom"), "doom — 100% · 18 fps");
+}
+
+#[test]
+fn releasing_a_fast_forward_hold_drops_the_rates_measured_during_it() {
+    let (mut c, _) = controller(DOOM_LIKE);
+    present(&mut c, 0..=60);
+    for key in [ControlLeft, AltLeft, KeyT] {
+        c.key(key, Pressed, frame_time(60), &mut Vec::new())
+            .unwrap();
+    }
+    assert_eq!(c.window_title("doom"), "doom — unlimited");
+    // An Unlimited slice that runs fully never ends, so the hold runs on the
+    // host's slice budget; only the shape of its reading is checked.
+    c.session.full_slices = false;
+    present(&mut c, 61..=121);
+    let held = c.window_title("doom");
+    assert!(held.starts_with("doom — unlimited · "), "{held}");
+    assert!(held.ends_with(" fps"), "{held}");
+    c.key(KeyT, Released, frame_time(121), &mut Vec::new())
+        .unwrap();
+    assert_eq!(c.session.pacing.effective(), Speed::Normal);
+    assert_eq!(c.window_title("doom"), "doom");
+}
+
+#[test]
+fn a_machine_that_powers_off_loses_its_rates_on_the_next_tick() {
+    let (mut c, _) = controller(&format!("{DOOM_LIKE}\nat 20000000 power-off"));
+    present(&mut c, 0..=60);
+    assert_eq!(c.window_title("doom"), "doom — 100% · 18 fps");
+    let mut frame = 60;
+    while c.session.running {
+        frame += 1;
+        assert!(frame < 120, "the machine never powered off");
+        present(&mut c, frame..=frame);
+    }
+    assert!(matches!(
+        c.session.machine().status(),
+        Status::Off | Status::Finished
+    ));
+    c.tick(frame_time(frame + 1), &mut Vec::new()).unwrap();
+    assert_eq!(c.window_title("doom"), "doom");
 }

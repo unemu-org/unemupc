@@ -4,6 +4,7 @@
 
 mod args;
 mod controller;
+mod meter;
 mod screen;
 
 use args::Args;
@@ -25,6 +26,9 @@ use winit::{
 struct App {
     controller: Controller,
     title: String,
+    /// The title last given to the window, so it is set only when it changes
+    /// (the rates refresh about once a second, not every frame).
+    shown_title: String,
     window: Option<Arc<Window>>,
     surface: Option<softbuffer::Surface<Arc<Window>, Arc<Window>>>,
     failure: Option<String>,
@@ -65,9 +69,14 @@ impl App {
         self.controller.pointer(position);
     }
 
-    fn update_title(&self) {
-        if let Some(window) = &self.window {
-            window.set_title(&self.controller.window_title(&self.title));
+    fn update_title(&mut self) {
+        let Some(window) = &self.window else {
+            return;
+        };
+        let title = self.controller.window_title(&self.title);
+        if title != self.shown_title {
+            window.set_title(&title);
+            self.shown_title = title;
         }
     }
 
@@ -110,11 +119,12 @@ impl ApplicationHandler for App {
             self.controller.occlude(false, self.elapsed());
             return;
         }
+        self.shown_title = self.controller.window_title(&self.title);
         let result = (|| -> anyhow::Result<_> {
             let window = Arc::new(
                 event_loop.create_window(
                     Window::default_attributes()
-                        .with_title(self.controller.window_title(&self.title))
+                        .with_title(&self.shown_title)
                         .with_inner_size(LogicalSize::new(960, 720)),
                 )?,
             );
@@ -230,6 +240,7 @@ impl ApplicationHandler for App {
                 return;
             }
         }
+        self.update_title();
         let deadline = self.controller.session.next_paint;
         event_loop.set_control_flow(match (self.controller.session.started, deadline) {
             (Some(start), Some(deadline)) => ControlFlow::WaitUntil(start + deadline),
@@ -282,6 +293,7 @@ fn run(args: Args) -> anyhow::Result<()> {
     let mut app = App {
         controller,
         title,
+        shown_title: String::new(),
         window: None,
         surface: None,
         failure: None,
