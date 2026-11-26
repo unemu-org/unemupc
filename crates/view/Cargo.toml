@@ -23,6 +23,9 @@ winit.workspace = true
 softbuffer.workspace = true
 anyhow.workspace = true
 
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-app-kit.workspace = true
+
 [dev-dependencies]
 unemu-test-core.workspace = true
 unemu-core-api = { workspace = true, features = ["test-support"] }

@@ -511,6 +511,24 @@ fn title_shows_speed_and_fps_only_after_a_full_second() {
 }
 
 #[test]
+fn only_advances_that_change_the_picture_need_a_paint() {
+    use crate::screen::{needs_paint, Shown};
+    let (mut c, _) = controller(DOOM_LIKE);
+    present(&mut c, 0..=0);
+    let mut painted = Some(Shown::new(c.session.picture(), 960, 720));
+    let mut paints = 0;
+    for frame in 1..=60 {
+        present(&mut c, frame..=frame);
+        if needs_paint(painted, c.session.picture(), 960, 720) {
+            paints += 1;
+            painted = Some(Shown::new(c.session.picture(), 960, 720));
+        }
+    }
+    // A second of 60 Hz deadlines over a guest that redraws 18 times a second.
+    assert_eq!(paints, 18);
+}
+
+#[test]
 fn title_marks_the_selected_speed_apart_from_the_measured_one() {
     let (mut c, _) = controller_at_speed(DOOM_LIKE, Speed::Double);
     present(&mut c, 0..=60);

@@ -33,6 +33,10 @@ struct App {
     surface: Option<softbuffer::Surface<Arc<Window>, Arc<Window>>>,
     failure: Option<String>,
     cursor: Option<(f32, f32)>,
+    /// What the last paint put in the window. Advances repaint only when it
+    /// changed ([`screen::needs_paint`]); a redraw the platform asks for
+    /// (exposure, resize) always paints.
+    painted: Option<screen::Shown>,
 }
 
 impl App {
@@ -99,16 +103,13 @@ impl App {
         let mut buffer = surface
             .buffer_mut()
             .map_err(|e| anyhow::anyhow!("pixel buffer: {e}"))?;
-        screen::blit(
-            self.controller.session.picture(),
-            size.width,
-            size.height,
-            &mut buffer,
-        );
+        let picture = self.controller.session.picture();
+        screen::blit(picture, size.width, size.height, &mut buffer);
         window.pre_present_notify();
         buffer
             .present()
             .map_err(|e| anyhow::anyhow!("present: {e}"))?;
+        self.painted = Some(screen::Shown::new(picture, size.width, size.height));
         Ok(())
     }
 }
@@ -128,6 +129,8 @@ impl ApplicationHandler for App {
                         .with_inner_size(LogicalSize::new(960, 720)),
                 )?,
             );
+            #[cfg(target_os = "macos")]
+            present_in_srgb(&window);
             let context = softbuffer::Context::new(window.clone())
                 .map_err(|e| anyhow::anyhow!("display: {e}"))?;
             let surface = softbuffer::Surface::new(&context, window.clone())
@@ -231,7 +234,11 @@ impl ApplicationHandler for App {
             Ok(true) => {
                 self.pointer();
                 if let Some(window) = &self.window {
-                    window.request_redraw();
+                    let size = window.inner_size();
+                    let picture = self.controller.session.picture();
+                    if screen::needs_paint(self.painted, picture, size.width, size.height) {
+                        window.request_redraw();
+                    }
                 }
             }
             Ok(false) => {}
@@ -253,6 +260,32 @@ impl ApplicationHandler for App {
             eprintln!("finish: {error}");
             self.failure.get_or_insert_with(|| error.to_string());
         }
+    }
+}
+
+/// Gives the window the sRGB colour space.
+///
+/// The pixel buffer reaches CoreGraphics tagged as device RGB, which current
+/// macOS treats as sRGB. In a window that follows the display's colour space
+/// (a wide-gamut one on most built-in panels), CoreGraphics colour-matches
+/// every presented image to it on the CPU, several milliseconds a paint at
+/// Retina sizes. In an sRGB window that step is a plain copy, and the window
+/// server matches the window to the display instead.
+#[cfg(target_os = "macos")]
+fn present_in_srgb(window: &Window) {
+    use objc2_app_kit::{NSColorSpace, NSView};
+    use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    let Ok(handle) = window.window_handle() else {
+        return;
+    };
+    let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
+        return;
+    };
+    // SAFETY: an AppKit handle points to the window's live NSView, and window
+    // creation runs on the main thread that owns it.
+    let view: &NSView = unsafe { handle.ns_view.cast().as_ref() };
+    if let Some(window) = view.window() {
+        window.setColorSpace(Some(&NSColorSpace::sRGBColorSpace()));
     }
 }
 
@@ -298,6 +331,7 @@ fn run(args: Args) -> anyhow::Result<()> {
         surface: None,
         failure: None,
         cursor: None,
+        painted: None,
     };
     // Creating the host event loop can fail after journals have opened.
     let result = EventLoop::new().and_then(|event_loop| event_loop.run_app(&mut app));

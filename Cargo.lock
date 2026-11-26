@@ -2053,6 +2053,7 @@ dependencies = [
  "assembly",
  "machine-file",
  "machine-view",
+ "objc2-app-kit 0.3.2",
  "softbuffer",
  "unemu-core-api",
  "unemu-pc-core",

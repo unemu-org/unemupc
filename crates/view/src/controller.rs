@@ -60,7 +60,9 @@ impl Controller {
         })
     }
 
-    /// True requests a redraw, even if the machine stopped at this boundary.
+    /// True when the machine advanced, even if it stopped at this boundary;
+    /// the caller then repaints only if what the window shows changed
+    /// ([`crate::screen::needs_paint`]).
     pub fn tick(&mut self, elapsed: Duration, warnings: &mut impl Write) -> Result<bool> {
         let live = self.session.running && !self.paused && !self.occluded;
         let (advance, deadline) = pacing::wake(elapsed, self.session.next_paint, live);

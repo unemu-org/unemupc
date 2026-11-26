@@ -38,6 +38,8 @@ machine-view = { version = "0.0.4", git = "https://github.com/unemu-org/unemu-ho
 unemu-test-core = { version = "0.0.4", git = "https://github.com/unemu-org/unemu-host", rev = "de86256cfd9d88aeb48c0d5480fa2838f0c152b8" }
 winit = "0.30"
 softbuffer = { version = "0.4.8", default-features = false, features = ["x11", "x11-dlopen", "wayland", "wayland-dlopen"] }
+# The viewer's macOS window colour space, at the version machine-view already uses.
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSColorSpace", "NSResponder", "NSView", "NSWindow"] }
 libc = "0.2"
 serde = { version = "1", features = ["derive"] }
 toml = "1"
