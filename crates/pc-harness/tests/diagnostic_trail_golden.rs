@@ -253,6 +253,8 @@ fn serving_in_process_leaves_the_freedos_boot_golden_unchanged() {
             profile: Some(|rig, label| {
                 Box::new(host_profile::WorkloadProfile::from_env(rig, || label))
             }),
+            inject: None,
+            audio: false,
         },
         assembled,
         |assembled| mda(assembled).contains(pc_harness::DOS_DATE_PROMPT),

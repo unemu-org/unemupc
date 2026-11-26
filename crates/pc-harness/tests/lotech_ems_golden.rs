@@ -19,6 +19,8 @@ use video::Frame;
 mod fat12;
 #[path = "support/fixtures.rs"]
 pub mod fixtures;
+#[path = "support/host_profile.rs"]
+mod host_profile;
 
 // Re-pinned when EMSCHECK gained the routine it runs from an EMS page. The
 // screen is unchanged. The larger program alone moves the endpoint: the
@@ -172,6 +174,8 @@ fn capture(config: &assembly::MachineConfig, broken: bool) -> (String, u64) {
         let board = std::mem::replace(slot, spare);
         *slot = Box::new(AliasedPages(board));
     }
+    let _profile =
+        host_profile::WorkloadProfile::from_env(&mut rig, || format!("lotech ems broken={broken}"));
     rig.run_session(&RunPolicy {
         retired_cap: Some(80_000_000),
         idle_limit: Some(pc_harness::BIOS_IDLE_LIMIT),

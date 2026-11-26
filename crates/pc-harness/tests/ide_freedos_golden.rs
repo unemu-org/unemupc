@@ -32,6 +32,10 @@ use video::Frame;
 
 #[path = "support/fixtures.rs"]
 mod fixtures;
+#[path = "support/host_profile.rs"]
+mod host_profile;
+#[path = "support/serving.rs"]
+mod serving;
 #[path = "support/session.rs"]
 pub mod session;
 
@@ -173,5 +177,68 @@ fn freedos_lists_the_readonly_ide_marker() {
             0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x10, 0x12, 0x20, 0x21, 0x22,
             0x24, 0x25, 0x30, 0x31, 0x40, 0x41, 0x42, 0x43, 0x00,
         ]
+    );
+}
+
+/// The XTIDE FreeDOS boot with the machine's served ranges served in
+/// process and with every access returning, polled as the interactive
+/// session polls: the same machine, screens, POST stream and traces at
+/// every poll up to FreeCOM's date prompt. The boot reads the floppy through
+/// the 8237 and the µPD765 and probes and reads the ATA disk with word PIO
+/// (ATA-2 §§6.1–6.2), so it pins serving the DMA controller, the floppy
+/// controller and the ATA task file.
+#[test]
+#[ignore = "slow: BIOS POST, XTIDE detection and a FreeDOS boot, twice in lockstep"]
+fn ide_freedos_serving_in_process_matches_every_access_returning() {
+    for path in [
+        "unemu-at-bios/bios-unemu-at.bin",
+        "freedos/freedos.img",
+        "xtide-universal-bios/ide_xtp-r638-ata1f0-8k.bin",
+        "hdd/fat16.img",
+    ] {
+        if fixtures::fixture(path).is_none() {
+            return;
+        }
+    }
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../machines/at-ide.toml");
+    let config = machine_file::load(path).unwrap();
+    let policy = ObservationPolicy {
+        routes: vec![
+            ObservationRequest {
+                device: DeviceId::Mda,
+                output: OutputKind::TextScanout,
+                byte_limit: 0,
+            },
+            ObservationRequest {
+                device: DeviceId::Post,
+                output: OutputKind::Bytes(ByteStreamKind::PostCheckpoints),
+                byte_limit: 256,
+            },
+        ],
+        ..ObservationPolicy::default()
+    };
+    let compared = serving::compare(
+        &serving::Lockstep {
+            label: "ide freedos",
+            step: pc_harness::DOS_INTERACTIVE_POLL_STEP,
+            cap: 100_000_000,
+            idle_limit: Some(pc_harness::BIOS_IDLE_LIMIT),
+            outputs: vec![(DeviceId::Post, ByteStreamKind::PostCheckpoints)],
+            displays: vec![DeviceId::Mda],
+            profile: Some(|rig, label| {
+                Box::new(host_profile::WorkloadProfile::from_env(rig, || label))
+            }),
+            inject: None,
+            audio: false,
+        },
+        || assemble_with_observation(&config, &policy).unwrap(),
+        |assembled| console(assembled).contains(pc_harness::DOS_DATE_PROMPT),
+    );
+    assert_eq!(compared.outcome, machine::RunOutcome::RetiredCapReached);
+    assert!(console(&compared.served).contains(pc_harness::DOS_DATE_PROMPT));
+    assert!(
+        compared.served_accesses.ports > 100_000,
+        "{:?}",
+        compared.served_accesses
     );
 }

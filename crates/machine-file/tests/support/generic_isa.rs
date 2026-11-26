@@ -7,6 +7,9 @@
 
 #[path = "../../../pc-harness/tests/support/host_profile.rs"]
 mod host_profile;
+#[path = "../../../pc-harness/tests/support/serving.rs"]
+#[allow(dead_code)]
+mod serving;
 
 use assembly::{BoardModel, CmosRam, CpuChip, DeviceId, DeviceKind, FirmwareStatus};
 use cpu::Cpu;
@@ -1756,6 +1759,8 @@ pub use user_media::doom as user_media_doom;
 #[path = "generic_sound.rs"]
 mod generic_sound;
 pub use generic_sound::sb16_opl3 as seabios_sb16_opl3;
+#[allow(unused_imports)]
+pub use generic_sound::sb16_opl3_serving as seabios_sb16_opl3_serving;
 
 #[path = "generic_services.rs"]
 mod generic_services;

@@ -42,6 +42,11 @@ use pc_harness::{
 };
 use testkit::golden::assert_bytes_eq;
 
+#[path = "support/host_profile.rs"]
+mod host_profile;
+#[path = "support/serving.rs"]
+mod serving;
+
 #[test]
 fn fdc_write_commits_a_sector_and_reads_it_back() {
     let serial = run_fdc_write(FDC_WRITE_PROGRAM).expect("machine run");
@@ -207,4 +212,55 @@ fn fdc_write_rejects_corruption_in_every_sector_byte() {
             "corrupted sector byte {offset} was accepted"
         );
     }
+}
+
+/// The write-and-read-back golden with the machine's served ranges served in
+/// process and with every access returning: the 8237 is programmed through
+/// served ports, and the last command byte of WRITE DATA and of READ DATA
+/// at the served µPD765 data port raises the controller's DMA request (NEC
+/// µPD765A datasheet, WRITE DATA, READ DATA), memory to device and device to
+/// memory. Both ways leave the same machine, serial output and traces.
+#[test]
+fn fdc_write_serving_in_process_matches_every_access_returning() {
+    use assembly::{DeviceId, ObservationPolicy, ObservationRequest, OutputKind};
+    use device::ByteStreamKind;
+    let compared = serving::compare(
+        &serving::Lockstep {
+            label: "fdc write",
+            step: 53,
+            cap: pc_harness::FDC_WRITE_RETIRED_CAP,
+            idle_limit: None,
+            outputs: vec![(DeviceId::Uart, ByteStreamKind::SerialTx)],
+            displays: Vec::new(),
+            profile: Some(|rig, label| {
+                Box::new(host_profile::WorkloadProfile::from_env(rig, || label))
+            }),
+            inject: None,
+            audio: false,
+        },
+        || {
+            let config = assembly::at_fdc_write(
+                FDC_WRITE_PROGRAM.to_vec(),
+                fdc_write_pattern(),
+                FDC_WRITE_SRC,
+            );
+            let policy = ObservationPolicy {
+                routes: vec![ObservationRequest {
+                    device: DeviceId::Uart,
+                    output: OutputKind::Bytes(ByteStreamKind::SerialTx),
+                    byte_limit: 65536,
+                }],
+                ..Default::default()
+            };
+            machine_file::assemble_with_observation(&config, &policy).unwrap()
+        },
+        |_| false,
+    );
+    assert_eq!(compared.outcome, machine::RunOutcome::RetiredCapReached);
+    assert_bytes_eq(&compared.outputs[0], &[FDC_WRITE_MARKER]);
+    assert!(
+        compared.served_accesses.ports > 30,
+        "{:?}",
+        compared.served_accesses
+    );
 }

@@ -10,6 +10,11 @@ use assembly::{
 use device::{AccessDir, TraceEvent, TracePolicy};
 use machine_file::assemble_with_observation_and_options;
 
+#[path = "support/host_profile.rs"]
+mod host_profile;
+#[path = "support/serving.rs"]
+mod serving;
+
 fn out(program: &mut Vec<u8>, port: u16, byte: u8) {
     program.extend_from_slice(&[0xBA, port as u8, (port >> 8) as u8, 0xB0, byte, 0xEE]);
 }
@@ -61,11 +66,7 @@ fn rom() -> Vec<u8> {
     rom
 }
 
-fn capture_clock(
-    splits: &[u64],
-    check_irq: bool,
-    pit_per_step: u64,
-) -> (u64, u64, Vec<[i16; 2]>, Vec<u64>) {
+fn assembled(pit_per_step: u64) -> assembly::AssembledMachine {
     let mut config = assembly::bios(rom(), Some(vec![0; 1_474_560]));
     config.clock.retired_per_pit_clock = 1;
     config.clock.retired_per_pit_clock_denominator = pit_per_step;
@@ -87,14 +88,22 @@ fn capture_clock(
     };
     policy.output.audio_sink = AudioSinkKind::Capture;
     policy.output.audio_capture_frame_limit = 1024;
-    let mut rig = assemble_with_observation_and_options(
+    assemble_with_observation_and_options(
         &config,
         &policy,
         AssemblyOptions {
             allow_unlisted_firmware: true,
         },
     )
-    .unwrap();
+    .unwrap()
+}
+
+fn capture_clock(
+    splits: &[u64],
+    check_irq: bool,
+    pit_per_step: u64,
+) -> (u64, u64, Vec<[i16; 2]>, Vec<u64>) {
+    let mut rig = assembled(pit_per_step);
     let until = 1000;
     for &cap in splits.iter().chain(std::iter::once(&until)) {
         rig.run_session(&RunPolicy::natural(Some(cap), None))
@@ -199,4 +208,46 @@ fn sb16_dma_deadlines_inside_slow_cpu_steps_deliver_samples_on_time() {
         .collect();
     assert_eq!(whole.2, expected);
     assert_eq!(whole.3.len(), 1);
+}
+
+/// The byte DMA golden with the machine's served ranges served in process
+/// and with every access returning, at one and at three PIT clocks per
+/// step: the same machine, traces and PCM. The ROM programs the 8237 and
+/// the DSP through served ports (Creative Sound Blaster Series Hardware
+/// Programming Guide, §2 DSP ports, §3 DMA output), and the DSP's command
+/// that starts the transfer raises its DMA request.
+#[test]
+fn sb16_serving_in_process_matches_every_access_returning() {
+    for pit_per_step in [1, 3] {
+        let compared = serving::compare(
+            &serving::Lockstep {
+                label: "sb16 byte dma",
+                step: 37,
+                cap: 1000 * pit_per_step,
+                idle_limit: None,
+                outputs: Vec::new(),
+                displays: Vec::new(),
+                profile: Some(|rig, label| {
+                    Box::new(host_profile::WorkloadProfile::from_env(rig, || label))
+                }),
+                inject: None,
+                audio: true,
+            },
+            || assembled(pit_per_step),
+            |_| false,
+        );
+        assert_eq!(compared.outcome, machine::RunOutcome::RetiredCapReached);
+        assert!(
+            compared.served_accesses.ports > 10,
+            "{:?}",
+            compared.served_accesses
+        );
+        if pit_per_step == 1 {
+            let audio = compared.served.observation.captured_audio().unwrap();
+            assert_eq!(
+                (audio.frame_count(), audio.hash()),
+                (40, 0xd11fa4ee5f6d91f9)
+            );
+        }
+    }
 }

@@ -304,7 +304,8 @@ struct Capture {
     splits: Vec<u64>,
 }
 
-fn capture(chip: CpuChip, word: bool, splits: &[u64]) -> Option<Capture> {
+/// The games board with the payload floppy in drive A.
+fn sound_config(chip: CpuChip, word: bool) -> Option<assembly::MachineConfig> {
     let mut config = games_config(chip)?;
     let mut inherited = config.clone();
     inherited.devices.retain(|d| d.id != DeviceId::Sb16);
@@ -327,12 +328,32 @@ fn capture(chip: CpuChip, word: bool, splits: &[u64]) -> Option<Capture> {
     drive.image = assembly::ImageSource::Inline(floppy(chip, word));
     drive.expected_sha256 = None;
     drive.write = assembly::WriteMode::ReadOnly;
+    Some(config)
+}
+
+fn sound_policy() -> ObservationPolicy {
     let mut policy = ObservationPolicy {
         trace: TracePolicy::Ring { capacity: 4096 },
         ..Default::default()
     };
     policy.output.audio_sink = AudioSinkKind::Capture;
     policy.output.audio_capture_frame_limit = 500_000;
+    policy
+}
+
+/// The golden of [`sb16_opl3`]: retired count, PCM frames and PCM hash.
+fn sound_golden(chip: CpuChip, word: bool) -> (u64, u64, u64) {
+    match (chip, word) {
+        (CpuChip::I80386, false) => (8_432_283, 49_550, 9_224_039_477_004_121_228),
+        (CpuChip::I80386, true) => (8_432_311, 49_551, 4_505_727_766_093_319_895),
+        (_, false) => (11_033_817, 32_343, 7_145_792_389_143_746_930),
+        (_, true) => (11_033_845, 32_343, 9_206_121_455_469_802_097),
+    }
+}
+
+fn capture(chip: CpuChip, word: bool, splits: &[u64]) -> Option<Capture> {
+    let config = sound_config(chip, word)?;
+    let policy = sound_policy();
     let clock = config.clock.clone();
     let mut rig = machine_file::assemble_with_observation(&config, &policy).unwrap();
     rig.machine.enable_delivery_log().unwrap();
@@ -480,15 +501,64 @@ pub fn sb16_opl3(chip: CpuChip) {
             return;
         };
         assert_eq!(whole.irq_delay, if word { 299 } else { 597 });
-        assert_eq!(
-            whole.golden,
-            match (chip, word) {
-                (CpuChip::I80386, false) => (8_432_283, 49_550, 9_224_039_477_004_121_228),
-                (CpuChip::I80386, true) => (8_432_311, 49_551, 4_505_727_766_093_319_895),
-                (_, false) => (11_033_817, 32_343, 7_145_792_389_143_746_930),
-                (_, true) => (11_033_845, 32_343, 9_206_121_455_469_802_097),
-            }
-        );
+        assert_eq!(whole.golden, sound_golden(chip, word));
         assert_eq!(Some(&whole), capture(chip, word, &whole.splits).as_ref());
+    }
+}
+
+/// [`sb16_opl3`]'s boots with the machine's served ranges served in process
+/// and with every access returning: SeaBIOS reads the payload through the
+/// µPD765 and the 8237, the payload programs the DSP, the mixer, the 8237
+/// and the YMF262 through served ports, and both ways leave the same
+/// machine, traces and PCM, which is the golden's.
+#[allow(dead_code)]
+pub fn sb16_opl3_serving(chip: CpuChip) {
+    for word in [false, true] {
+        let Some(config) = sound_config(chip, word) else {
+            return;
+        };
+        let compared = super::serving::compare(
+            &super::serving::Lockstep {
+                label: if word {
+                    "seabios sb16 word"
+                } else {
+                    "seabios sb16 byte"
+                },
+                step: 100_000,
+                cap: budget(chip, 10_000_000),
+                idle_limit: None,
+                outputs: Vec::new(),
+                displays: Vec::new(),
+                profile: Some(|rig, label| {
+                    Box::new(super::host_profile::WorkloadProfile::from_env(rig, || {
+                        label
+                    }))
+                }),
+                inject: None,
+                audio: true,
+            },
+            || {
+                let mut rig =
+                    machine_file::assemble_with_observation(&config, &sound_policy()).unwrap();
+                rig.machine.enable_delivery_log().unwrap();
+                rig
+            },
+            |_| false,
+        );
+        assert_eq!(compared.outcome, machine::RunOutcome::Halted);
+        assert!(
+            compared.served_accesses.ports > 1000,
+            "{:?}",
+            compared.served_accesses
+        );
+        let audio = compared.served.observation.captured_audio().unwrap();
+        assert_eq!(
+            (
+                compared.served.machine.cpu().retired(),
+                audio.frame_count(),
+                audio.hash()
+            ),
+            sound_golden(chip, word)
+        );
     }
 }

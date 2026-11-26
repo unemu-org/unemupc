@@ -11,6 +11,11 @@
 use assembly::{DeviceId, DeviceKind, ObservationPolicy, ObservationRequest, OutputKind};
 use device::{AccessDir, ByteStreamKind, TraceEvent, TracePolicy};
 
+#[path = "support/host_profile.rs"]
+mod host_profile;
+#[path = "support/serving.rs"]
+mod serving;
+
 fn rom() -> Vec<u8> {
     let mut program = vec![
         0xfa, 0x31, 0xc0, 0x8e, 0xd8, 0x8e, 0xd0, 0xbc, 0x00, 0x70, 0xc7, 0x06, 0x30, 0x00, 0x00,
@@ -47,8 +52,7 @@ fn rom() -> Vec<u8> {
     image
 }
 
-#[test]
-fn serial_mouse_rom_receives_identification_and_motion_via_irq4_at_pinned_times() {
+fn assembled() -> assembly::AssembledMachine {
     let mut config = assembly::bios(rom(), Some(vec![0; 1_474_560]));
     config.clock = assembly::ClockConfig::default();
     for device in &mut config.devices {
@@ -66,14 +70,19 @@ fn serial_mouse_rom_receives_identification_and_motion_via_irq4_at_pinned_times(
         }],
         ..Default::default()
     };
-    let mut assembled = machine_file::assemble_with_observation_and_options(
+    machine_file::assemble_with_observation_and_options(
         &config,
         &policy,
         assembly::AssemblyOptions {
             allow_unlisted_firmware: true,
         },
     )
-    .unwrap();
+    .unwrap()
+}
+
+#[test]
+fn serial_mouse_rom_receives_identification_and_motion_via_irq4_at_pinned_times() {
+    let mut assembled = assembled();
     assembled.machine.set_idle_limit(Some(100_000));
     let uart = assembled.device_index[&DeviceId::Uart];
     assert_eq!(assembled.mouse_device_index(), Some(uart));
@@ -128,5 +137,48 @@ fn serial_mouse_rom_receives_identification_and_motion_via_irq4_at_pinned_times(
     assert_eq!(
         received,
         [(20_919, 0x4d), (38_952, 0x70), (47_901, 5), (56_850, 7)]
+    );
+}
+
+/// The mouse ROM with the machine's served ranges served in process and with
+/// every access returning: the 16550's registers (PC16550D datasheet,
+/// §8.1–8.8) are served, the same motion is injected into both ways at the
+/// same virtual time, and both leave the same machine, echo and traces.
+#[test]
+fn serial_mouse_serving_in_process_matches_every_access_returning() {
+    let compared = serving::compare(
+        &serving::Lockstep {
+            label: "serial mouse",
+            step: 1000,
+            cap: 60_000,
+            idle_limit: Some(100_000),
+            outputs: vec![(DeviceId::Uart, ByteStreamKind::SerialTx)],
+            displays: Vec::new(),
+            profile: Some(|rig, label| {
+                Box::new(host_profile::WorkloadProfile::from_env(rig, || label))
+            }),
+            inject: Some(|assembled, poll| {
+                if poll == 30 {
+                    let uart = assembled.device_index[&DeviceId::Uart];
+                    assert!(assembly::inject_mouse(
+                        &mut assembled.machine,
+                        uart,
+                        5,
+                        -7,
+                        3
+                    ));
+                }
+            }),
+            audio: false,
+        },
+        assembled,
+        |_| false,
+    );
+    assert_eq!(compared.outcome, machine::RunOutcome::RetiredCapReached);
+    assert_eq!(compared.outputs[0], [b'M', 0x70, 5, 7]);
+    assert!(
+        compared.served_accesses.ports > 10,
+        "{:?}",
+        compared.served_accesses
     );
 }

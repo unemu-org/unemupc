@@ -350,6 +350,8 @@ fn open_bios_modex_serving_in_process_matches_every_access_returning() {
             profile: Some(|rig, label| {
                 Box::new(host_profile::WorkloadProfile::from_env(rig, || label))
             }),
+            inject: None,
+            audio: false,
         },
         || {
             machine_file::load_for_assembly(&file, AssemblyOptions::default())

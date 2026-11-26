@@ -5,7 +5,8 @@
 //!
 //! A real-mode guest on the 80286 machine profile fills the window with REP
 //! STOSW, writes and reads port 80h, writes a word to port 80h whose second
-//! cycle reaches a DMA page register, programs a window event a few clocks
+//! cycle reaches a DMA page register (the controller of an idle requester,
+//! served since nothing is pending), programs a window event a few clocks
 //! ahead (a deadline earlier than the run's budget) and raises the window's
 //! interrupt from a store (a request raised by a served access), while the
 //! 8254 interrupts it periodically through the 8259A (Intel 8259A datasheet,

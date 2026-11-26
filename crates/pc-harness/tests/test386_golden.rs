@@ -387,9 +387,9 @@ fn test386_legacy_scheduler_rig_captures_configured_post() {
 /// The 386 run with the machine's served ranges served in process and with
 /// every access returning: the same machine at every poll and at the halt.
 /// Its port traffic is mostly the console write that truncates to port 02h,
-/// a register of the DMA controller, which is never served; only its few
-/// POST codes and keyboard-controller reads are, so it exercises serving
-/// only lightly while pinning a long protected-mode run.
+/// a register of the DMA controller, served in process like its POST codes
+/// and keyboard-controller reads, so it pins serving a register device on a
+/// long protected-mode run.
 #[test]
 #[ignore = "slow: test386 on the 386 board twice, in lockstep"]
 fn test386_i386_serving_in_process_matches_every_access_returning() {
@@ -411,6 +411,8 @@ fn test386_i386_serving_in_process_matches_every_access_returning() {
             profile: Some(|rig, label| {
                 Box::new(host_profile::WorkloadProfile::from_env(rig, || label))
             }),
+            inject: None,
+            audio: false,
         },
         || {
             let mut assembled = assembly::assemble_with_observation_and_options(

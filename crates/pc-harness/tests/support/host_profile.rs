@@ -212,13 +212,14 @@ mod enabled {
         #[test]
         fn profiling_preserves_cpu_memory_devices_trace_and_frame() {
             // Both ways of serving accesses: returning from the CPU for each,
-            // and serving port 80h and the window while it runs.
+            // and serving port 80h and the window while it runs; port 90h
+            // is outside every served range and always returns.
             let run = |enabled: bool, in_process: bool| {
                 let program = vec![
                     0xFA, // CLI keeps this synthetic probe independent of timer IRQs.
                     0xC7, 0x06, 0, 0, 0x41, 7, // MOV WORD [DS:0],0741h (MMIO)
                     0xA1, 0, 0, // MOV AX,[DS:0]
-                    0xE6, 0x80, 0xE4, 0x81, // OUT / IN
+                    0xE6, 0x80, 0xE4, 0x90, // OUT / IN
                     0xB9, 20, 0, 0xE2, 0xFE, // LOOP
                     0xF4,
                 ];
@@ -284,7 +285,7 @@ mod enabled {
                     assert_eq!(sum(&c.pages, 0), served(ProfileEvent::ServedMmio));
                     assert_eq!(sum(&c.pages, 1), c.exits[ProfileExit::Mmio as usize]);
                     assert_eq!(c.ports[&0x80].iter().sum::<u64>(), 1);
-                    assert_eq!(c.ports[&0x81].iter().sum::<u64>(), 1);
+                    assert_eq!(c.ports[&0x90].iter().sum::<u64>(), 1);
                     if in_process {
                         assert!(served(ProfileEvent::ServedPortIo) > 0);
                         assert!(served(ProfileEvent::ServedMmio) > 0);

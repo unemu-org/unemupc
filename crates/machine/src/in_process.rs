@@ -11,10 +11,23 @@
 //! same virtual time, with the same helpers, and lets the run continue. It
 //! declines ([`AccessResult::Fallback`]) before changing anything whenever it
 //! cannot prove the result equal: an access whose own step would reach the
-//! next device deadline (whose visits may need DMA, which needs the CPU), one
-//! that reaches a DMA requester or controller, one the bus would fault, a
-//! port write on a machine whose memory-map hook must see every port write
-//! with the CPU in hand, and a transfer owned by an exception delivery.
+//! next device deadline (whose visits may need DMA, which needs the CPU), an
+//! MMIO access that reaches a DMA requester or controller, any access while
+//! a requester already has DMA pending, one the bus would fault, a port write
+//! on a machine whose memory-map hook must see every port write with the CPU
+//! in hand, and a transfer owned by an exception delivery.
+//!
+//! DMA itself is left to the loop, which moves the bytes through the CPU's
+//! memory with its dirty and self-modifying-code tracking. A port access that
+//! leaves a requester with DMA pending (the last command byte of a floppy
+//! READ DATA, a DSP command that starts a transfer, a DMA-enable bit) ends
+//! the run right after it, and the loop charges its own step and settles as
+//! after the ordinary stop, servicing DMA where it would. A request that
+//! appears only when the accessed devices settle ends the run at the next
+//! boundary, and the loop services it before anything else, as it does right
+//! after that settle. An MMIO access is not served when it reaches a DMA
+//! party: its instruction's step is charged only after it completes, after
+//! the DMA the loop would already have run.
 //!
 //! The handler never visits a device's timer. The steps before an access
 //! lie inside a deadline-free interval, so charging them only moves the
@@ -59,24 +72,66 @@ use crate::{
 
 /// The accesses served while the CPU runs (IBM Personal Computer AT
 /// Technical Reference, Section 1, System Board, I/O Address Map and System
-/// Memory Map): the interrupt controllers (20h–21h, A0h–A1h), the timer
-/// (40h–43h), the keyboard controller and system control port B (60h–64h),
-/// the diagnostic checkpoint port 80h, the display adapters' registers
-/// (3B0h–3DFh: VGA, monochrome and color adapters) and the display memory
-/// window A0000h–BFFFFh. A range names addresses, not devices: each access
-/// is offered to the machine's handler, which serves it only when it can
-/// prove the result equal, whatever device decodes it
+/// Memory Map): the DMA controllers and their page registers (00h–0Fh,
+/// 81h–8Fh, C0h–DFh), the interrupt controllers (20h–21h, A0h–A1h), the
+/// timer (40h–43h), the keyboard controller and system control port B
+/// (60h–64h), the real-time clock and CMOS RAM (70h–71h), the diagnostic
+/// checkpoint port 80h, the fixed-disk task file (1F0h–1F7h, ATA-2
+/// §§6.1–6.2), the game port (201h), the sound card's base window
+/// (220h–22Fh, Creative Sound Blaster Series Hardware Programming Guide,
+/// §2), the parallel ports (278h–27Fh, 378h–37Fh) and the serial ports
+/// (2F8h–2FFh, 3E8h–3EFh, 2E8h–2EFh, 3F8h–3FFh), the FM synthesizer
+/// (388h–38Bh, Yamaha YMF262 datasheet, Register Map), the display
+/// adapters' registers (3B0h–3DFh: VGA, monochrome and color adapters), the
+/// floppy controller with the fixed-disk control register (3F0h–3F7h), the
+/// emulator-only firmware debug port (402h) and firmware configuration ports
+/// (510h–511h, QEMU Firmware Configuration Device specification, Guest-side
+/// Hardware Interface) that open firmware polls through its boot, and the
+/// display memory window A0000h–BFFFFh. A range names addresses, not
+/// devices: each access is offered to the machine's handler, which serves it
+/// only when it can prove the result equal, whatever device decodes it
 /// (`backlog/docs/design/scheduler.md` §In-process device access). Every
-/// other port and trapped window still returns from the CPU.
-pub const SERVED_RANGES: [ServedRange; 7] = [
+/// other port and trapped window still returns from the CPU, among them the
+/// coprocessor ports F0h–FFh, whose acknowledgement only the loop can pass
+/// to the CPU, and system control port A (92h), which drives the A20 gate
+/// and the fast reset.
+pub const SERVED_RANGES: [ServedRange; 23] = [
+    ServedRange::Ports(0x00..=0x0F),
     ServedRange::Ports(0x20..=0x21),
     ServedRange::Ports(0x40..=0x43),
     ServedRange::Ports(0x60..=0x64),
-    ServedRange::Ports(0x80..=0x80),
+    ServedRange::Ports(0x70..=0x71),
+    ServedRange::Ports(0x80..=0x8F),
     ServedRange::Ports(0xA0..=0xA1),
+    ServedRange::Ports(0xC0..=0xDF),
+    ServedRange::Ports(0x1F0..=0x1F7),
+    ServedRange::Ports(0x201..=0x201),
+    ServedRange::Ports(0x220..=0x22F),
+    ServedRange::Ports(0x278..=0x27F),
+    ServedRange::Ports(0x2E8..=0x2EF),
+    ServedRange::Ports(0x2F8..=0x2FF),
+    ServedRange::Ports(0x378..=0x37F),
+    ServedRange::Ports(0x388..=0x38B),
     ServedRange::Ports(0x3B0..=0x3DF),
+    ServedRange::Ports(0x3E8..=0x3EF),
+    ServedRange::Ports(0x3F0..=0x3F7),
+    ServedRange::Ports(0x3F8..=0x3FF),
+    ServedRange::Ports(0x402..=0x402),
+    ServedRange::Ports(0x510..=0x511),
     ServedRange::Mmio(0xA0000..=0xBFFFF),
 ];
+
+/// Whether every port of an access of `size` bytes at `port` lies in the
+/// served port range that holds its first port.
+fn within_served_ports(port: u64, size: u8) -> bool {
+    let last = port + u64::from(size.max(1)) - 1;
+    SERVED_RANGES.iter().any(|range| match range {
+        ServedRange::Ports(ports) => {
+            u64::from(*ports.start()) <= port && last <= u64::from(*ports.end())
+        }
+        ServedRange::Mmio(_) => false,
+    })
+}
 
 /// Accesses served while the CPU ran ([`crate::Machine::served_accesses`]).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -102,14 +157,16 @@ pub(crate) struct ServedRun {
     /// The board A20 line changed: the loop syncs it before the next
     /// instruction.
     pub sync_a20: bool,
-    /// DMA became due, which needs the CPU's memory: the loop settles
-    /// before it services the run's stop. Kept as a guard: the eligibility
-    /// rules and [`InProcess::own_step`] leave no way for it to happen.
+    /// DMA became pending when the accessed devices settled after a served
+    /// port access, which needs the CPU's memory: the run ended at the next
+    /// boundary, and the loop services it before the run's stop, as right
+    /// after that settle.
     pub settle: bool,
     /// The run ended right after an access whose remaining work the loop
     /// does itself, as after the ordinary stop: it charges the access's own
     /// step (a port access's), visiting every deadline in it with DMA
-    /// serviced between them, then settles the accessed devices.
+    /// serviced between them, then settles the accessed devices. A port
+    /// access that leaves DMA pending ends the run this way.
     pub finish: bool,
     /// That access failed on the bus: the loop settles every device before
     /// the accessed ones, as after a failed ordinary stop.
@@ -246,8 +303,17 @@ impl InProcess<'_> {
         if port && access.write && self.memory_map {
             return false;
         }
-        // A DMA requester or controller could start a transfer that only
-        // the CPU's memory can carry.
+        // The CPU core matches an access by its first port only; a wider
+        // access running past the end of its served range (a doubleword OUT
+        // at 8Fh reaches 92h) returns, so the ports outside stay on the exit
+        // path.
+        if port && !within_served_ports(access.address, access.size) {
+            return false;
+        }
+        // A port access that leaves DMA pending ends the run for the loop
+        // to service it (see the module docs). An MMIO access to a DMA
+        // requester or controller could start a transfer the loop would run
+        // before the access's instruction completes and its step is charged.
         let dma_wirings = self.dma_wirings;
         let channel_wirings = self.dma_channel_wirings;
         let free = |index: usize| {
@@ -259,8 +325,9 @@ impl InProcess<'_> {
                     .any(|route| route.requester == index || route.controller == index)
         };
         let reaches = if port {
+            // Only whether the bus would fault.
             self.bus
-                .port_access_reaches_only(access.address as u16, access.size, free)
+                .port_access_reaches_only(access.address as u16, access.size, |_| true)
         } else {
             self.bus
                 .mmio_access_reaches_only(access.address, access.size, free)
@@ -308,6 +375,14 @@ impl cpu::DeviceAccessHandler for InProcess<'_> {
         let Some(charge) = access.steps.checked_sub(self.outcome.charged) else {
             return AccessResult::Fallback;
         };
+        // A port read in the run's last step returns: the ordinary stop
+        // ends the run with the read's answer pending, so a string input's
+        // store and everything after it wait for the next run, after the
+        // loop's cap check. Served, the store and the next element would run
+        // first, past the cap when the store exits to the loop.
+        if port && !access.write && access.steps >= self.budget {
+            return AccessResult::Fallback;
+        }
         if (port && charge == 0) || !self.eligible(access) {
             return AccessResult::Fallback;
         }
@@ -367,7 +442,11 @@ impl cpu::DeviceAccessHandler for InProcess<'_> {
                 return self.fail(error.into());
             }
         };
-        if port && !self.own_step() {
+        // A request the access raised: the loop services DMA inside the
+        // access's own step, at the first deadline visit in it, or else
+        // right after the accessed devices settle, so it charges that step
+        // and settles itself.
+        if port && (self.dma_pending() || !self.own_step()) {
             self.outcome.finish = true;
             control.stop_at(access.steps);
             return AccessResult::Handled(value);

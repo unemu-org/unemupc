@@ -3,10 +3,13 @@
 //! in `machine::SERVED_RANGES` while the CPU runs and with every access
 //! returning from the CPU (`backlog/docs/design/scheduler.md` §In-process
 //! device access). At every poll both must report the same outcome, retired count,
-//! completed steps, virtual time and device clock, the same observed bytes,
+//! completed steps, virtual time and device clock, the same processor state
+//! and first megabyte of memory, the same observed bytes,
 //! the same display frames and the same device traces (every register
 //! access with its virtual time); at the end the same device snapshots, RAM
 //! and processor state. The host time each way spends running is printed.
+//! A workload may inject the same host input into both ways before a poll,
+//! and compare the PCM both ways rendered.
 
 use std::time::{Duration, Instant};
 
@@ -34,6 +37,12 @@ pub struct Lockstep {
     /// Attach host-profile counters to each way, labelled; the guard
     /// reports when it drops, after the comparison.
     pub profile: Option<Profile>,
+    /// Host input given to both ways before each poll, with the poll's
+    /// number (0 for the first).
+    pub inject: Option<fn(&mut AssembledMachine, u64)>,
+    /// Render PCM both ways at every poll and compare the captures at the
+    /// end.
+    pub audio: bool,
 }
 
 /// Attaches a host profile to one way of the run.
@@ -90,6 +99,19 @@ impl Side {
             machine.virtual_time(),
             machine.clock(),
         )
+    }
+
+    /// The processor state and the first megabyte of memory, in 64 KiB
+    /// pieces the CPU can read, compared at every poll.
+    fn poll_state(&self) -> (cpu::CpuDiagnostic, Vec<Option<Vec<u8>>>) {
+        let cpu = self.assembled.machine.cpu();
+        let memory = (0..16u64)
+            .map(|piece| {
+                let mut bytes = vec![0; 0x10000];
+                cpu.read_mem(piece << 16, &mut bytes).ok().map(|()| bytes)
+            })
+            .collect();
+        (cpu.diagnostic_state(), memory)
     }
 
     fn traces(&mut self) -> Vec<(Vec<device::TraceEvent>, u64)> {
@@ -157,6 +179,10 @@ pub fn compare(
     let mut outputs = vec![Vec::new(); spec.outputs.len()];
     let mut polls = 0;
     let outcome = loop {
+        if let Some(inject) = spec.inject {
+            inject(&mut served.assembled, polls);
+            inject(&mut exits.assembled, polls);
+        }
         let target = (served.assembled.machine.virtual_time() + spec.step).min(spec.cap);
         let policy = RunPolicy::natural(Some(target), spec.idle_limit);
         let outcome = served.run(&policy);
@@ -166,6 +192,11 @@ pub fn compare(
             served.counters(),
             exits.counters(),
             "{}: poll {polls}",
+            spec.label
+        );
+        assert!(
+            served.poll_state() == exits.poll_state(),
+            "{}: processor state or low memory at poll {polls}",
             spec.label
         );
         for (index, &(device, kind)) in spec.outputs.iter().enumerate() {
@@ -188,6 +219,10 @@ pub fn compare(
             "{}: device traces at poll {polls}",
             spec.label
         );
+        if spec.audio {
+            served.assembled.capture_audio().expect("served audio");
+            exits.assembled.capture_audio().expect("returning audio");
+        }
         match outcome {
             Ok(RunOutcome::RetiredCapReached) if target < spec.cap && !stop(&served.assembled) => {}
             Ok(outcome) => break outcome,
@@ -199,6 +234,13 @@ pub fn compare(
         "{}: final devices, RAM or processor state",
         spec.label
     );
+    if spec.audio {
+        let pcm = |side: &Side| {
+            let audio = side.assembled.observation.captured_audio().expect("audio");
+            (audio.frame_count(), audio.hash())
+        };
+        assert_eq!(pcm(&served), pcm(&exits), "{}: PCM", spec.label);
+    }
     eprintln!(
         "{}: {outcome:?} after {polls} polls, retired={}, served {:.3}s, every access returning {:.3}s",
         spec.label,

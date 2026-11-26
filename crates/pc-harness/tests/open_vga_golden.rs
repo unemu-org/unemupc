@@ -709,6 +709,8 @@ fn open_vga_scanout_serving_in_process_matches_every_access_returning() {
             outputs: Vec::new(),
             displays: vec![DeviceId::Vga],
             profile: None,
+            inject: None,
+            audio: false,
         },
         || {
             let profile =

@@ -832,12 +832,23 @@ made 1.35 million MMIO returns per 50 million instructions and test386 3.55
 million port returns per 80 million, 18 to 59 instructions per return. The
 CPU core can instead call the embedder synchronously for chosen ranges and
 continue the run (x86jit `DeviceIo`, its spec.md §5.4). The machine uses it
-for the accesses in `machine::SERVED_RANGES`: the interrupt controllers
+for the accesses in `machine::SERVED_RANGES`: the DMA controllers and their
+page registers (00h–0Fh, 81h–8Fh, C0h–DFh), the interrupt controllers
 (20h–21h, A0h–A1h), the timer (40h–43h), the keyboard controller with system
-control port B (60h–64h), the diagnostic checkpoint port 80h, the display
-adapters' registers (3B0h–3DFh) and the display window A0000h–BFFFFh. A
-range names addresses, not devices; whatever decodes an address is served
-only under the rules below. Other ports and windows still return.
+control port B (60h–64h), the RTC and CMOS RAM (70h–71h), the diagnostic
+checkpoint port 80h, the fixed-disk task file (1F0h–1F7h), the game port
+(201h), the sound card's base window (220h–22Fh), the parallel ports
+(278h–27Fh, 378h–37Fh), the serial ports (2E8h–2EFh, 2F8h–2FFh, 3E8h–3EFh,
+3F8h–3FFh), the FM synthesizer (388h–38Bh), the display adapters' registers
+(3B0h–3DFh), the floppy controller with the fixed-disk control register
+(3F0h–3F7h), the firmware debug port 402h and the firmware configuration
+ports 510h–511h, which SeaBIOS polls through its boot, and the display
+window A0000h–BFFFFh. A range names addresses,
+not devices; whatever decodes an address is served only under the rules
+below. Other ports and windows still return: the coprocessor ports
+F0h–FFh (below), system control port A (92h), whose A20 and fast-reset
+bits stay on the exit path, and the EMS page registers, whose writes the
+memory-map hook must see anyway.
 
 The seam is backend-neutral (`cpu::device_access`): the machine declares
 ranges with `Cpu::set_served_ranges` and runs `Cpu::run_steps_serving` with a
@@ -869,14 +880,54 @@ proven:
 
 - the access's steps would reach the next device deadline (the last step of
   a run bounded by it), whose visits can need DMA through the CPU's memory;
-- a cycle reaches a DMA requester or controller or one of their access
-  dependents (a word OUT to 80h reaches the page register at 81h), or a
-  requester already reports DMA pending;
+- it is a port read in the run's last step: the ordinary stop ends the run
+  with the answer pending, so a string input's store (an INS element's
+  write to ES:DI) waits for the next run, after the loop's cap check;
+  served, the store would run first and, when it exits to the loop as an
+  unserved MMIO write, the completion run would start the next element, so
+  a cap inside REP INS would overshoot (`machine/tests/in_process_strings.rs`
+  pins every cap at four CPU rates);
+- a port access runs past the end of the served range that holds its first
+  port (the CPU core matches only the first port, so a doubleword OUT at
+  8Fh would otherwise reach 90h–92h in process);
+- an MMIO cycle reaches a DMA requester or controller or one of their access
+  dependents, or a requester already reports DMA pending (any access);
 - the bus would fault (undecoded MMIO, or an undecoded port under the
   faulting policy);
 - it is a port write and a memory-map hook is attached, since the hook runs
   after every port write with the CPU in hand (EMS frames, speaker trace);
 - an exception or interrupt delivery owns the transfer.
+
+DMA is always the loop's: it moves the bytes through the CPU's memory
+(`guest_dma_read`/`guest_dma_write`), dropping ROM writes, dispatching
+trapped bytes on the bus and keeping the RAM dirty and self-modifying-code
+tracking. A served port access may reach a DMA party (the 8237's registers,
+the floppy controller, the sound card's DSP). When the access itself leaves
+a requester with DMA pending (the last command byte of READ DATA or WRITE
+DATA, the DOR's DMA-enable bit releasing a held request, a DSP command that
+starts a transfer), the run ends right after it and the loop charges the
+access's own step and settles as after the ordinary stop, so the transfer
+runs at the first deadline visit inside that step or right after the
+accessed devices settle, exactly where it runs after the ordinary stop.
+When the request appears only as the accessed devices settle, the run ends
+at the next boundary and the loop services it before anything else, as it
+does right after that settle. An MMIO access stays off DMA parties: its
+instruction's step is charged after it completes, while the loop would run
+the transfer before that charge. The DeviceContext's checked RAM access is
+not used for DMA: it refuses ROM and trapped bytes, which the loop's path
+handles, and the transfers are rare against the register traffic around
+them (one per floppy command or DSP block). `machine/tests/in_process_dma.rs`
+pins all three cases at CPU rates where a step crosses one clock, several
+or none.
+
+Two limits remain. A served INS element's store completes before the loop
+services DMA its port read raised, where after the ordinary stop the
+transfer runs before the store; no modelled device starts DMA on a port
+read, so this is theoretical. And while any wired requester reports DMA
+pending, every access falls back, whatever it reaches; the loop services a
+pending request at its next boundary, so this costs returns only around a
+transfer, but a requester that kept a request pending (one its controller
+leaves untaken) would turn serving off for the whole machine.
 
 What only the loop can do with the CPU after an access ends the run at the
 next boundary instead (after an MMIO access's instruction completes): an A20
@@ -974,10 +1025,15 @@ per-page histogram (the `pc-harness` host profile prints the busiest ones).
 `Machine::set_in_process_devices` (on by default) switches serving off, so
 one workload can run both ways. The `support/serving.rs` lockstep comparison
 in `pc-harness` runs test386, the Mode X, scrolling and mode 0Dh/13h VGA
-goldens and the open-BIOS FreeDOS boot both ways and requires the same
-outcome, counters, observed bytes, frames and device traces at every poll and
-the same devices, RAM, processor state and delivery log at the end, and
-requires that the served way served something.
+goldens, the open-BIOS FreeDOS boot, the XTIDE FreeDOS boot, the SB16 byte
+DMA and OPL3 goldens, the floppy write-and-read-back golden and the serial
+mouse golden both ways, and `machine-file`'s 386 board runs the SeaBIOS
+SB16/OPL3 boots both ways. Each requires the same outcome, counters,
+processor state, first megabyte of memory, observed bytes, frames and device
+traces at every poll, the same PCM where
+it renders audio (`audio`), the same host input given to both ways before a
+poll (`inject`), and the same devices, RAM, processor state and delivery log
+at the end, and requires that the served way served something.
 
 ## Determinism and future consumers
 

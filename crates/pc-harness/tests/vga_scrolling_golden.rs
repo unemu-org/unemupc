@@ -263,6 +263,8 @@ fn synthetic_scrolling_serving_in_process_matches_every_access_returning() {
             outputs: vec![(DeviceId::Post, device::ByteStreamKind::PostCheckpoints)],
             displays: vec![DeviceId::Vga],
             profile: None,
+            inject: None,
+            audio: false,
         },
         rig,
         |_| false,

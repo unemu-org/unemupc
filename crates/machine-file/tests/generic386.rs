@@ -65,6 +65,12 @@ fn generic386_seabios_sb16_opl3_golden() {
 }
 
 #[test]
+#[ignore = "slow: the SeaBIOS SB16 and OPL3 boots twice each, in lockstep"]
+fn generic386_seabios_sb16_opl3_serving_matches_every_access_returning() {
+    generic_isa::seabios_sb16_opl3_serving(assembly::CpuChip::I80386);
+}
+
+#[test]
 fn generic386_seabios_freedos_jemmex_v86() {
     generic_isa::seabios_freedos_jemmex_v86(assembly::CpuChip::I80386);
 }
