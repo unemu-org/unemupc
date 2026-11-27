@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Private FAT16 media; Microsoft FAT Specification, BPB and FAT type determination.
 
-See backlog/docs/user-media.md §Temporary disk and §Windows 95.
+See backlog/docs/user-media.md §Temporary disk, §Windows 95 and §Windows 3.1.
 """
 import argparse
 import math
@@ -50,13 +50,69 @@ def msbatch(key):
     return "\r\n".join(lines).encode("ascii")
 
 
+def win31_settings():
+    # Windows 3.1 Resource Kit, Chapter 1, Creating the System Settings File.
+    # Keep the request explicit; the guest run must establish which choices stick.
+    return ("[sysinfo]\r\nshowsysinfo=no\r\n[configuration]\r\nmachine=ibm_compatible\r\n"
+            "display=vga\r\nmouse=ps2mouse\r\nkeyboard=t4s0enha\r\nnetwork=nonet\r\n"
+            "[windir]\r\nC:\\WINDOWS\r\n[userinfo]\r\nUser\r\n\"Local test\"\r\n"
+            "[dontinstall]\r\ngames\r\n[options]\r\n[endinstall]\r\nconfigfiles=modify\r\nendopt=exit\r\n").encode("ascii")
+
+
+def win31_files():
+    return {
+        "SETUP.SHH": win31_settings(),
+        "SYS31.BAT": ("@ECHO OFF\r\nSYS C:\r\nIF ERRORLEVEL 1 GOTO END\r\n"
+                      "IF NOT EXIST C:\\COMMAND.COM COPY A:\\COMMAND.COM C:\\ >NUL\r\n"
+                      "IF NOT EXIST C:\\IO.SYS GOTO END\r\n"
+                      "IF NOT EXIST C:\\COMMAND.COM GOTO END\r\n"
+                      # Setup rewrites the boot drive's startup files, so the
+                      # install stage boots C:, which needs an XMS driver before
+                      # Windows exists. Windows' own expander and driver serve
+                      # every DOS boot floppy alike.
+                      "C:\\WIN31SRC\\EXPAND C:\\WIN31SRC\\HIMEM.SY_ C:\\HIMEM.SYS >NUL\r\n"
+                      "IF NOT EXIST C:\\HIMEM.SYS GOTO END\r\n"
+                      # Only DOS 7 keeps startup options as text in MSDOS.SYS;
+                      # MS-DOS 6 keeps part of its kernel there, so it is never
+                      # rewritten below version 7.
+                      "C:\\DOSVER.COM\r\nIF NOT ERRORLEVEL 7 GOTO DONE\r\n"
+                      "ATTRIB -R -S -H C:\\MSDOS.SYS >NUL\r\n"
+                      "ECHO [Options]>C:\\MSDOS.SYS\r\n"
+                      "ECHO BootGUI=0>>C:\\MSDOS.SYS\r\n"
+                      "ECHO Logo=0>>C:\\MSDOS.SYS\r\n"
+                      "ECHO BootDelay=0>>C:\\MSDOS.SYS\r\n"
+                      "ECHO UM31DOS7\r\n"
+                      ":DONE\r\nECHO UM31SYSOK\r\n:END\r\n").encode("ascii"),
+        # Our program: INT 21h AH=30h returns the DOS major version in AL, and
+        # INT 21h AH=4Ch exits with it as the ERRORLEVEL.
+        "DOSVER.COM": bytes.fromhex("b430cd21b44ccd21"),
+        "INST31.BAT": ("@ECHO OFF\r\nC:\r\nCD \\WIN31SRC\r\n"
+                       "SETUP /H:C:\\SETUP.SHH\r\nIF ERRORLEVEL 1 GOTO END\r\n"
+                       "IF NOT EXIST C:\\WINDOWS\\SYSTEM\\WIN386.EXE GOTO END\r\n"
+                       "IF NOT EXIST C:\\WINDOWS\\SYSTEM.INI GOTO END\r\n"
+                       "ECHO UM31INSTALLED\r\n:END\r\n").encode("ascii"),
+        "CONFIG.SYS": b"DEVICE=C:\\HIMEM.SYS\r\nDOS=HIGH\r\n",
+        "AUTOEXEC.BAT": b"@ECHO OFF\r\nPATH C:\\WINDOWS;C:\\WINDOWS\\SYSTEM;C:\\\r\n",
+    }
+
+
+def win31_mbr():
+    # Our CHS chain loader relocates all 512 bytes from 7C00h to 0600h,
+    # preserving DL, then INT 13h/AH=02h loads the first partition's VBR.
+    # SYS installs only the DOS VBR; leaving the MBR empty cannot boot C:.
+    return bytes.fromhex(
+        "fa31c08ed88ec08ed0bc007cfcbe007cbf0006b90001f3a5ea1d060000fb"
+        "bebe078a74018b4c02bb007cb80102cd137205ea007c0000faf4ebfc")
+
+
 def build(args):
-    doom = args.source is None and not args.win95
+    doom = args.source is None and not (args.win95 or args.win31)
     source = pathlib.Path(args.source or os.environ[
-        "UNEMUPC_USER_WIN95_DIR" if args.win95 else "UNEMUPC_USER_DOOM_DIR"])
+        "UNEMUPC_USER_WIN95_DIR" if args.win95 else
+        "UNEMUPC_USER_WIN31_DIR" if args.win31 else "UNEMUPC_USER_DOOM_DIR"])
     if source.is_symlink() or not source.is_dir():
         raise ValueError("expected a regular source directory")
-    target = dos_path(args.target if args.target is not None else ("WIN95" if args.win95 else ""))
+    target = dos_path(args.target if args.target is not None else ("WIN95" if args.win95 else "WIN31SRC" if args.win31 else ""))
     entries = {}
 
     def add(path, value):
@@ -102,6 +158,10 @@ def build(args):
         add(path, pathlib.Path(filename))
     if args.win95:
         add(("MSBATCH.INF",), msbatch(os.environ.get("UNEMUPC_USER_WIN95_KEY")))
+
+    if args.win31:
+        for name, data in win31_files().items():
+            add((name,), data)
 
     heads = args.heads if args.heads is not None else (4 if doom else 16)
     spt = args.sectors if args.sectors is not None else (32 if doom else 63)
@@ -149,6 +209,8 @@ def build(args):
             return bytes([head, sector + 1 | ((cylinder >> 8) << 6), cylinder & 255])
         with image.open("wb") as disk:
             disk.truncate(sectors * 512)
+            if args.win31:
+                disk.write(win31_mbr())
             disk.seek(446)
             disk.write(bytes([0x80]) + chs(start) + bytes([6]) + chs(sectors - 1)
                        + struct.pack("<II", start, total))
@@ -212,7 +274,9 @@ def main():
     parser.add_argument("--sectors", type=int)
     parser.add_argument("--size-mib", type=int)
     parser.add_argument("--extra", nargs=2, action="append", default=[], metavar=("FILE", "DOSPATH"))
-    parser.add_argument("--win95", action="store_true")
+    windows = parser.add_mutually_exclusive_group()
+    windows.add_argument("--win95", action="store_true")
+    windows.add_argument("--win31", action="store_true")
     try:
         build(parser.parse_args())
     except (OSError, ValueError, KeyError, subprocess.CalledProcessError) as error:

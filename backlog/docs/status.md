@@ -1,5 +1,44 @@
 # Status
 
+## Local Windows 3.1 in 386 Enhanced mode (2026-11-27)
+
+The ignored `user_media_win31_stage1`, `user_media_win31_stage2`,
+`user_media_win31_standard_mode`, `user_media_win31_stage3` and
+`user_media_win31_enhanced_refused_by_dos7` reuse the Windows 95 runner and
+FAT16 builder. They require private retail setup files
+(`UNEMUPC_USER_WIN31_DIR`) and a DOS boot floppy (`UNEMUPC_USER_DOS_FLOPPY`).
+A generated system-settings file requests unattended setup with VGA, PS/2
+mouse, no network or printers. Inputs remain read-only; IDE changes remain in
+journal generations over a fully hashed immutable base.
+
+**MEASURED**, x86jit `f0785d5a`, generic-486-isa, **MS-DOS 6.22** boot disk
+(clean boot), all five tests pass: DOS's SYS makes C: bootable (35,378,166
+retired); booted from C:, SETUP /H installs Windows 3.1 with one ENTER and
+returns to DOS (675,049,255 retired); WIN /S and **WIN /3** each run Program
+Manager, proved by its File/Run command opening a DOS prompt and EXIT returning
+to a populated frame held for five million instructions. In standard mode the
+prompt is decoded in real mode (boundary 172,525,865 retired); in 386 Enhanced
+mode, after paging, V86 execution and a V86-to-monitor delivery all seen after
+the command, it is decoded in paged V86 mode (boundary 163,644,543 retired).
+No CPU or device stop. SYSTEM.INI holds the requested VGA, PS/2 mouse, Program
+Manager and no-network choices.
+
+With the **MS-DOS 7.1** boot floppy all five tests pass as well: stages 1, 2
+and standard mode as above, `stage3` skips, and
+`user_media_win31_enhanced_refused_by_dos7` asserts that the DOS 7 kernel
+refuses WIN /3 before paging. Stage 1 detects DOS 7 through a marker its batch
+prints in the DOS 7 branch. SYS31.BAT rewrites MSDOS.SYS only on DOS 7 or
+later, gated by an 8-byte project-owned version probe, so MS-DOS 6's kernel
+file is never touched.
+
+Findings: VPICD sets the 8259A special mask mode, which the PIC model does not
+implement (no visible fault). SeaBIOS leaves PIT counter 1 unprogrammed, so
+port 61h bit 4 never toggles and an MS-DOS 6 setup-disk startup program hangs;
+the harness uses MS-DOS 6's clean boot. Polling the 640x480 screen after every
+run slice had held graphical phases to 0.3 M instructions/s; the shared runner
+now polls once per million instructions (about 6 M/s). See the
+[stage plan, port summaries and evidence](user-media.md#windows-31).
+
 ## Generic ISA BIOS services and protected ATA probes (2026-11-25)
 
 **MEASURED**, x86jit `ce6bbbee`, pinned unemu SeaBIOS/SeaVGABIOS:
@@ -58,6 +97,13 @@ and CuteMouse remain unqualified. Sample-rate packet pacing remains unmodelled.
 See [the measured gap rows and hardware references](design/windows95-on-486.md#5-determinism-and-tests).
 
 ## Local Windows 95 setup launcher (2026-11-25)
+
+**MEASURED**, x86jit `f0785d5a`: the unchanged stage-1 qualification passes
+through the shared Windows runner, reaching its first populated 640×480 setup
+screen at 273,257,205 retired instructions (58–99 s across runs; at `8f23fdcd` 271,888,056
+in 120.96 s with finer screen polling). Full installation and the product-key
+prompt remain unqualified. The following refusal is historical at the earlier
+CPU pin.
 
 **MEASURED**, x86jit `4bf91c8d`: the ignored `user_media_win95_stage1`
 boots the supplied MS-DOS 7.1 floppy read-only on generic-486-isa, 80486DX,

@@ -587,3 +587,156 @@ fn msbatch_key_is_only_in_generated_disk_never_in_builder_logs() {
     }
     assert!(!source.path().join("MSBATCH.INF").exists());
 }
+
+#[test]
+fn win31_builder_generates_boot_chain_and_settings_without_touching_source() {
+    let source = TempDir::new("synthetic-win31");
+    std::fs::write(source.path().join("setup.exe"), b"synthetic setup").unwrap();
+    let build_disk = || {
+        image(
+            builder()
+                .arg("--win31")
+                .env("UNEMUPC_USER_WIN31_DIR", source.path())
+                .output()
+                .unwrap(),
+        )
+    };
+    let first = build_disk();
+    let second = build_disk();
+    assert_eq!(image_digest(&first), image_digest(&second));
+    let mut fat = Fat16::open(&first, (1015, 16, 63));
+    assert_eq!(
+        fat.file(&[*b"WIN31SRC   ", *b"SETUP   EXE"]),
+        b"synthetic setup"
+    );
+    let settings = String::from_utf8(fat.file(&[*b"SETUP   SHH"])).unwrap();
+    for request in [
+        "machine=ibm_compatible",
+        "display=vga",
+        "mouse=ps2mouse",
+        "keyboard=t4s0enha",
+        "network=nonet",
+        "[windir]\r\nC:\\WINDOWS",
+        "endopt=exit",
+        "configfiles=modify",
+    ] {
+        assert!(settings.contains(request), "missing request: {request}");
+    }
+    assert!(!settings.contains("[printers]"));
+    assert!(fat
+        .file(&[*b"CONFIG  SYS"])
+        .windows(9)
+        .any(|s| s == b"HIMEM.SYS"));
+    let transfer = String::from_utf8(fat.file(&[*b"SYS31   BAT"])).unwrap();
+    for required in [
+        "SYS C:",
+        "IF ERRORLEVEL 1 GOTO END",
+        "IF NOT EXIST C:\\IO.SYS",
+        "IF NOT EXIST C:\\COMMAND.COM",
+        "C:\\WIN31SRC\\EXPAND C:\\WIN31SRC\\HIMEM.SY_ C:\\HIMEM.SYS",
+        "IF NOT EXIST C:\\HIMEM.SYS",
+        "BootGUI=0",
+        "Logo=0",
+        "BootDelay=0",
+    ] {
+        assert!(
+            transfer.contains(required),
+            "missing transfer guard or setting: {required}"
+        );
+    }
+    // MS-DOS 6 keeps part of its kernel in MSDOS.SYS: every line that touches
+    // it must sit between the version gate and the label the gate jumps to.
+    let lines: Vec<&str> = transfer.split("\r\n").collect();
+    let at = |line: &str| lines.iter().position(|l| *l == line).unwrap();
+    let gate = at("IF NOT ERRORLEVEL 7 GOTO DONE");
+    assert_eq!(lines[gate - 1], "C:\\DOSVER.COM");
+    let done = at(":DONE");
+    let touching: Vec<usize> = (0..lines.len())
+        .filter(|index| lines[*index].contains("MSDOS.SYS"))
+        .collect();
+    assert_eq!(touching.len(), 5);
+    assert!(touching.iter().all(|index| (gate..done).contains(index)));
+    assert!((gate..done).contains(&at("ECHO UM31DOS7")));
+    assert!(at("ECHO UM31SYSOK") > done);
+    // MOV AH,30h; INT 21h (DOS version into AL); MOV AH,4Ch; INT 21h (exit
+    // with AL as the ERRORLEVEL).
+    assert_eq!(
+        fat.file(&[*b"DOSVER  COM"]),
+        [0xb4, 0x30, 0xcd, 0x21, 0xb4, 0x4c, 0xcd, 0x21]
+    );
+    let batch = String::from_utf8(fat.file(&[*b"INST31  BAT"])).unwrap();
+    assert!(batch.contains("SETUP /H:C:\\SETUP.SHH"));
+    assert!(batch.contains("IF NOT EXIST C:\\WINDOWS\\SYSTEM\\WIN386.EXE"));
+    let mbr = fat.read(0, 512);
+    assert_ne!(&mbr[..62], &[0; 62], "SYS needs an MBR chain loader");
+    assert_eq!(&mbr[510..], &[0x55, 0xaa]);
+    assert_eq!(mbr[446], 0x80);
+    assert_eq!(
+        std::fs::read(source.path().join("setup.exe")).unwrap(),
+        b"synthetic setup"
+    );
+    assert_eq!(std::fs::read_dir(source.path()).unwrap().count(), 1);
+    for path in [first, second] {
+        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+}
+
+#[test]
+fn win31_mbr_chainloads_a_synthetic_partition_and_preserves_boot_drive() {
+    use std::io::{Seek, SeekFrom, Write};
+    let source = TempDir::new("synthetic-win31-boot");
+    let path = image(
+        builder()
+            .arg("--win31")
+            .args(["--size-mib", "40"])
+            .env("UNEMUPC_USER_WIN31_DIR", source.path())
+            .output()
+            .unwrap(),
+    );
+    // Complete the generated base before assembly; all subsequent guest writes
+    // go through the overlay. This VBR is ours, independent of a DOS SYS binary.
+    let mut disk = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
+    disk.seek(SeekFrom::Start(63 * 512)).unwrap();
+    disk.write_all(&[
+        0x31, 0xc0, 0x8e, 0xd8, 0xc6, 0x06, 0x00, 0x05, 0x31, 0x88, 0x16, 0x01, 0x05, 0xfa, 0xf4,
+    ])
+    .unwrap();
+    drop(disk);
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut config = machine_file::load_for_assembly(
+        root.join("machines/generic-486-ide.toml"),
+        Default::default(),
+    )
+    .unwrap()
+    .config;
+    config
+        .drives
+        .retain(|drive| matches!(drive.kind, assembly::DriveKind::HardDisk { .. }));
+    let drive = &mut config.drives[0];
+    drive.kind = assembly::DriveKind::HardDisk {
+        geometry: assembly::HardDiskGeometry {
+            cylinders: (std::fs::metadata(&path).unwrap().len() / (16 * 63 * 512)) as u32,
+            heads: 16,
+            sectors_per_track: 63,
+            bytes_per_sector: 512,
+        },
+    };
+    drive.expected_sha256 = Some(image_digest(&path).try_into().unwrap());
+    drive.image = assembly::ImageSource::File(path.clone());
+    let mut assembled =
+        machine_file::assemble_with_observation(&config, &Default::default()).unwrap();
+    assert_eq!(
+        assembled.machine.run_bounded(Some(20_000_000)).unwrap(),
+        machine::RunOutcome::Halted
+    );
+    let mut result = [0; 2];
+    assembled
+        .machine
+        .cpu()
+        .read_mem(0x500, &mut result)
+        .unwrap();
+    assert_eq!(result, [0x31, 0x80]);
+    assembled.finish_persistence().unwrap();
+    drop(assembled);
+    std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+}
