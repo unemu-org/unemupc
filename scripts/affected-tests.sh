@@ -94,7 +94,9 @@ def data_rules: [
    crates: ["machine-file", "pc-harness", "unemupc"], why: "shipped machine file"},
   {prefix: "vendor/", except: "[.]md$", goldens: true,
    crates: ["assembly", "machine-file", "pc-harness", "unemupc"],
-   why: "fixture script, pin or notice"}
+   why: "fixture script, pin or notice"},
+  {prefix: "tools/bench-floppies/", goldens: false,
+   crates: ["pc-harness"], why: "benchmark floppy sources a pc-harness test builds"}
 ];
 def scan_tests: [
   {package: "pc-config", test: "platform_ids",

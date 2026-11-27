@@ -184,6 +184,9 @@ bash vendor/vga-modex-test/build.sh
 UNEMUPC_REQUIRE_FIXTURES=1 cargo test --offline -p pc-harness --test vga_modex_test_golden -- --ignored --nocapture
 # Open AT privilege-level test floppy: IRET to ring 3, INT, #GP and a call gate back to ring 0 on SS0:SP0 (design/at-privilege-test.md)
 UNEMUPC_REQUIRE_FIXTURES=1 cargo test --offline -p pc-harness --test at_privilege_test_golden -- --include-ignored --nocapture
+# Speed-ceiling boot floppies, timed on unemupc or with a stopwatch on another emulator (design/bench-floppies.md)
+bash tools/bench-floppies/build.sh            # writes ${TMPDIR:-/tmp}/unemupc-bench-floppies/<case>.img
+cargo run --offline --release -p pc-harness --example bench_floppy -- "${TMPDIR:-/tmp}"/unemupc-bench-floppies/*.img
 cargo test -p devices                        # one crate's tests
 ```
 

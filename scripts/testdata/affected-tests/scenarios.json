@@ -31,6 +31,23 @@
     }
   },
   {
+    "name": "benchmark floppy sources select the pc-harness tests without the goldens",
+    "changed": [
+      "tools/bench-floppies/ceiling.asm"
+    ],
+    "expect": {
+      "mode": "crates",
+      "seeds": [
+        "pc-harness"
+      ],
+      "affected": [
+        "pc-harness",
+        "unemupc"
+      ],
+      "tier": "fast"
+    }
+  },
+  {
     "name": "a new runner module is a runner too",
     "changed": [
       "crates/pc-harness/src/new_runner.rs"

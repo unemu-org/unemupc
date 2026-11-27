@@ -1035,6 +1035,10 @@ and `-DPROTECTED32` for protected32; additionally use `-DPAGED32` for
 `cpu-ceiling-flat32.bin`, and also `-DPAGED32` for
 `cpu-ceiling-flat-paged32.bin`. `cpu-speed.asm` uses `nasm -f bin`.
 
+Bootable floppy versions of these loops, which boot through the BIOS instead of
+replacing it, time the same guest work on unemupc and on other emulators; see
+[Speed-ceiling boot floppies](bench-floppies.md).
+
 ### Clock-related golden changes
 
 Only the generic ISA configurations change clock rate. The IBM AT runtime
