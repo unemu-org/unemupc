@@ -31,7 +31,7 @@ mod fixtures;
 #[path = "support/session.rs"]
 pub mod session;
 
-const CPU_REV: &str = "be0b80d9e13e3ba23da6b540915173488cd1c879";
+const CPU_REV: &str = "241c4cba3b3f6828139551314b37cd510889b2b1";
 const VDISK_BASE: u64 = 0x100000;
 
 /// The record the FreeDOS kernel copies to FFFF:0010 (InstallVDISK): a VDISK

@@ -35,7 +35,7 @@ use std::path::{Path, PathBuf};
 #[path = "support/fixtures.rs"]
 mod fixtures;
 
-const CPU_REV: &str = "be0b80d9e13e3ba23da6b540915173488cd1c879";
+const CPU_REV: &str = "241c4cba3b3f6828139551314b37cd510889b2b1";
 const IMAGE: &str = "at-pm-test/at-pm-test-1200.img";
 const OPEN_BIOS: &str = "unemu-at-bios/bios-unemu-at.bin";
 // The BIOS image of machines/at-games-open.toml; checked against that file.

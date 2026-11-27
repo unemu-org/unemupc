@@ -86,7 +86,7 @@ fn kiselev_irq13_chains_to_int2_for_numeric_errors() {
         return;
     };
     assert!(
-        include_str!("../../../Cargo.lock").contains("#be0b80d9e13e3ba23da6b540915173488cd1c879")
+        include_str!("../../../Cargo.lock").contains("#241c4cba3b3f6828139551314b37cd510889b2b1")
     );
     // Kiselev 8088 BIOS, bios.asm int_75: both EOIs precede software INT 02h.
     // The guest keeps that firmware vector and replaces only INT 02h.

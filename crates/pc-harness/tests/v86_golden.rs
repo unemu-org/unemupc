@@ -13,7 +13,7 @@ use machine::{DeliveryEntry, RunOutcome, SchedulerEngine};
 #[path = "support/fixtures.rs"]
 mod fixtures;
 
-const CPU_REV: &str = "be0b80d9e13e3ba23da6b540915173488cd1c879";
+const CPU_REV: &str = "241c4cba3b3f6828139551314b37cd510889b2b1";
 const CAP: u64 = 50_000;
 const EXPECTED: &str = "i386-v86-test\n\
 v86 real code ok\n\
