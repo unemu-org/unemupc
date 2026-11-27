@@ -684,6 +684,25 @@ fn win31_builder_generates_boot_chain_and_settings_without_touching_source() {
 #[test]
 fn win31_mbr_chainloads_a_synthetic_partition_and_preserves_boot_drive() {
     use std::io::{Seek, SeekFrom, Write};
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    // The machine file names SeaBIOS and the default floppy and disk images;
+    // none of them is in git, so the test skips where they are not fetched.
+    if [
+        "seabios/bios-1.17.0-isa.bin",
+        "seabios/build/vgabios-1.17.0-stdvga.bin",
+        "freedos/freedos.img",
+        "hdd/fat16.img",
+    ]
+    .iter()
+    .any(|name| !root.join("vendor").join(name).exists())
+    {
+        assert!(
+            std::env::var_os("UNEMUPC_REQUIRE_FIXTURES").is_none(),
+            "required machine fixture is missing"
+        );
+        eprintln!("skipping: a machine fixture is missing");
+        return;
+    }
     let source = TempDir::new("synthetic-win31-boot");
     let path = image(
         builder()
@@ -702,7 +721,6 @@ fn win31_mbr_chainloads_a_synthetic_partition_and_preserves_boot_drive() {
     ])
     .unwrap();
     drop(disk);
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let mut config = machine_file::load_for_assembly(
         root.join("machines/generic-486-ide.toml"),
         Default::default(),
