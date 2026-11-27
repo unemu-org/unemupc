@@ -8,7 +8,7 @@ use std::num::NonZeroU32;
 #[path = "support/speed.rs"]
 mod speed;
 const ROM: &[u8] = include_bytes!("fixtures/cpu-speed.bin");
-const CPU_REV: &str = "75ef58a2eee181c148d2c7689eacfea7d946fbf2";
+const CPU_REV: &str = "641d4d9698c79dfd351716c9f7fac8ed0bf00c90";
 
 fn rig(mhz: u32, turbo: Option<u32>) -> assembly::AssembledMachine {
     assert!(include_str!("../../../Cargo.lock").contains(CPU_REV));

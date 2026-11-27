@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Yamaha YMF262 datasheet, Register Map: synthetic FM tone through SB16/mixer.
 //! See `backlog/docs/design/audio.md` §OPL3. PCM pins x86jit revision
-//! 75ef58a2eee181c148d2c7689eacfea7d946fbf2.
+//! 641d4d9698c79dfd351716c9f7fac8ed0bf00c90.
 use assembly::{
     AssemblyOptions, AudioSinkKind, DeviceConfig, DeviceId, DeviceKind, DmaSpec, ObservationPolicy,
     RunPolicy, Sb16Cfg,
