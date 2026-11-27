@@ -1517,6 +1517,19 @@ fn steps_until(
     numerator: NonZeroU64,
     tick_denominator: u128,
 ) -> u64 {
+    // Asked after every served access: when the operands fit 64 bits the
+    // same rounding runs there, and the 128-bit form covers the rest.
+    if let Some(steps) = u64::try_from(tick_denominator)
+        .ok()
+        .and_then(|denominator| {
+            (deadline.0 - clock.0)
+                .checked_mul(numerator.get())?
+                .checked_sub(remainder)
+                .map(|phase| phase.div_ceil(denominator))
+        })
+    {
+        return steps;
+    }
     let clocks = u128::from(deadline.0 - clock.0);
     let phase = clocks * u128::from(numerator.get()) - u128::from(remainder);
     u64::try_from(phase.div_ceil(tick_denominator)).unwrap_or(u64::MAX)
@@ -1531,6 +1544,19 @@ fn step_target(
     numerator: NonZeroU64,
     tick_denominator: u128,
 ) -> Result<(VClock, u64), MachineError> {
+    // Charged before every served access: the 64-bit form when it cannot
+    // overflow, with the same quotient and remainder as the 128-bit one.
+    if let Some(total) = u64::try_from(tick_denominator)
+        .ok()
+        .and_then(|denominator| steps.checked_mul(denominator)?.checked_add(remainder))
+    {
+        let rate = numerator.get();
+        let target = clock
+            .0
+            .checked_add(total / rate)
+            .ok_or_else(|| scheduler_error("clock exhausted"))?;
+        return Ok((VClock(target), total % rate));
+    }
     let total = u128::from(steps)
         .checked_mul(tick_denominator)
         .and_then(|ticks| ticks.checked_add(u128::from(remainder)))
@@ -1570,6 +1596,100 @@ mod tests {
     use bus::{DecodeMap, PortRange};
     use device::{Device, DeviceError, DmaRequest, TraceEvent};
     use testkit::MockCpu;
+
+    /// The 128-bit forms the step conversions' 64-bit fast paths must
+    /// reproduce exactly, errors included.
+    fn wide_steps_until(
+        deadline: VClock,
+        clock: VClock,
+        remainder: u64,
+        numerator: NonZeroU64,
+        tick_denominator: u128,
+    ) -> u64 {
+        let clocks = u128::from(deadline.0 - clock.0);
+        let phase = clocks * u128::from(numerator.get()) - u128::from(remainder);
+        u64::try_from(phase.div_ceil(tick_denominator)).unwrap_or(u64::MAX)
+    }
+
+    fn wide_step_target(
+        clock: VClock,
+        steps: u64,
+        remainder: u64,
+        numerator: NonZeroU64,
+        tick_denominator: u128,
+    ) -> Option<(VClock, u64)> {
+        let total = u128::from(steps)
+            .checked_mul(tick_denominator)?
+            .checked_add(u128::from(remainder))?;
+        let rate = u128::from(numerator.get());
+        let clocks = u64::try_from(total / rate).ok()?;
+        let target = clock.0.checked_add(clocks)?;
+        Some((VClock(target), (total % rate) as u64))
+    }
+
+    #[test]
+    fn step_conversions_match_wide_arithmetic_at_edge_values() {
+        let max = u64::MAX;
+        let rates = [
+            (1, 1),
+            (3, 2),
+            (2, 3),
+            (33_000_000, 1_193_182),
+            (max, 1),
+            (1, max),
+            (max, max - 1),
+            (7, 1 << 40),
+        ];
+        let numbers = [0, 1, 2, 3, 1 << 32, max / 3, max / 2, max - 1, max];
+        for (rate_numerator, rate_denominator) in rates {
+            let numerator = NonZeroU64::new(rate_numerator).unwrap();
+            // A machine's denominator, and wider ones only 128 bits hold.
+            for tick_denominator in [
+                u128::from(rate_denominator),
+                u128::from(max) + 1,
+                u128::from(max) * 3,
+            ] {
+                for &clock in &numbers {
+                    for &steps in &numbers {
+                        // The carried remainder stays below the rate numerator.
+                        for remainder in [0, rate_numerator / 2, rate_numerator - 1] {
+                            let fast = step_target(
+                                VClock(clock),
+                                steps,
+                                remainder,
+                                numerator,
+                                tick_denominator,
+                            )
+                            .ok();
+                            let wide = wide_step_target(
+                                VClock(clock),
+                                steps,
+                                remainder,
+                                numerator,
+                                tick_denominator,
+                            );
+                            assert_eq!(
+                                fast, wide,
+                                "{rate_numerator}/{tick_denominator} {clock} {steps} {remainder}"
+                            );
+                            let Some(distance) = steps.checked_add(1) else {
+                                continue;
+                            };
+                            let deadline = VClock(clock.saturating_add(distance));
+                            if deadline.0 == clock {
+                                continue;
+                            }
+                            assert_eq!(
+                                steps_until(deadline, VClock(clock), remainder, numerator, tick_denominator),
+                                wide_steps_until(deadline, VClock(clock), remainder, numerator, tick_denominator),
+                                "{rate_numerator}/{tick_denominator} {clock} {deadline:?} {remainder}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     /// Only requests in a row, each fewer than the bound after the one
     /// before, make a storm; one longer distance, or a retired count that

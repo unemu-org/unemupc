@@ -137,6 +137,26 @@ pub struct VgaDiagnostic {
     pub shown: [(u8, [u8; 3]); 16],
 }
 
+/// Character clocks by dot clock (25.175 MHz, then 28.322 MHz) and by
+/// Clocking Mode bits 3 and 0 (dot clock halved; eight-dot characters,
+/// otherwise nine): IBM VGA/XGA Technical Reference, Miscellaneous Output
+/// Register and Clocking Mode Register. Fixed at build time, so status reads
+/// and display latches do not reduce the same ratios again.
+const CHARACTER_CLOCKS: [[ClockDomain; 10]; 2] = {
+    const fn by_mode(dot: ClockDomain) -> [ClockDomain; 10] {
+        let mut clocks = [dot; 10];
+        let mut mode = 0;
+        while mode < 10 {
+            let dots = if mode & 1 != 0 { 8 } else { 9 };
+            let halved = if mode & 8 != 0 { 2 } else { 1 };
+            clocks[mode] = dot.divided_by(dots * halved);
+            mode += 1;
+        }
+        clocks
+    }
+    [by_mode(VGA_25), by_mode(VGA_28)]
+};
+
 struct RasterTiming {
     characters: u128,
     horizontal: (u128, u128),
@@ -399,6 +419,20 @@ impl Vga {
         u8::from(column >= hdisplay || line >= vdisplay || retrace) | (u8::from(retrace) << 3)
     }
 
+    /// Whether the start-address bundle and the pixel panning differ from
+    /// what the display last latched at retrace (see [`Device::tick`]).
+    fn pending_latches(&self) -> (bool, bool) {
+        let address_pending = self.display_start
+            != u16::from_be_bytes([self.crtc[0x0c], self.crtc[0x0d]])
+            || self.display_row != self.crtc[8] & 0x7f;
+        (address_pending, self.display_pan != self.attribute[0x13])
+    }
+
+    fn latches_pending(&self) -> bool {
+        let (address, pan) = self.pending_latches();
+        address || pan
+    }
+
     // Status polling and the display latch must cross the same virtual raster.
     fn raster_timing(&self, now: VClock) -> RasterTiming {
         let c = &self.crtc;
@@ -417,14 +451,8 @@ impl Vga {
                 character_clock: PIT,
             };
         }
-        let dot_clock = if self.misc & 0x0c == 4 {
-            VGA_28
-        } else {
-            VGA_25
-        };
-        let dots_per_char = if self.sequencer[1] & 1 != 0 { 8 } else { 9 }
-            * if self.sequencer[1] & 8 != 0 { 2 } else { 1 };
-        let character_clock = dot_clock.divided_by(dots_per_char);
+        let character_clock = CHARACTER_CLOCKS[usize::from(self.misc & 0x0c == 4)]
+            [usize::from(self.sequencer[1] & 9)];
         let start =
             u128::from(c[0x10]) + (u128::from(c[7] & 4) << 6) + (u128::from(c[7] & 0x80) << 2);
         let width = (u128::from(c[0x11] & 15) + 16 - (start & 15) - 1) % 16 + 1;
@@ -955,7 +983,11 @@ impl Device for Vga {
     /// frame-level approximation: sample AC panning at vertical retrace end.
     fn tick(&mut self, now: VClock) {
         debug_assert!(now >= self.now, "device clock moved backwards");
-        if now >= self.now {
+        if now >= self.now && !self.latches_pending() {
+            // Every latch already holds its register: crossing retrace would
+            // store the same values, so the raster need not be located.
+            self.now = now;
+        } else if now >= self.now {
             let previous = self.raster_timing(self.now);
             let current = self.raster_timing(now);
             let start = current.retrace.0;
@@ -971,10 +1003,7 @@ impl Device for Vga {
         }
     }
     fn next_event(&self, now: VClock) -> NextEvent {
-        let address_pending = self.display_start
-            != u16::from_be_bytes([self.crtc[0x0c], self.crtc[0x0d]])
-            || self.display_row != self.crtc[8] & 0x7f;
-        let pan_pending = self.display_pan != self.attribute[0x13];
+        let (address_pending, pan_pending) = self.pending_latches();
         if !address_pending && !pan_pending {
             return NextEvent::Dormant;
         }
@@ -1196,6 +1225,32 @@ mod clock_domain_regressions {
                     .unwrap()
             );
             vga.crtc[0] = 0;
+        }
+    }
+
+    /// The prebuilt character clocks are the ones dividing the selected dot
+    /// clock at run time would give, for every clock select and every
+    /// Clocking Mode dot-width and halving combination.
+    #[test]
+    fn clock_domain_character_clock_table_matches_runtime_division() {
+        let mut vga = Vga::new();
+        vga.crtc[0] = 95;
+        vga.crtc[1] = 79;
+        vga.crtc[6] = 255;
+        vga.crtc[0x12] = 199;
+        for misc in [0x00, 0x04, 0x08, 0x0c] {
+            for clocking in [0x00, 0x01, 0x08, 0x09, 0xf6, 0xff] {
+                vga.misc = misc;
+                vga.sequencer[1] = clocking;
+                let dot = if misc & 0x0c == 4 { VGA_28 } else { VGA_25 };
+                let dots =
+                    if clocking & 1 != 0 { 8 } else { 9 } * if clocking & 8 != 0 { 2 } else { 1 };
+                assert_eq!(
+                    vga.raster_timing(VClock::from_pit(7)).character_clock,
+                    dot.divided_by(dots),
+                    "misc {misc:#04x} clocking mode {clocking:#04x}"
+                );
+            }
         }
     }
 }

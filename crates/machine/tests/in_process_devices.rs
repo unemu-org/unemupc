@@ -239,6 +239,19 @@ fn traced_rig(in_process: bool, trace: bool) -> Rig {
 }
 
 fn program_rig(in_process: bool, program: Vec<(u32, Vec<u8>)>) -> Rig {
+    extended_rig(in_process, program, Extra::default())
+}
+
+/// Devices appended after the requester (bus index 6 on), with display
+/// window ranges decoded ahead of the window's and access couplings.
+#[derive(Default)]
+struct Extra {
+    devices: Vec<Box<dyn Device>>,
+    mmio: Vec<MmioRange>,
+    couplings: Vec<(usize, usize)>,
+}
+
+fn extended_rig(in_process: bool, program: Vec<(u32, Vec<u8>)>, extra: Extra) -> Rig {
     let mut cpu = X86JitCpu::new_i286_bare(0x100000, 0, 0x7C00, RealSegments::flat(0)).unwrap();
     cpu.map_ram(0, WINDOW).unwrap();
     cpu.map_mmio(WINDOW, 0x20000).unwrap();
@@ -251,18 +264,25 @@ fn program_rig(in_process: bool, program: Vec<(u32, Vec<u8>)>) -> Rig {
         device,
         width: PortWidth::Byte,
     };
-    let bus = Bus::new(
-        vec![
-            Box::new(pic.clone()),
-            Box::new(Pit8253::new()),
-            Box::new(Window {
-                memory: vec![0; 0x20000],
-                ..Window::default()
-            }),
-            Box::new(Logger::default()),
-            Box::new(Logger::default()),
-            Box::new(Logger::default()),
-        ],
+    let mut devices: Vec<Box<dyn Device>> = vec![
+        Box::new(pic.clone()),
+        Box::new(Pit8253::new()),
+        Box::new(Window {
+            memory: vec![0; 0x20000],
+            ..Window::default()
+        }),
+        Box::new(Logger::default()),
+        Box::new(Logger::default()),
+        Box::new(Logger::default()),
+    ];
+    devices.extend(extra.devices);
+    let mut mmio = extra.mmio;
+    mmio.push(MmioRange {
+        addrs: WINDOW..=0xBFFFF,
+        device: 2,
+    });
+    let mut bus = Bus::new(
+        devices,
         DecodeMap {
             ports: vec![
                 port(0x20..=0x21, 0),
@@ -270,12 +290,12 @@ fn program_rig(in_process: bool, program: Vec<(u32, Vec<u8>)>) -> Rig {
                 port(0x80..=0x80, 3),
                 port(0x81..=0x81, 4),
             ],
-            mmio: vec![MmioRange {
-                addrs: WINDOW..=0xBFFFF,
-                device: 2,
-            }],
+            mmio,
         },
     );
+    for (device, dependent) in extra.couplings {
+        bus.add_access_coupling(device, dependent).unwrap();
+    }
     let log = pic.observe(bus.observation_clock());
     let lines = vec![
         IrqLine {
@@ -317,7 +337,9 @@ fn run(mut rig: Rig, cap: u64) -> (Outcome, u64, ServedAccesses) {
     rig.machine.cpu().read_mem(0, &mut ram).unwrap();
     let bus = rig.machine.bus_mut();
     bus.settle();
-    let devices = (2..6).map(|i| bus.device(i).unwrap().save()).collect();
+    let devices = (2..)
+        .map_while(|i| bus.device(i).map(|device| device.save()))
+        .collect();
     let slices = rig.machine.code_trail().unwrap().samples();
     let served = rig.machine.served_accesses();
     (
@@ -420,6 +442,218 @@ fn turning_serving_off_between_runs_keeps_the_machine_the_same() {
         );
     }
     assert_eq!(run(toggled, 1_000_000).0, run(reference, 1_000_000).0);
+}
+
+/// A device no access reaches, counting how often the machine asks for its
+/// next event; its one deadline lies past every run here.
+struct Bystander {
+    queries: Rc<Cell<u64>>,
+}
+
+impl Device for Bystander {
+    fn name(&self) -> &'static str {
+        "test-bystander"
+    }
+    fn port_read(&mut self, _: u16, _: u8) -> Result<u32, DeviceError> {
+        Ok(0xFF)
+    }
+    fn port_write(&mut self, _: u16, _: u8, _: u32) -> Result<(), DeviceError> {
+        Ok(())
+    }
+    fn mmio_read(&mut self, _: u64, _: u8) -> Result<u64, DeviceError> {
+        Ok(0xFF)
+    }
+    fn mmio_write(&mut self, _: u64, _: u8, _: u64) -> Result<(), DeviceError> {
+        Ok(())
+    }
+    fn tick(&mut self, _: VClock) {}
+    fn next_event(&self, _: VClock) -> NextEvent {
+        self.queries.set(self.queries.get() + 1);
+        NextEvent::At(VClock(1 << 40))
+    }
+    fn irq_pending(&self) -> bool {
+        false
+    }
+    fn dma_request_pending(&self) -> bool {
+        false
+    }
+    fn reset(&mut self) {}
+    fn save(&self) -> Vec<u8> {
+        Vec::new()
+    }
+    fn restore(&mut self, _: &[u8]) -> Result<(), DeviceError> {
+        Ok(())
+    }
+}
+
+/// A served store to the display window leaves every device it did not
+/// reach with the deadline it had, so the machine does not ask them again
+/// for each store, and the run still matches the ordinary one.
+#[test]
+fn a_served_window_store_does_not_ask_unreached_devices_again() {
+    let bystander_rig = |in_process: bool| {
+        let queries = Rc::new(Cell::new(0));
+        let extra = Extra {
+            devices: vec![Box::new(Bystander {
+                queries: queries.clone(),
+            })],
+            ..Extra::default()
+        };
+        (extended_rig(in_process, program(false), extra), queries)
+    };
+    let (rig, _) = bystander_rig(false);
+    let (exits, _, _) = run(rig, 1_000_000);
+    let (rig, queries) = bystander_rig(true);
+    let (served, _, count) = run(rig, 1_000_000);
+    assert_eq!(served, exits);
+    assert!(count.mmio > 64 * 32, "{count:?}");
+    // Port accesses and the loop's own stops still ask every device. Debug
+    // builds also ask every device once after each served MMIO access, to
+    // check that the answers kept are current.
+    let checks = if cfg!(debug_assertions) {
+        count.mmio
+    } else {
+        0
+    };
+    let queries = queries.get() - checks;
+    assert!(queries * 4 < count.mmio, "{queries} queries for {count:?}");
+}
+
+/// The interval a store to [`Arm`] schedules for [`Alarm`] through state
+/// they share, the kind of link an access coupling declares.
+type SharedDue = Rc<Cell<Option<VClock>>>;
+
+/// Sixteen bytes at the start of the display window; a store schedules the
+/// alarm a few clocks ahead unless one is already pending.
+struct Arm {
+    due: SharedDue,
+    now: VClock,
+    memory: [u8; 16],
+}
+
+impl Device for Arm {
+    fn name(&self) -> &'static str {
+        "test-arm"
+    }
+    fn port_read(&mut self, _: u16, _: u8) -> Result<u32, DeviceError> {
+        Ok(0xFF)
+    }
+    fn port_write(&mut self, _: u16, _: u8, _: u32) -> Result<(), DeviceError> {
+        Ok(())
+    }
+    fn mmio_read(&mut self, addr: u64, _: u8) -> Result<u64, DeviceError> {
+        Ok(u64::from(self.memory[(addr - WINDOW) as usize]))
+    }
+    fn mmio_write(&mut self, addr: u64, size: u8, value: u64) -> Result<(), DeviceError> {
+        for i in 0..u64::from(size) {
+            self.memory[(addr - WINDOW + i) as usize] = (value >> (8 * i)) as u8;
+        }
+        if self.due.get().is_none() {
+            self.due
+                .set(Some(VClock(self.now.0 + 5 + (addr - WINDOW) % 7)));
+        }
+        Ok(())
+    }
+    fn tick(&mut self, now: VClock) {
+        self.now = now;
+    }
+    fn next_event(&self, _: VClock) -> NextEvent {
+        NextEvent::Dormant
+    }
+    fn irq_pending(&self) -> bool {
+        false
+    }
+    fn dma_request_pending(&self) -> bool {
+        false
+    }
+    fn reset(&mut self) {}
+    fn save(&self) -> Vec<u8> {
+        self.memory.to_vec()
+    }
+    fn restore(&mut self, _: &[u8]) -> Result<(), DeviceError> {
+        Ok(())
+    }
+}
+
+/// Fires at the time [`Arm`] scheduled and logs the time it was visited.
+struct Alarm {
+    due: SharedDue,
+    log: Vec<u64>,
+}
+
+impl Device for Alarm {
+    fn name(&self) -> &'static str {
+        "test-alarm"
+    }
+    fn port_read(&mut self, _: u16, _: u8) -> Result<u32, DeviceError> {
+        Ok(0xFF)
+    }
+    fn port_write(&mut self, _: u16, _: u8, _: u32) -> Result<(), DeviceError> {
+        Ok(())
+    }
+    fn mmio_read(&mut self, _: u64, _: u8) -> Result<u64, DeviceError> {
+        Ok(0xFF)
+    }
+    fn mmio_write(&mut self, _: u64, _: u8, _: u64) -> Result<(), DeviceError> {
+        Ok(())
+    }
+    fn tick(&mut self, now: VClock) {
+        if self.due.get().is_some_and(|due| due <= now) {
+            self.due.set(None);
+            self.log.push(now.0);
+        }
+    }
+    fn next_event(&self, _: VClock) -> NextEvent {
+        self.due.get().map_or(NextEvent::Dormant, NextEvent::At)
+    }
+    fn irq_pending(&self) -> bool {
+        false
+    }
+    fn dma_request_pending(&self) -> bool {
+        false
+    }
+    fn reset(&mut self) {}
+    fn save(&self) -> Vec<u8> {
+        self.log.iter().flat_map(|at| at.to_le_bytes()).collect()
+    }
+    fn restore(&mut self, _: &[u8]) -> Result<(), DeviceError> {
+        Ok(())
+    }
+}
+
+/// A served store reaching a device whose access coupling names a timer
+/// schedules that timer as the ordinary stop does: the coupled device's
+/// deadline is asked again after the store, while unreached ones are not.
+#[test]
+fn a_served_window_store_reschedules_its_coupled_timer() {
+    let coupled_rig = |in_process: bool| {
+        let due = SharedDue::default();
+        let extra = Extra {
+            devices: vec![
+                Box::new(Arm {
+                    due: due.clone(),
+                    now: VClock::ZERO,
+                    memory: [0; 16],
+                }),
+                Box::new(Alarm {
+                    due,
+                    log: Vec::new(),
+                }),
+            ],
+            mmio: vec![MmioRange {
+                addrs: WINDOW..=WINDOW + 15,
+                device: 6,
+            }],
+            couplings: vec![(6, 7)],
+        };
+        extended_rig(in_process, program(false), extra)
+    };
+    let (exits, _, _) = run(coupled_rig(false), 1_000_000);
+    let (served, _, count) = run(coupled_rig(true), 1_000_000);
+    assert!(count.mmio > 64 * 32, "{count:?}");
+    let alarms = exits.devices.last().unwrap().len() / 8;
+    assert!(alarms >= 64, "{alarms} alarms");
+    assert_eq!(served, exits);
 }
 
 /// With TF set every instruction traps, and a request raised by a served

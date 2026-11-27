@@ -618,6 +618,9 @@ pub struct DeviceConfig {
     /// Devices whose next event an access to this device can change. The bus
     /// synchronizes them before the access, after this device, in config order.
     /// Directed edges; list indirect dependents explicitly. Empty by default.
+    /// A device whose next event an MMIO access can change through state it
+    /// shares with this device must be listed: a served MMIO access asks
+    /// only the devices it reached and their dependents for new deadlines.
     pub access_dependents: Vec<DeviceId>,
     /// Permit overlaps under the same-start containment rule of [`PortWindow::allow_overlap`].
     pub allow_port_overlap: bool,

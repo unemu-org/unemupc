@@ -221,6 +221,14 @@ impl Bus {
     ///
     /// DMA probes use the same access ordering when the requester cannot rule
     /// out pending work. Synchronization must be idempotent at the same clock.
+    ///
+    /// Synchronizing drops the cached deadlines of the target and its
+    /// dependents. After a completed MMIO access served while the CPU runs,
+    /// the machine asks only those devices again and keeps every other
+    /// answer, so a device whose next event an MMIO access can change through
+    /// state it shares with the target must be declared here. Port accesses
+    /// and failed accesses still drop every answer
+    /// (`backlog/docs/design/scheduler.md` §In-process device access).
     pub fn add_access_coupling(
         &mut self,
         device: usize,
@@ -607,6 +615,21 @@ impl Bus {
                 NextEvent::Dormant => u128::MAX,
             })
             .unwrap_or(NextEvent::Dormant)
+    }
+
+    /// Bus indices of devices whose cached deadline differs from the answer
+    /// they give at the bus clock now; debug builds check with it that a
+    /// caller keeping answers across an access kept only current ones.
+    #[cfg(debug_assertions)]
+    pub fn stale_deadlines(&self) -> Vec<usize> {
+        let now = self.now.get();
+        self.devices
+            .iter()
+            .zip(&self.deadlines)
+            .enumerate()
+            .filter(|(_, (dev, slot))| slot.is_some_and(|event| event != dev.next_event(now)))
+            .map(|(index, _)| index)
+            .collect()
     }
 
     /// Forget cached deadlines after an access that may affect coupled devices.

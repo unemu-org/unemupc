@@ -55,9 +55,14 @@ listed. Cycles therefore do not recurse or duplicate synchronization.
 This brings a dependent timer's last-synced time current before a changed input
 can shorten its period. Invalidating its deadline alone could instead return
 `At(stale_time + period) <= now` and stop the machine with "device deadline did
-not advance". Synchronization clears the target and dependent cache slots; the
-machine retains its existing global invalidation after the access and before
-charging the stopping instruction. Unrelated devices receive no access sync.
+not advance". Synchronization clears the target and dependent cache slots.
+After a port access or a failed access the machine also drops every cached
+deadline before charging the stopping instruction. A completed MMIO access
+served in process (§In-process device access) does not: only the slots the
+synchronization cleared are asked again. A device whose next event an MMIO
+access can change through state it shares with the accessed device must
+therefore be declared an access dependent of that device. Unrelated devices
+receive no access sync.
 `EveryPitClock` devices are already current and receive no extra sync, even
 when declared as dependents. After a successful access, `Bus::settle_accessed`
 visits only the touched targets and declared dependents, once each in bus
@@ -68,8 +73,10 @@ DMA completion. It still visits every device in bus order.
 
 Assembly declares the system-control-to-PIT coupling for the shared gate and
 speaker inputs. The cascaded PIC faces share state, but both are `Dormant`
-with no elapsed timer or autonomous deadline, so global invalidation and pin
-sampling cover their shared effects. Coupling declarations prepare time before
+with no elapsed timer or autonomous deadline, so their cached `Dormant`
+answers never go stale and pin sampling covers their shared effects. Devices
+sharing state with an MMIO device are covered the same way only while their
+answer cannot change; otherwise the coupling must be declared. Coupling declarations prepare time before
 an access; they do not connect pins or implement register effects. See also
 §Access synchronization and invalidation.
 
@@ -875,8 +882,17 @@ The machine's handler (`machine::in_process`) does what the loop does for
 that stop, in its order and at its virtual time: charge the steps before the
 access, access the bus, invalidate deadlines, charge a port access's own
 step, settle the accessed devices and their dependents and sample the wired
-IRQ lines. It declines before changing anything when equality cannot be
-proven:
+IRQ lines. Invalidation differs in one respect: after a completed MMIO access
+it keeps the cached answers of every device the access did not reach, since
+the bus already dropped those of the reached devices and their declared
+access dependents when it synchronized them, and an unchanged device's answer
+stays the same while the clock moves towards it. The result equals the
+loop's full re-query only under the coupling contract in §Adoption: a device
+whose next event an MMIO access can change through shared state is declared
+an access dependent. Port accesses and failed accesses still drop every
+answer, as the loop does. Debug builds re-ask every device after each served
+MMIO access and assert the cached answers still hold. It declines before
+changing anything when equality cannot be proven:
 
 - the access's steps would reach the next device deadline (the last step of
   a run bounded by it), whose visits can need DMA through the CPU's memory;

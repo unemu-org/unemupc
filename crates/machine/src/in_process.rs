@@ -7,8 +7,16 @@
 //! the access on the bus, charges the access's own step and settles. The CPU
 //! seam can instead call [`InProcess`] synchronously for accesses inside
 //! [`SERVED_RANGES`] ([`cpu::Cpu::run_steps_serving`]). The handler does
-//! exactly what the loop would do for that stop, in the same order and at the
-//! same virtual time, with the same helpers, and lets the run continue. It
+//! what the loop would do for that stop, in the same order and at the same
+//! virtual time, with the same helpers, and lets the run continue. One step
+//! is cheaper: after a completed MMIO access it asks only the devices the
+//! access reached and their declared access dependents for new deadlines,
+//! where the loop asks every device. That gives the loop's answers under the
+//! access-coupling contract ([`bus::Bus::add_access_coupling`]): a device
+//! whose next event an MMIO access can change through shared state is
+//! declared an access dependent. Debug builds check it after every served
+//! MMIO access. Port and failed accesses drop every answer, as the loop
+//! does. It
 //! declines ([`AccessResult::Fallback`]) before changing anything whenever it
 //! cannot prove the result equal: an access whose own step would reach the
 //! next device deadline (whose visits may need DMA, which needs the CPU), an
@@ -430,7 +438,19 @@ impl cpu::DeviceAccessHandler for InProcess<'_> {
                 self.outcome.sync_a20 |= stop;
             }
         }
-        self.bus.invalidate_deadlines();
+        // The loop asks every device again after any access. By the
+        // access-coupling contract (`Bus::add_access_coupling`), a completed
+        // MMIO access changes the timers only of the devices it reached and
+        // their declared access dependents, whose answers the bus dropped
+        // when it synchronized them. Every other device keeps the state its
+        // cached answer came from, and an answer does not change while the
+        // clock moves towards it, so asking those devices again would return
+        // the same deadlines. A port access can reach board lines and timers
+        // shared beyond its devices, and a failed access ends the run, so
+        // both still drop every answer.
+        if port || result.is_err() {
+            self.bus.invalidate_deadlines();
+        }
         self.deadline_at = None;
         let value = match result {
             Ok(value) => value,
@@ -462,6 +482,19 @@ impl cpu::DeviceAccessHandler for InProcess<'_> {
         // A failed query also stops here: the loop repeats it after its
         // reset and cap checks, where the ordinary stop's loop would fail.
         self.deadline_at = self.deadline_from_now();
+        // The answers kept across an MMIO access must be the ones the loop's
+        // full re-query would get, which holds only while every device an
+        // MMIO access can retime through shared state is declared an access
+        // dependent of the accessed device.
+        #[cfg(debug_assertions)]
+        if !port {
+            let stale = self.bus.stale_deadlines();
+            debug_assert!(
+                stale.is_empty(),
+                "an MMIO access changed the next event of devices {stale:?} \
+                 that are not declared access dependents of the devices it reached"
+            );
+        }
         match self.deadline_at {
             Some(at) if !stop => {
                 if at < self.budget {
@@ -471,5 +504,170 @@ impl cpu::DeviceAccessHandler for InProcess<'_> {
             _ => control.stop_at(self.outcome.charged),
         }
         AccessResult::Handled(value)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bus::{DecodeMap, MmioRange};
+    use cpu::DeviceAccessHandler;
+    use device::{Device, DeviceError, NextEvent};
+    use std::rc::Rc;
+
+    const WINDOW: u64 = 0xA0000;
+
+    /// A display window whose stores fail once `reject` is set.
+    struct Window {
+        reject: bool,
+    }
+
+    impl Device for Window {
+        fn name(&self) -> &'static str {
+            "test-window"
+        }
+        fn port_read(&mut self, _: u16, _: u8) -> Result<u32, DeviceError> {
+            Ok(0xFF)
+        }
+        fn port_write(&mut self, _: u16, _: u8, _: u32) -> Result<(), DeviceError> {
+            Ok(())
+        }
+        fn mmio_read(&mut self, _: u64, _: u8) -> Result<u64, DeviceError> {
+            Ok(0xFF)
+        }
+        fn mmio_write(&mut self, addr: u64, _: u8, _: u64) -> Result<(), DeviceError> {
+            if self.reject {
+                return Err(DeviceError::UnmappedRegister {
+                    kind: "mmio",
+                    offset: addr,
+                });
+            }
+            Ok(())
+        }
+        fn tick(&mut self, _: VClock) {}
+        fn next_event(&self, _: VClock) -> NextEvent {
+            NextEvent::Dormant
+        }
+        fn irq_pending(&self) -> bool {
+            false
+        }
+        fn reset(&mut self) {}
+        fn save(&self) -> Vec<u8> {
+            Vec::new()
+        }
+        fn restore(&mut self, _: &[u8]) -> Result<(), DeviceError> {
+            Ok(())
+        }
+    }
+
+    /// A device no access reaches, counting how often it is asked for its
+    /// next event.
+    struct Bystander(Rc<Cell<u64>>);
+
+    impl Device for Bystander {
+        fn name(&self) -> &'static str {
+            "test-bystander"
+        }
+        fn port_read(&mut self, _: u16, _: u8) -> Result<u32, DeviceError> {
+            Ok(0xFF)
+        }
+        fn port_write(&mut self, _: u16, _: u8, _: u32) -> Result<(), DeviceError> {
+            Ok(())
+        }
+        fn mmio_read(&mut self, _: u64, _: u8) -> Result<u64, DeviceError> {
+            Ok(0xFF)
+        }
+        fn mmio_write(&mut self, _: u64, _: u8, _: u64) -> Result<(), DeviceError> {
+            Ok(())
+        }
+        fn tick(&mut self, _: VClock) {}
+        fn next_event(&self, _: VClock) -> NextEvent {
+            self.0.set(self.0.get() + 1);
+            NextEvent::At(VClock(1 << 40))
+        }
+        fn irq_pending(&self) -> bool {
+            false
+        }
+        fn reset(&mut self) {}
+        fn save(&self) -> Vec<u8> {
+            Vec::new()
+        }
+        fn restore(&mut self, _: &[u8]) -> Result<(), DeviceError> {
+            Ok(())
+        }
+    }
+
+    /// Serve one store to the window, rejected or not, and report whether
+    /// it was handled and how often the bystander was asked from the store
+    /// until the next deadline query after it.
+    fn store(reject: bool) -> (bool, u64) {
+        let queries = Rc::new(Cell::new(0));
+        let mut bus = Bus::new(
+            vec![
+                Box::new(Window { reject }),
+                Box::new(Bystander(queries.clone())),
+            ],
+            DecodeMap {
+                ports: Vec::new(),
+                mmio: vec![MmioRange {
+                    addrs: WINDOW..=0xBFFFF,
+                    device: 0,
+                }],
+            },
+        );
+        bus.next_event();
+        let mut pic = chipset::NoInterruptController;
+        let mut clock = VClock::ZERO;
+        let (mut completed, mut remainder) = (0, 0);
+        let mut handler = InProcess {
+            bus: &mut bus,
+            pic: &mut pic,
+            clock: &mut clock,
+            completed_steps: &mut completed,
+            clock_remainder: &mut remainder,
+            cpu_rate_numerator: NonZeroU64::MIN,
+            cpu_tick_denominator: 1,
+            irq_lines: &[],
+            last_levels: &mut [],
+            dma_wirings: &[],
+            dma_channel_wirings: &[],
+            a20_line: None,
+            reset_signal: None,
+            memory_map: false,
+            irq_stop_armed: false,
+            budget: 100,
+            deadline_at: None,
+            outcome: ServedRun::default(),
+        };
+        let before = queries.get();
+        let result = handler.access(
+            &DeviceAccess {
+                space: AccessSpace::Mmio,
+                write: true,
+                address: WINDOW,
+                size: 1,
+                value: 0x55,
+                steps: 2,
+                delivery: false,
+            },
+            &mut AccessControl::default(),
+        );
+        let handled = matches!(result, AccessResult::Handled(_));
+        assert_eq!(handled, !handler.outcome.failed);
+        bus.next_event();
+        (handled, queries.get() - before)
+    }
+
+    /// A completed store keeps the deadlines of devices it did not reach;
+    /// a failed one drops every answer before the loop charges its step,
+    /// as after a failed ordinary stop.
+    #[test]
+    fn a_failed_served_store_drops_every_cached_deadline() {
+        // Debug builds ask every device once more after a completed store,
+        // to check the answers kept.
+        assert_eq!(store(false), (true, u64::from(cfg!(debug_assertions))));
+        let (handled, queries) = store(true);
+        assert!(!handled);
+        assert!(queries >= 1, "{queries} queries after the failed store");
     }
 }

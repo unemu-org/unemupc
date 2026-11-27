@@ -107,10 +107,18 @@ impl ClockDomain {
     }
 
     /// Number of edges observed by a whole virtual tick, without narrowing.
+    ///
+    /// Device timing asks this on every access, so a product that fits 64
+    /// bits divides there; the 128-bit division gives the same quotient and
+    /// is kept for the rest of the range.
     #[inline]
     pub const fn edges_at(self, at: VClock) -> u128 {
-        at.0 as u128 * self.ticks_per_edge.denominator as u128
-            / self.ticks_per_edge.numerator as u128
+        let numerator = self.ticks_per_edge.numerator;
+        let denominator = self.ticks_per_edge.denominator;
+        match at.0.checked_mul(denominator) {
+            Some(product) => (product / numerator) as u128,
+            None => at.0 as u128 * denominator as u128 / numerator as u128,
+        }
     }
 
     /// Count edges in `(a, b]`; a reversed interval is invalid.
@@ -133,8 +141,17 @@ impl ClockDomain {
     }
 
     /// Absolute edge rounded up; returns None when virtual time is exhausted.
+    ///
+    /// As in [`ClockDomain::edges_at`], a product that fits 64 bits rounds
+    /// there with the same result.
     #[inline]
     pub fn checked_edge_at(self, n: u128) -> Option<VClock> {
+        if let Some(product) = u64::try_from(n)
+            .ok()
+            .and_then(|n| n.checked_mul(self.ticks_per_edge.numerator))
+        {
+            return Some(VClock(product.div_ceil(self.ticks_per_edge.denominator)));
+        }
         let product = n.checked_mul(u128::from(self.ticks_per_edge.numerator))?;
         u64::try_from(product.div_ceil(u128::from(self.ticks_per_edge.denominator)))
             .ok()
@@ -349,6 +366,95 @@ mod tests {
             }
         }
     }
+
+    /// The 128-bit forms the 64-bit fast paths must reproduce exactly.
+    fn wide_edges_at(domain: ClockDomain, at: VClock) -> u128 {
+        let p = domain.period();
+        at.0 as u128 * p.denominator as u128 / p.numerator as u128
+    }
+
+    fn wide_checked_edge_at(domain: ClockDomain, n: u128) -> Option<VClock> {
+        let p = domain.period();
+        let product = n.checked_mul(u128::from(p.numerator))?;
+        u64::try_from(product.div_ceil(u128::from(p.denominator)))
+            .ok()
+            .map(VClock)
+    }
+
+    #[test]
+    fn clock_domain_fast_paths_match_wide_arithmetic_at_edge_values() {
+        let mut domains = vec![
+            PIT,
+            CGA_HDOT,
+            VGA_25,
+            VGA_28,
+            VGA_25.divided_by(18),
+            VGA_28.divided_by(8),
+            UART,
+            RTC,
+            OPL3,
+            AUDIO_OUTPUT,
+            AT_CPU_12,
+            AT_CPU_16,
+        ];
+        for (numerator, denominator) in [
+            (1, 1),
+            (1, u64::MAX),
+            (u64::MAX, 1),
+            (u64::MAX, u64::MAX - 1),
+            (u64::MAX - 1, u64::MAX),
+            (3, 1 << 32),
+            ((1 << 32) + 1, 7),
+        ] {
+            domains.push(ClockDomain::new(numerator, denominator));
+        }
+        for domain in domains {
+            let p = domain.period();
+            let (numerator, denominator) = (p.numerator, p.denominator);
+            // Times at and around the 64-bit product limit and around exact
+            // edges, where truncation and rounding up change.
+            let limit = u64::MAX / denominator;
+            let mut times = vec![0, 1, 2, 3, u64::MAX, u64::MAX - 1, 1 << 40, 1 << 63];
+            for base in [limit, numerator, numerator.saturating_mul(1_000_003)] {
+                times.extend([base.saturating_sub(1), base, base.saturating_add(1)]);
+            }
+            for at in times {
+                let at = VClock(at);
+                assert_eq!(
+                    domain.edges_at(at),
+                    wide_edges_at(domain, at),
+                    "{p:?} at {at:?}"
+                );
+                assert_eq!(
+                    domain.next_edge_after(at),
+                    wide_checked_edge_at(domain, wide_edges_at(domain, at) + 1),
+                    "{p:?} after {at:?}"
+                );
+            }
+            let edge_limit = u128::from(u64::MAX / numerator);
+            let mut edges = vec![
+                0,
+                1,
+                2,
+                u128::from(u64::MAX),
+                u128::from(u64::MAX) + 1,
+                u128::MAX / u128::from(numerator),
+                (u128::MAX / u128::from(numerator)).saturating_add(1),
+                u128::MAX,
+            ];
+            for base in [edge_limit, u128::from(denominator)] {
+                edges.extend([base.saturating_sub(1), base, base + 1]);
+            }
+            for n in edges {
+                assert_eq!(
+                    domain.checked_edge_at(n),
+                    wide_checked_edge_at(domain, n),
+                    "{p:?} edge {n}"
+                );
+            }
+        }
+    }
+
     #[test]
     fn clock_domain_checked_edges_exhaust_without_wrapping() {
         let n = u128::MAX / u128::from(RTC.period().numerator()) + 1;
