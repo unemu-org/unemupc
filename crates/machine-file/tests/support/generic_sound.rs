@@ -494,7 +494,7 @@ fn capture(chip: CpuChip, word: bool, splits: &[u64]) -> Option<Capture> {
 
 pub fn sb16_opl3(chip: CpuChip) {
     assert!(
-        include_str!("../../../../Cargo.lock").contains("f0785d5a2878c2b9e7392b937aa33dcdcc979f84")
+        include_str!("../../../../Cargo.lock").contains("f4d86729b0301ad5a0705c50918b3f23a29f84d1")
     );
     for word in [false, true] {
         let Some(whole) = capture(chip, word, &[]) else {
