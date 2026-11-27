@@ -222,9 +222,10 @@ fn pic_line(f: &mut fmt::Formatter<'_>, name: &str, pic: &Option<PicDiagnostic>)
     }
     writeln!(
         f,
-        ", reads {}, lines {:02x}",
+        ", reads {}, lines {:02x}, special mask {}",
         if pic.reads_isr { "isr" } else { "irr" },
-        pic.lines
+        pic.lines,
+        if pic.special_mask { "on" } else { "off" },
     )
 }
 
@@ -289,10 +290,7 @@ impl fmt::Display for MachineDiagnostic {
         pic_line(f, "master", &self.master_pic)?;
         pic_line(f, "slave ", &self.slave_pic)?;
         if self.master_pic.is_some() {
-            writeln!(
-                f,
-                "pic      poll mode and special mask mode are not modelled"
-            )?;
+            writeln!(f, "pic      poll mode is not modelled")?;
         }
         match &self.keyboard {
             None => writeln!(f, "kbc      not fitted")?,
@@ -757,6 +755,11 @@ mod tests {
         let at = text.find("\ndelivery the last").unwrap();
         assert!(text.find("\ntrail    ").unwrap() < at, "{text}");
         assert!(at < text.find("\npic      master").unwrap(), "{text}");
+        assert_eq!(text.matches(", special mask off\n").count(), 2, "{text}");
+        assert!(
+            text.contains("\npic      poll mode is not modelled\n"),
+            "{text}"
+        );
     }
 
     /// Taking reports changes nothing: a twin that took none ends with the

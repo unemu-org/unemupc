@@ -59,10 +59,11 @@ Windows 3.1 stepping-stone findings that change the plan (**MEASURED** at
   populated Windows frame holds in paged protected mode, with no CPU or device
   stop. The VMM/V86/VxD path Windows 95 shares is therefore exercised end to end on
   this board.
-- Windows 3.1's VPICD sets the 8259A special mask mode once per controller
-  (OCW3 6Bh) and re-initialises both controllers at vector bases 50h/58h; the
-  PIC model does not implement special mask mode (gap row 17). Nothing failed
-  visibly in this run, but the behaviour is unmodelled.
+- Windows 3.1's VPICD re-initialises both controllers at vector bases
+  50h/58h and then sets the 8259A special mask mode once per controller
+  (OCW3 6Bh). Nothing failed visibly in this run. Special mask mode was
+  unmodelled then; it is modelled now, and the Enhanced stage passes with it
+  (gap row 17).
 - SeaBIOS never programs PIT counter 1, so the port 61h refresh-detect bit
   (bit 4) never toggles on the generic ISA boards. An MS-DOS 6 startup program
   that times an 8042 wait with that bit spins forever with interrupts off. The
@@ -208,7 +209,7 @@ desktop; "Later" = after the first desktop.
 | 14 | CMOS/RTC | Time, alarm, periodic, 128 bytes | READ: 128-byte RTC with the QEMU layout (`board.rs:208-210`, `assemble.rs:1811-1860`); periodic partial, alarm and update-ended modelled (`cmos_rtc.rs:64-66`) | - | - | - |
 | 15 | VGA 640x480x16 | Planar writes, write modes 0-3, latches, bit mask, set/reset, read mode 1, full register readback | READ: all four write modes, rotate, set/reset, logic, bit/map masks, read-map select, colour compare (`vga.rs:23`); planar 16-colour and 256-colour scanout (`vga.rs:25`); the attribute-controller policy Windows 3.x `vga.drv` needs (`vga.rs:18`). Not modelled: RAM-enable gating, IRQ, mid-frame changes (`vga.rs:13`, `:25`). SeaVGABIOS is plain VGA without VBE (`vendor/seabios/vgaconfig`). ASSUMED: enough for the standard VGA driver and the 320x400 boot logo; the display VxD's save and restore of the whole register set is the untested part | U | S-M, fix as found | Setup (GUI is mode 12h) |
 | 16 | More colours or resolution | VBE or an SVGA card | Phase C, upc-18x.2 | U | L | Out of scope |
-| 17 | PIC | Whatever VPICD programs | READ: special mask mode, poll mode, level trigger and rotation are not modelled (`pic8259.rs:85-94`). MEASURED (Windows 3.1 Enhanced mode, MS-DOS 6.22): VPICD re-initialises both controllers (bases 50h/58h), sets special mask mode once per controller (OCW3 6Bh), uses specific EOI (60h/61h) and IRR reads (0Ah); no poll. Windows 3.1 ran without a visible fault, but special mask mode is used and unmodelled. ASSUMED: Windows 95's VPICD does the same | U | M | Desktop if it matters |
+| 17 | PIC | Whatever VPICD programs | READ: special mask mode is modelled (`pic8259.rs:48-78`): OCW3 ESMM/SMM set and reset it, masked in-service levels stop blocking lower ones, a non-specific EOI skips masked in-service levels, ICW1 clears it, each chip of the cascade has its own; it is saved in the snapshot and shown in the diagnostic report. Poll mode, level trigger, rotation, AEOI and special fully nested mode are not modelled (`pic8259.rs:119-136`). MEASURED (Windows 3.1 Enhanced mode, MS-DOS 6.22, rerun with special mask mode modelled; stages 1-3 pass): VPICD re-initialises both controllers (ICW1 11h, bases 50h/58h), and no ICW1 follows the OCW3 6Bh on either controller, so the 6Bh comes after the re-initialisation. After the 6Bh the master sees only specific EOIs (60h: 100, 61h: 50) and IRR reads (0Ah: 17,297), the slave only 0Ah (3); none of the 172 non-specific 20h EOIs follows it. At the end of the stage both controllers report special mask on. No poll. Unqualified: the reading that an unmasked in-service level still blocks lower ones in special mask mode (ASSUMED; QEMU's i8259 reads it the same way, Bochs and DOSBox let no in-service bit block in the mode); the non-specific EOI skipping masked in-service bits follows the datasheet's End of Interrupt section, while QEMU and Bochs clear the top in-service bit whatever the IMR holds; Windows 3.1 issues no 20h EOI in the mode, so it does not exercise that rule. ASSUMED: Windows 95's VPICD does the same | U | - | Desktop if it matters |
 | 18 | PIT, DMA | VTD and VDMAD program them directly | Present; SB16 DMA goldens pass (`status.md:3-17`). ASSUMED fine | - | - | - |
 | 19 | Floppy driver (HSFLOP.PDR) | Controller-type probe | READ: unknown commands answer 80h like a plain uPD765 (`upd765.rs:1041`). ASSUMED: treated as a basic controller | U | S if found | Later |
 | 20 | SB16 driver | DSP version, mixer IRQ/DMA readback, playback | READ: DSP 4.05, mixer 80h/81h readback (`sb16.rs:44`), OPL3. MIDI (MPU-401) and input are not modelled (`sb16.rs:23`). ASSUMED: playback works; the MPU-401 child device may fail to start | U | S playback, M MPU-401 | Later |
@@ -290,7 +291,7 @@ virtual-time progress before the expected marker.
 | 7 | MEASURED: `seabios_mouse_aux_and_bios_handler`, BIOS C2h callback plus direct aux commands and IRQ12. CuteMouse and the Windows driver remain unqualified |
 | 11 | MEASURED: `seabios_apm_protected_power_off`, install/32-bit connect, protected entry, IRQ0 idle wake and terminal BIOS HLT with IF=0 |
 | 15 | Mode 12h write modes, latch copies, read mode 1 and an INT 10h AH=1Ch save/restore round trip through SeaVGABIOS |
-| 17 | The Windows 3.1 Enhanced-mode trace shows special mask mode (OCW3 6Bh, once per controller) and no poll mode: model special mask mode with isolation tests on the mock bus, then rerun the Enhanced stage |
+| 17 | MEASURED: special mask mode is modelled with isolation tests on the mock bus (`pic8259.rs` and `shared_pic.rs` tests: lower level past a masked in-service level, ESMM=0 no change, reset, ICW1 clear, non-specific EOI, cascade, masking a slave level releasing a pending slave request, snapshot), and `user_media_win31_stage1` to `stage3` pass with it on MS-DOS 6.22; the runner prints the PIC command writes after the first special-mask write and the 8259 lines of the diagnostic report |
 | 22, 23 | A small V86 monitor with ARPL breakpoints, trapped I/O and CR3 switches already exists as the V86 and paging ROMs; add bench fixtures for paged protected16 CPL 3 and paged V86 |
 
 ## 6. Proposed beads, in order

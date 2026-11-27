@@ -918,7 +918,7 @@ Its lines come in a fixed order:
 | `cs:ip` … `ss:sp`, `stack` | the CPU (`X86JitCpu::diagnostic_state`, `crates/cpu/src/diagnostic.rs`): CS:IP and its linear address; FLAGS with IF, TF, DF, IOPL and NT decoded (Intel 80286 Programmer's Reference Manual, §3.5.3 and §10.3); AX–SP; MSW with PE and CPL; CS, DS, ES and SS with selector, base, limit and access rights from their caches; GDTR, IDTR, LDTR and TR; whether an injected vector waits and whether an interrupt could be accepted; the HLT a halted CPU executed; the 16 bytes at CS:IP with the first instruction disassembled; the 16 words at SS:SP |
 | `trail` | the code trail: CS:IP after the last run slices (below) |
 | `delivery` | the last 64 entries of the exceptions and interrupts the guest took, oldest first, consecutive identical deliveries folded into one, with the total and the dropped count (§Exception and interrupt deliveries); `not recorded` when the log was not enabled |
-| `pic` | master and slave 8259: IRR, ISR, IMR, vector base, ICW1 and ICW4 with AEOI, an unfinished initialization, the OCW3 read select and the input levels; poll mode and special mask mode are not modelled, and the report says so |
+| `pic` | master and slave 8259: IRR, ISR, IMR, vector base, ICW1 and ICW4 with AEOI, an unfinished initialization, the OCW3 read select, the input levels and special mask mode (OCW3 ESMM/SMM); poll mode is not modelled, and the report says so |
 | `kbc` | the 8042: status register, command byte with its keyboard and aux enable and interrupt bits, output buffer and its source (keyboard, aux or controller), output and input ports with the inhibit switch, the parameter the next `60h` write is taken as, the last command written to `64h`, queued keyboard bytes, a waiting controller reply, the LED parameter wait, and the IRQ1 and IRQ12 levels |
 | `pit` | each 8254 counter: programmed mode, access mode, BCD, count register, counting element, OUT and GATE, and a count not yet loaded or a latch waiting to be read |
 | `a20` | the gate the CPU applies, the 8042 output port's A20 bit and port 92h bit 1 when the board has System Control Port A |
@@ -1094,9 +1094,9 @@ trail    f800:0010
 trail    f800:0014
 trail    f800:0018
 trail    f800:001a
-pic      master irr 00 isr 00 imr 02 base 08 icw1 11 icw4 01 (auto-eoi off), initialized, reads irr, lines 00
-pic      slave  irr 00 isr 00 imr 00 base 00 icw1 00 icw4 00 (auto-eoi off), initialized, reads irr, lines 00
-pic      poll mode and special mask mode are not modelled
+pic      master irr 00 isr 00 imr 02 base 08 icw1 11 icw4 01 (auto-eoi off), initialized, reads irr, lines 00, special mask off
+pic      slave  irr 00 isr 00 imr 00 base 00 icw1 00 icw4 00 (auto-eoi off), initialized, reads irr, lines 00, special mask off
+pic      poll mode is not modelled
 kbc      status 18, command byte 10: keyboard disabled, aux enabled, irq1 disabled, irq12 disabled
 kbc      output buffer empty, output port 03, input port e0, inhibit switch off
 kbc      pending none, last command ad, 0 keyboard bytes queued, controller reply none, awaiting led byte no, aux device none

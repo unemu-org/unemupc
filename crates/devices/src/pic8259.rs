@@ -12,8 +12,9 @@
 //! [`Pic8259::new_slave`] as the slave, the only difference being which port
 //! pair it decodes. The two chips are coordinated into a 16-line controller by
 //! the `chipset` crate's cascade wrapper; this module models one chip and
-//! exposes the priority queries (`highest_pending`, `highest_in_service`) that
-//! wrapper needs to route a cascaded acknowledge and EOI to the right chip.
+//! exposes the priority queries (`highest_pending`, `non_specific_eoi_line`)
+//! that wrapper needs to route a cascaded acknowledge and EOI to the right
+//! chip.
 //!
 //! The chip carries two faces:
 //! - the [`Device`] face — its programming ports, decoded at `0x20`/`0x21`;
@@ -29,8 +30,8 @@
 //! (because ICW1 requests it) **ICW4**. Once initialization completes, data-port
 //! writes program the interrupt mask (**OCW1** / IMR) and command-port writes
 //! are operation commands (**OCW2** = EOI/priority, **OCW3** = read-register
-//! select). The real-mode PC BIOS programs the master with vector base `0x08`,
-//! so IRQ0 is vector `0x08`.
+//! select and special mask mode). The real-mode PC BIOS programs the master
+//! with vector base `0x08`, so IRQ0 is vector `0x08`.
 //!
 //! ## Priority and state
 //!
@@ -43,6 +44,38 @@
 //! if it is in the IRR, not masked, and no equal-or-higher-priority line is
 //! already in service. Acknowledge (INTA) moves the winning IRR bit into the
 //! ISR; end-of-interrupt clears it from the ISR.
+//!
+//! ## Special mask mode
+//!
+//! Intel 8259A datasheet, Special Mask Mode and OCW3: an OCW3 with ESMM (D6)
+//! set turns special mask mode on (SMM, D5, set) or off (SMM clear); with
+//! ESMM clear the mode is left as it was. A service routine uses it to let
+//! lower-priority interrupts in while its own level is still in service: it
+//! masks its own level in OCW1, and while the mode is on a mask bit set in
+//! OCW1 inhibits further interrupts at that level and enables interrupts from
+//! all other unmasked levels, lower as well as higher.
+//!
+//! The model reads that as: the priority resolver ignores every in-service
+//! bit whose mask bit is set, while an unmasked in-service bit still blocks
+//! its own and lower levels as in fully nested mode. That reading is an
+//! assumption, not checked on a real chip. QEMU's i8259 model reads it the
+//! same way; Bochs and DOSBox instead let no in-service bit block other levels
+//! in special mask mode.
+//!
+//! The datasheet's End of Interrupt section adds that an in-service bit
+//! masked by the IMR is not cleared by a non-specific EOI while special mask
+//! mode is on, so here a non-specific EOI clears the highest unmasked
+//! in-service bit; a specific EOI clears the named bit either way. QEMU and
+//! Bochs differ: their non-specific EOI clears the top in-service bit whatever
+//! the IMR holds. Initialization Command Words, ICW1 side effects: special
+//! mask mode is cleared and status read is set to the IRR.
+//!
+//! Each chip of a cascade has its own mode: a slave's special mask mode only
+//! changes which of its own requests drive its INT output (Intel 8259A
+//! datasheet, Cascade Mode). The master still holds IR2 in service for a
+//! cascaded interrupt, so a second slave request waits for the master's EOI
+//! of IR2; letting it through earlier is what special fully nested mode is
+//! for, and that mode is not modelled.
 //!
 //! ## Trigger mode
 //!
@@ -69,7 +102,8 @@
 //!   input lines (IRQ0–IRQ15), the slave's INT output feeding master IRQ2. The
 //!   two-chip coordination — a cascaded acknowledge fetching the slave's vector,
 //!   and an EOI clearing both chips — lives in the `chipset` cascade wrapper,
-//!   built on this chip's `highest_pending` / `highest_in_service` queries.
+//!   built on this chip's `highest_pending` / `non_specific_eoi_line`
+//!   queries.
 //!   ICW3 (which line the cascade is on) is still accepted and ignored; the
 //!   wrapper hardwires the cascade to IRQ2 as every PC/AT does.
 //! - ICW1–ICW4 initialization state machine; ICW2 sets the vector base.
@@ -78,6 +112,7 @@
 //! - OCW1 (IMR programming).
 //! - OCW2 non-specific EOI (`0x20`) and specific EOI (`0x60 | level`).
 //! - OCW3 read-register select (read IRR / ISR through the command port).
+//! - OCW3 special mask mode (ESMM/SMM), cleared by ICW1; see above.
 //! - Edge-triggered requests gated by the current input level.
 //! - Default IR7 on empty INTA, without setting ISR7.
 //!
@@ -87,10 +122,13 @@
 //!   fixed. Rotate commands are accepted but do not rotate.
 //! - **Automatic EOI** (ICW4 `AEOI`): the bit is stored but auto-EOI is not
 //!   performed; software must issue an explicit EOI.
-//! - **Special mask mode** and **special fully-nested mode** (OCW3 SMM / ICW4
-//!   SFNM). In particular the cascade wrapper handles one in-flight cascaded
-//!   interrupt at a time: two slave interrupts nested on top of each other (the
-//!   case SFNM exists for) are not modelled.
+//! - **Special fully-nested mode** (ICW4 SFNM). In particular the cascade
+//!   wrapper handles one in-flight cascaded interrupt at a time: two slave
+//!   interrupts nested on top of each other (the case SFNM exists for) are not
+//!   modelled.
+//! - Special mask mode together with automatic EOI or rotation: neither of
+//!   those is performed, so the combinations behave as special mask mode with
+//!   explicit EOI and fixed priority. The datasheet gives no combined rule.
 //! - **Poll mode** (OCW3 poll bit).
 //! - **MCS-80/85 vectoring** (`µPM=0`, also selected when ICW4 is omitted):
 //!   vectoring still uses the 8086/8088 path. Intel 8259A datasheet,
@@ -100,7 +138,10 @@
 //! Version-3 snapshots reject IRR bits whose input levels are low. Version 2
 //! allowed stale edge requests and is rejected rather than reinterpreted.
 //! Snapshots contain request/service/mask and initialization registers,
-//! read selection, input line levels and the absolute trace time base. Keeping
+//! the OCW3 state (read selection in bit 0, special mask mode in bit 1),
+//! input line levels and the absolute trace time base. A snapshot taken
+//! before special mask mode was modelled has bit 1 clear, which is what that
+//! chip's mode was. Keeping
 //! line levels preserves edge detection (Intel 8259A datasheet, Edge and Level
 //! Triggered Modes). Port wiring is supplied by the receiving instance.
 
@@ -137,11 +178,20 @@ const OCW3_ID: u8 = 0x08;
 const OCW3_READ: u8 = 0x02;
 /// OCW3 read-register select (D0): `1` = read ISR, `0` = read IRR.
 const OCW3_READ_ISR: u8 = 0x01;
+/// OCW3 `ESMM` (D6): this OCW3 sets or resets special mask mode.
+const OCW3_ESMM: u8 = 0x40;
+/// OCW3 `SMM` (D5): with ESMM, `1` sets special mask mode and `0` resets it.
+const OCW3_SMM: u8 = 0x20;
+
+/// Snapshot OCW3 state byte, bit 0: command-port reads return the ISR.
+const SNAP_READ_ISR: u8 = 0x01;
+/// Snapshot OCW3 state byte, bit 1: special mask mode is on.
+const SNAP_SPECIAL_MASK: u8 = 0x02;
 
 /// Snapshot layout version tag, first byte of [`Device::save`] output.
 const SNAPSHOT_VERSION: u8 = 3;
 /// Snapshot length: version + irr + isr + imr + base + icw1 + icw4 + state +
-/// read_isr flag + input line levels (one byte each), then the 8-byte clock of
+/// OCW3 state + input line levels (one byte each), then the 8-byte clock of
 /// the last synchronisation.
 const SNAPSHOT_LEN: usize = 18;
 
@@ -192,6 +242,8 @@ pub struct PicDiagnostic {
     pub awaiting: Option<&'static str>,
     /// Whether a command-port read returns the ISR (OCW3) rather than the IRR.
     pub reads_isr: bool,
+    /// Whether special mask mode (OCW3 ESMM/SMM) is on.
+    pub special_mask: bool,
     /// Input line levels (`1` = high).
     pub lines: u8,
 }
@@ -228,6 +280,9 @@ pub struct Pic8259 {
     init_state: InitState,
     /// Which register a command-port read returns (OCW3).
     read_select: ReadSelect,
+    /// Special mask mode (OCW3 ESMM/SMM): masked in-service levels stop
+    /// blocking lower priorities and are skipped by a non-specific EOI.
+    special_mask: bool,
     /// Last level of each input line, to detect rising edges for edge-triggered
     /// latching. Bit per line; `1` = the line is currently high.
     line_level: u8,
@@ -280,6 +335,7 @@ impl Pic8259 {
             icw4: 0,
             init_state: InitState::Ready,
             read_select: ReadSelect::Irr,
+            special_mask: false,
             line_level: 0,
             port_base,
             trace: device::TraceBuffer::default(),
@@ -313,10 +369,10 @@ impl Pic8259 {
 
     /// The chip's programming state for a host diagnostic: the three
     /// registers, the vector base, the stored ICW1 and ICW4, the step of an
-    /// unfinished initialization, the OCW3 read select and the input levels.
-    /// Reading it is no port access and changes nothing. Poll mode and
-    /// special mask mode are not modelled (see the coverage matrix), so they
-    /// have no state to show; ICW4's AEOI bit is stored but not performed.
+    /// unfinished initialization, the OCW3 read select, special mask mode and
+    /// the input levels. Reading it is no port access and changes nothing.
+    /// Poll mode is not modelled (see the coverage matrix), so it has no
+    /// state to show; ICW4's AEOI bit is stored but not performed.
     #[must_use]
     pub fn diagnostic_state(&self) -> PicDiagnostic {
         PicDiagnostic {
@@ -333,6 +389,7 @@ impl Pic8259 {
                 InitState::ExpectIcw4 => Some("icw4"),
             },
             reads_isr: self.read_select == ReadSelect::Isr,
+            special_mask: self.special_mask,
             lines: self.line_level,
         }
     }
@@ -352,7 +409,9 @@ impl Pic8259 {
     ///
     /// A line qualifies when it is requested (IRR), not masked (IMR), and no
     /// line of equal-or-higher priority is already in service (ISR). Priority is
-    /// fixed with line 0 highest, so the search runs low bit to high bit.
+    /// fixed with line 0 highest, so the search runs low bit to high bit. In
+    /// special mask mode an in-service line that is masked no longer blocks
+    /// anything (Intel 8259A datasheet, Special Mask Mode).
     ///
     /// The cascade wrapper reads this to decide whether the master's winning
     /// line is the cascade input (line 2), and to pick the slave line whose
@@ -360,11 +419,12 @@ impl Pic8259 {
     #[must_use]
     pub fn highest_pending(&self) -> Option<u8> {
         let requestable = self.irr & !self.imr;
+        let blocking = self.nesting_isr();
         for irq in 0u8..8 {
             let bit = 1u8 << irq;
             // A line of equal-or-higher priority already in service blocks this
             // one and every lower line below it.
-            if self.isr & (bit.wrapping_sub(1) | bit) != 0 {
+            if blocking & (bit.wrapping_sub(1) | bit) != 0 {
                 return None;
             }
             if requestable & bit != 0 {
@@ -416,6 +476,8 @@ impl Pic8259 {
     fn write_command(&mut self, byte: u8) {
         if byte & ICW1_INIT != 0 {
             // ICW1: restart initialization. IMR and priority state are cleared.
+            // Intel 8259A datasheet, Initialization Command Words: ICW1 also
+            // clears special mask mode and sets status read to the IRR.
             self.icw1 = byte;
             // Intel 8259A datasheet, Initialization Command Words: omitting
             // ICW4 selects zero for every ICW4 function, even after re-init.
@@ -426,11 +488,16 @@ impl Pic8259 {
             self.isr = 0;
             self.irr = 0;
             self.read_select = ReadSelect::Irr;
+            self.special_mask = false;
             self.init_state = InitState::ExpectIcw2;
             return;
         }
         if byte & OCW3_ID != 0 {
-            // OCW3: only the read-register select is modelled.
+            // OCW3: special mask mode and the read-register select; the poll
+            // bit is not modelled. Without ESMM the mode stays as it was.
+            if byte & OCW3_ESMM != 0 {
+                self.special_mask = byte & OCW3_SMM != 0;
+            }
             if byte & OCW3_READ != 0 {
                 self.read_select = if byte & OCW3_READ_ISR != 0 {
                     ReadSelect::Isr
@@ -454,17 +521,40 @@ impl Pic8259 {
     /// The highest-priority line currently in service (top of the ISR), or
     /// `None` if nothing is in service.
     ///
-    /// A non-specific EOI clears exactly this line. The cascade wrapper reads it
-    /// to tell whether the interrupt being ended came in through the cascade
-    /// (master line 2 in service), so it can also EOI the slave.
+    /// Outside special mask mode a non-specific EOI clears exactly this line;
+    /// see [`Self::non_specific_eoi_line`] for the line it clears in either
+    /// mode.
     #[must_use]
     pub fn highest_in_service(&self) -> Option<u8> {
         (0u8..8).find(|&irq| self.isr & (1u8 << irq) != 0)
     }
 
-    /// Clear the highest-priority in-service bit (non-specific EOI).
+    /// The in-service line a non-specific EOI clears, or `None`.
+    ///
+    /// Normally the top of the ISR. Intel 8259A datasheet, End of Interrupt:
+    /// in special mask mode an in-service bit masked by the IMR is not
+    /// cleared by a non-specific EOI, so the highest unmasked in-service line
+    /// is chosen instead. The cascade wrapper reads it to tell whether a
+    /// non-specific EOI ends the cascade line (master line 2).
+    #[must_use]
+    pub fn non_specific_eoi_line(&self) -> Option<u8> {
+        let candidates = self.nesting_isr();
+        (0u8..8).find(|&irq| candidates & (1u8 << irq) != 0)
+    }
+
+    /// The in-service bits that take part in priority nesting: all of them,
+    /// or in special mask mode only those whose level is not masked.
+    fn nesting_isr(&self) -> u8 {
+        if self.special_mask {
+            self.isr & !self.imr
+        } else {
+            self.isr
+        }
+    }
+
+    /// Clear the in-service bit a non-specific EOI ends.
     fn clear_highest_in_service(&mut self) {
-        if let Some(irq) = self.highest_in_service() {
+        if let Some(irq) = self.non_specific_eoi_line() {
             self.isr &= !(1u8 << irq);
         }
     }
@@ -598,7 +688,13 @@ impl Device for Pic8259 {
     }
 
     fn save(&self) -> Vec<u8> {
-        let read_isr = u8::from(self.read_select == ReadSelect::Isr);
+        let mut ocw3 = 0;
+        if self.read_select == ReadSelect::Isr {
+            ocw3 |= SNAP_READ_ISR;
+        }
+        if self.special_mask {
+            ocw3 |= SNAP_SPECIAL_MASK;
+        }
         let init_state = match self.init_state {
             InitState::Ready => 0,
             InitState::ExpectIcw2 => 1,
@@ -614,7 +710,7 @@ impl Device for Pic8259 {
             self.icw1,
             self.icw4,
             init_state,
-            read_isr,
+            ocw3,
             self.line_level,
         ];
         blob.extend_from_slice(&self.now.0.to_le_bytes());
@@ -649,7 +745,7 @@ impl Device for Pic8259 {
         if (snapshot[5] & ICW1_IC4 == 0 && snapshot[6] != 0)
             || snapshot[1] & !snapshot[9] != 0
             || snapshot[4] & 7 != 0
-            || snapshot[8] > 1
+            || snapshot[8] & !(SNAP_READ_ISR | SNAP_SPECIAL_MASK) != 0
             || (snapshot[7] != 0 && snapshot[5] & ICW1_INIT == 0)
             || (snapshot[7] == 2 && snapshot[5] & ICW1_SNGL != 0)
             || (snapshot[7] == 3 && snapshot[5] & ICW1_IC4 == 0)
@@ -666,11 +762,12 @@ impl Device for Pic8259 {
         self.icw1 = snapshot[5];
         self.icw4 = snapshot[6];
         self.init_state = init_state;
-        self.read_select = if snapshot[8] != 0 {
+        self.read_select = if snapshot[8] & SNAP_READ_ISR != 0 {
             ReadSelect::Isr
         } else {
             ReadSelect::Irr
         };
+        self.special_mask = snapshot[8] & SNAP_SPECIAL_MASK != 0;
         self.line_level = snapshot[9];
         self.now = VClock(u64::from_le_bytes(std::array::from_fn(|i| {
             snapshot[snapshot.len() - 8 + i]
@@ -724,6 +821,7 @@ mod tests {
                 icw4: 0x03,
                 awaiting: None,
                 reads_isr: true,
+                special_mask: false,
                 lines: 0,
             }
         );
@@ -1049,6 +1147,180 @@ mod tests {
             pic.port_read(PORT_COMMAND, 1).unwrap(),
             u32::from(pic.irr())
         );
+    }
+
+    /// OCW3 setting special mask mode (ESMM = 1, SMM = 1), no register read.
+    const OCW3_SET_SMM: u8 = OCW3_ID | OCW3_ESMM | OCW3_SMM;
+    /// OCW3 resetting special mask mode (ESMM = 1, SMM = 0).
+    const OCW3_RESET_SMM: u8 = OCW3_ID | OCW3_ESMM;
+
+    /// IRQ3 in service and masked, IRQ5 requested: what is offered next.
+    fn lower_request_under_masked_service(special_mask: bool) -> Option<u8> {
+        let mut pic = Pic8259::new();
+        init_master(&mut pic);
+        if special_mask {
+            pic.port_write(PORT_COMMAND, 1, u32::from(OCW3_SET_SMM))
+                .unwrap();
+        }
+        pic.set_irq_line(3, true);
+        assert_eq!(pic.acknowledge(), Some(BASE + 3));
+        // The service routine masks its own level.
+        pic.port_write(PORT_DATA, 1, 0x08).unwrap();
+        pic.set_irq_line(5, true);
+        pic.poll()
+    }
+
+    /// Intel 8259A datasheet, Special Mask Mode: a masked level in service no
+    /// longer inhibits lower-priority levels; in fully nested mode it does.
+    #[test]
+    fn special_mask_mode_lets_a_lower_level_past_a_masked_in_service_level() {
+        assert_eq!(lower_request_under_masked_service(true), Some(BASE + 5));
+        assert_eq!(lower_request_under_masked_service(false), None);
+    }
+
+    /// An unmasked in-service level still blocks its own and lower levels in
+    /// special mask mode; only masked in-service levels stop counting.
+    #[test]
+    fn special_mask_mode_keeps_unmasked_in_service_levels_blocking() {
+        let mut pic = Pic8259::new();
+        init_master(&mut pic);
+        pic.port_write(PORT_COMMAND, 1, u32::from(OCW3_SET_SMM))
+            .unwrap();
+        pic.set_irq_line(3, true);
+        pic.acknowledge().unwrap();
+        pic.set_irq_line(5, true);
+        assert_eq!(pic.poll(), None);
+        // A higher level still nests on top.
+        pic.set_irq_line(1, true);
+        assert_eq!(pic.poll(), Some(BASE + 1));
+    }
+
+    /// Intel 8259A datasheet, OCW3: ESMM = 0 leaves special mask mode as it
+    /// was, whatever SMM holds; the read-register select still applies.
+    #[test]
+    fn ocw3_without_esmm_leaves_special_mask_mode_unchanged() {
+        let mut pic = Pic8259::new();
+        init_master(&mut pic);
+        pic.port_write(PORT_COMMAND, 1, u32::from(OCW3_SET_SMM))
+            .unwrap();
+        // OCW3 0Ah (read IRR) and an OCW3 with SMM = 0 but ESMM = 0.
+        for value in [0x0A, OCW3_ID | OCW3_READ_ISR, OCW3_ID | OCW3_READ] {
+            pic.port_write(PORT_COMMAND, 1, u32::from(value)).unwrap();
+            assert!(pic.diagnostic_state().special_mask);
+        }
+        let mut plain = Pic8259::new();
+        init_master(&mut plain);
+        // SMM = 1 with ESMM = 0 does not set the mode either.
+        plain
+            .port_write(PORT_COMMAND, 1, u32::from(OCW3_ID | OCW3_SMM))
+            .unwrap();
+        assert!(!plain.diagnostic_state().special_mask);
+    }
+
+    /// Resetting special mask mode (ESMM = 1, SMM = 0) restores fully nested
+    /// blocking by the masked in-service level.
+    #[test]
+    fn resetting_special_mask_mode_restores_normal_nesting() {
+        let mut pic = Pic8259::new();
+        init_master(&mut pic);
+        pic.port_write(PORT_COMMAND, 1, u32::from(OCW3_SET_SMM))
+            .unwrap();
+        pic.set_irq_line(3, true);
+        pic.acknowledge().unwrap();
+        pic.port_write(PORT_DATA, 1, 0x08).unwrap();
+        pic.set_irq_line(5, true);
+        assert_eq!(pic.poll(), Some(BASE + 5));
+        pic.port_write(PORT_COMMAND, 1, u32::from(OCW3_RESET_SMM))
+            .unwrap();
+        assert!(!pic.diagnostic_state().special_mask);
+        assert_eq!(pic.poll(), None);
+        assert!(!pic.irq_pending());
+    }
+
+    /// Intel 8259A datasheet, Initialization Command Words: ICW1 clears
+    /// special mask mode and sets status read to the IRR.
+    #[test]
+    fn icw1_clears_special_mask_mode() {
+        let mut pic = Pic8259::new();
+        init_master(&mut pic);
+        // OCW3 6Bh: set special mask mode and select the ISR for reads.
+        pic.port_write(PORT_COMMAND, 1, 0x6B).unwrap();
+        let state = pic.diagnostic_state();
+        assert!(state.special_mask && state.reads_isr);
+        init_master(&mut pic);
+        let state = pic.diagnostic_state();
+        assert!(!state.special_mask && !state.reads_isr);
+        pic.set_irq_line(3, true);
+        pic.acknowledge().unwrap();
+        pic.port_write(PORT_DATA, 1, 0x08).unwrap();
+        pic.set_irq_line(5, true);
+        assert_eq!(pic.poll(), None);
+    }
+
+    /// Intel 8259A datasheet, End of Interrupt: in special mask mode a
+    /// non-specific EOI does not clear an in-service bit masked by the IMR;
+    /// a specific EOI clears it.
+    #[test]
+    fn special_mask_non_specific_eoi_skips_masked_in_service_levels() {
+        let mut pic = Pic8259::new();
+        init_master(&mut pic);
+        pic.port_write(PORT_COMMAND, 1, u32::from(OCW3_SET_SMM))
+            .unwrap();
+        pic.set_irq_line(3, true);
+        pic.acknowledge().unwrap();
+        pic.port_write(PORT_DATA, 1, 0x08).unwrap();
+        pic.set_irq_line(5, true);
+        assert_eq!(pic.acknowledge(), Some(BASE + 5));
+        assert_eq!(pic.isr(), 0x28);
+        assert_eq!(pic.non_specific_eoi_line(), Some(5));
+        pic.port_write(PORT_COMMAND, 1, u32::from(OCW2_EOI))
+            .unwrap();
+        assert_eq!(pic.isr(), 0x08);
+        // Nothing unmasked is left in service: the next one does nothing.
+        pic.end_of_interrupt();
+        assert_eq!(pic.isr(), 0x08);
+        pic.port_write(PORT_COMMAND, 1, u32::from(OCW2_EOI | OCW2_SPECIFIC | 3))
+            .unwrap();
+        assert_eq!(pic.isr(), 0);
+    }
+
+    /// A Windows 3.1 Enhanced-mode style sequence on the mock bus:
+    /// reinitialise at base 50h, OCW3 6Bh, mask the level in service. The
+    /// order of the reinitialisation and the OCW3 write is assumed here. The mode shows in
+    /// the diagnostic state and survives a snapshot round trip.
+    #[test]
+    fn special_mask_mode_on_mock_bus_survives_a_snapshot() {
+        let mut bus = MockBus::new(Box::new(Pic8259::new()));
+        for (port, value) in [(0x20, 0x11), (0x21, 0x50), (0x21, 0x04), (0x21, 0x01)] {
+            bus.port_write(port, 1, value).unwrap();
+        }
+        bus.port_write(0x20, 1, 0x6B).unwrap();
+        let blob = bus.device().save();
+        assert_eq!(blob.len(), SNAPSHOT_LEN);
+        assert_eq!(blob[8], SNAP_READ_ISR | SNAP_SPECIAL_MASK);
+        let state = Pic8259::diagnostic_from_snapshot(&blob).unwrap();
+        assert!(state.special_mask && state.reads_isr);
+        let mut pic = Pic8259::new();
+        pic.restore(&blob).unwrap();
+        assert_eq!(pic.save(), blob);
+        pic.set_irq_line(3, true);
+        assert_eq!(pic.acknowledge(), Some(0x53));
+        pic.port_write(PORT_DATA, 1, 0x08).unwrap();
+        pic.set_irq_line(5, true);
+        assert_eq!(pic.poll(), Some(0x55));
+        // Restoring the mode off brings fully nested blocking back.
+        let mut nested = pic.save();
+        nested[8] &= !SNAP_SPECIAL_MASK;
+        pic.restore(&nested).unwrap();
+        assert_eq!(pic.poll(), None);
+        // Unknown OCW3 state bits are rejected without touching the chip.
+        let mut invalid = blob.clone();
+        invalid[8] = 4;
+        assert!(bus.device_mut().restore(&invalid).is_err());
+        assert_eq!(bus.device().save(), blob);
+        // Reset is power-on: the mode is off.
+        bus.device_mut().reset();
+        assert_eq!(bus.device().save()[8], 0);
     }
 
     #[test]

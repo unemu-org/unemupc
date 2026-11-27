@@ -1,5 +1,28 @@
 # Status
 
+## 8259A special mask mode (2026-11-27)
+
+The PIC model implements special mask mode (Intel 8259A datasheet, Special
+Mask Mode, OCW3 and End of Interrupt): OCW3 with ESMM sets or resets it, a
+masked in-service level stops blocking lower levels, a non-specific EOI skips
+masked in-service levels, ICW1 clears it, and each chip of the cascade keeps its
+own. It travels in bit 1 of the snapshot's OCW3 byte (older snapshots read as
+off) and the diagnostic report shows it per chip. Isolation tests on the mock
+bus cover each case; no golden is known to set the mode. Reading the
+datasheet, an unmasked in-service level still blocks lower ones in the mode
+(ASSUMED; QEMU's i8259 reads it the same way, Bochs and DOSBox do not), and a
+non-specific EOI skips masked in-service bits (datasheet, End of Interrupt;
+QEMU and Bochs clear the top bit regardless).
+
+**MEASURED** on the private Windows 3.1 stages with MS-DOS 6.22:
+`user_media_win31_stage1` to `stage3` pass, at the same boundaries as before
+the mode was modelled (35,378,166, 675,049,255 and 163,644,543 retired) and
+with the same PIC write counts. No ICW1 follows the OCW3 6Bh on
+either controller, so VPICD sets the mode after re-initialising at 50h/58h;
+after it come only specific EOIs (60h, 61h) and IRR reads, no 20h EOI; both
+controllers report special mask on at the end of the Enhanced stage
+([user-media.md](user-media.md#windows-31)).
+
 ## Local Windows 3.1 in 386 Enhanced mode (2026-11-27)
 
 The ignored `user_media_win31_stage1`, `user_media_win31_stage2`,
@@ -31,9 +54,11 @@ prints in the DOS 7 branch. SYS31.BAT rewrites MSDOS.SYS only on DOS 7 or
 later, gated by an 8-byte project-owned version probe, so MS-DOS 6's kernel
 file is never touched.
 
-Findings: VPICD sets the 8259A special mask mode, which the PIC model does not
-implement (no visible fault). SeaBIOS leaves PIT counter 1 unprogrammed, so
-port 61h bit 4 never toggles and an MS-DOS 6 setup-disk startup program hangs;
+Findings: VPICD sets the 8259A special mask mode, which the PIC model did not
+implement at the time (no visible fault); it is modelled now, and the
+Enhanced stage passes with it. SeaBIOS leaves PIT counter 1
+unprogrammed, so port 61h bit 4 never toggles and an MS-DOS 6 setup-disk
+startup program hangs;
 the harness uses MS-DOS 6's clean boot. Polling the 640x480 screen after every
 run slice had held graphical phases to 0.3 M instructions/s; the shared runner
 now polls once per million instructions (about 6 M/s). See the

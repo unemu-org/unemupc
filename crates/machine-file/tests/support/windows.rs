@@ -28,6 +28,11 @@ struct Ports {
     aux_data_next: bool,
     pic_special_mask: u64,
     pic_poll: u64,
+    /// Command ports that have seen an OCW3 with ESMM set.
+    pic_special_mask_ports: BTreeSet<u16>,
+    /// PIC command-port writes made after that controller's first ESMM write,
+    /// by port and command byte; tells whether ICW1 or OCW2 followed it.
+    pic_after_special_mask: BTreeMap<(u16, u32), u64>,
     pit_modes: BTreeMap<(u8, u8), u64>,
     vga_indices: BTreeMap<u16, u8>,
     vga_registers: BTreeMap<u16, BTreeSet<u8>>,
@@ -73,9 +78,18 @@ impl Ports {
             if *dir != AccessDir::Write {
                 continue;
             }
+            if matches!(port, 0x20 | 0xa0) && self.pic_special_mask_ports.contains(port) {
+                *self
+                    .pic_after_special_mask
+                    .entry((*port, *value))
+                    .or_default() += 1;
+            }
             if matches!(port, 0x20 | 0xa0) && value & 0x18 == 8 {
                 self.pic_special_mask += u64::from(value & 0x40 != 0);
                 self.pic_poll += u64::from(value & 4 != 0);
+                if value & 0x40 != 0 {
+                    self.pic_special_mask_ports.insert(*port);
+                }
             }
             if *port == 0x43 && value >> 6 != 3 && value & 0x30 != 0 {
                 let mode = ((value >> 1) & 7) as u8;
@@ -860,6 +874,16 @@ pub fn run(stage: Stage, previous: Option<Staged>) -> Option<Staged> {
     eprintln!("FINDINGS command/register writes (hex)={:x?}", ports.writes);
     eprintln!("FINDINGS PIC special-mask writes={}; poll requests={}; PIT (channel, mode)={:?}; VGA indexed registers={:x?}", ports.pic_special_mask, ports.pic_poll, ports.pit_modes, ports.vga_registers);
     eprintln!(
+        "FINDINGS PIC command writes after the first special-mask write (port, value)={:x?}",
+        ports.pic_after_special_mask
+    );
+    // Only the 8259 lines of the diagnostic report: register values, no
+    // guest code or memory bytes.
+    let report = assembled.diagnostic_report("stage end").to_string();
+    for line in report.lines().filter(|line| line.starts_with("pic ")) {
+        eprintln!("FINDINGS {line}");
+    }
+    eprintln!(
         "FINDINGS deliveries: {}",
         delivery_summary(assembled.machine.recent_deliveries())
     );
@@ -1096,6 +1120,9 @@ fn port_summary_decodes_pic_requests_pit_modes_and_vga_indices() {
     assert_eq!(ports.pic_special_mask, 1);
     assert_eq!(ports.pic_poll, 1);
     assert_eq!(ports.writes[&("PIC OCW2", 0x20, 0x20)], 1);
+    // Only the master saw ESMM; its later EOI is counted, the earlier OCW3
+    // and the slave's write are not.
+    assert_eq!(ports.pic_after_special_mask, [((0x20, 0x20), 1)].into());
     assert_eq!(
         ports.pit_modes,
         [((0, 3), 1), ((1, 2), 1), ((2, 0), 1)].into()

@@ -291,13 +291,19 @@ const CASCADE_IRQ: u8 = 2;
 /// the slave, and IRQ2 on the master (the cascade). Real software ends it with
 /// two OCW2 writes — EOI the slave, then EOI the master. [`end_of_interrupt`]
 /// collapses that into a single call for the machine's uniform EOI seam: it
-/// looks at the master's top in-service line, and **if that is the cascade line
-/// (IRQ2) it EOIs the slave first, then the master**; otherwise it EOIs the
-/// master alone. This assumes the cascaded interrupt sits at the top of the
-/// master's in-service stack when it is ended — which holds because a cascaded
+/// looks at the master line a non-specific EOI would end (the top in-service
+/// line, or in special mask mode the top unmasked one), and **if that is the
+/// cascade line (IRQ2) it EOIs the slave first, then the master**; otherwise
+/// it EOIs the master alone. This assumes the cascaded interrupt is the one a
+/// non-specific EOI on the master ends — which holds because a cascaded
 /// [`acknowledge`] nests the master's IRQ2 and the slave's line together. Two
-/// slave interrupts nested on top of each other (special fully-nested mode) are
-/// not modelled.
+/// slave interrupts nested on top of each other (special fully-nested mode)
+/// are not modelled.
+///
+/// Intel 8259A datasheet, "Special Mask Mode" and "Cascade Mode": each chip
+/// keeps its own special mask mode. On the slave it decides which slave
+/// requests drive INT while a masked slave level is in service; the master's
+/// IR2 nesting still applies on top of that.
 ///
 /// Intel 8259A datasheet, "Edge and Level Triggered Modes": every input
 /// is level-gated. Slave INT falling before INTA withdraws master IRR2,
@@ -401,10 +407,10 @@ impl InterruptController for CascadedPic {
     }
 
     fn end_of_interrupt(&mut self) {
-        // See the EOI contract on the type: a single call ends the interrupt at
-        // the top of the master's in-service stack, and if that is the cascade
-        // line it also ends the matching slave interrupt.
-        let cascaded = self.master.inner.borrow().highest_in_service() == Some(CASCADE_IRQ);
+        // See the EOI contract on the type: a single call ends the interrupt a
+        // non-specific EOI ends on the master, and if that is the cascade line
+        // it also ends the matching slave interrupt.
+        let cascaded = self.master.inner.borrow().non_specific_eoi_line() == Some(CASCADE_IRQ);
         if cascaded {
             self.slave.end_of_interrupt();
         }
@@ -707,6 +713,124 @@ mod tests {
         assert_eq!(pic.poll(), None);
         assert_eq!(pic.acknowledge(), Some(MASTER_BASE + 7));
         assert_eq!(pic.master.inner.borrow().highest_pending(), None);
+    }
+
+    /// Intel 8259A datasheet, Special Mask Mode, programmed through the bus
+    /// face: with the mode on, a lower level is delivered past a masked level
+    /// in service; with it off, it is not.
+    #[test]
+    fn special_mask_mode_on_mock_bus_delivers_past_a_masked_in_service_level() {
+        for special_mask in [true, false] {
+            let mut pic = SharedPic::new();
+            let mut bus = testkit::MockBus::new(Box::new(pic.clone()));
+            for (port, value) in [(0x20, 0x11), (0x21, 0x50), (0x21, 0x04), (0x21, 0x01)] {
+                bus.port_write(port, 1, value).unwrap();
+            }
+            if special_mask {
+                bus.port_write(MASTER_CMD, 1, 0x6B).unwrap();
+            }
+            pic.set_irq_line(3, true);
+            assert_eq!(pic.acknowledge(), Some(0x53));
+            bus.port_write(MASTER_DATA, 1, 0x08).unwrap();
+            pic.set_irq_line(5, true);
+            let expected = special_mask.then_some(0x55);
+            assert_eq!(pic.poll(), expected);
+            assert_eq!(bus.device().irq_pending(), special_mask);
+        }
+    }
+
+    /// Slave line 0 in service and masked on the slave, its master IR2
+    /// ended with a specific EOI, then slave line 3 requested.
+    fn slave_request_under_masked_slave_service(slave_special_mask: bool) -> Option<u8> {
+        let mut pic = init_pair();
+        let mut master = pic.master_device();
+        let mut slave = pic.slave_device();
+        if slave_special_mask {
+            slave.port_write(SLAVE_CMD, 1, 0x68).unwrap();
+        }
+        pic.set_irq_line(8, true);
+        assert_eq!(pic.acknowledge(), Some(SLAVE_BASE));
+        slave.port_write(SLAVE_DATA, 1, 0x01).unwrap();
+        master.port_write(MASTER_CMD, 1, 0x62).unwrap();
+        pic.set_irq_line(11, true);
+        pic.poll()
+    }
+
+    /// Intel 8259A datasheet, Special Mask Mode and Cascade Mode: the slave's
+    /// own special mask mode lets a lower slave level drive its INT past a
+    /// masked slave level in service, once the master has ended IR2.
+    #[test]
+    fn slave_special_mask_mode_drives_the_cascade() {
+        assert_eq!(
+            slave_request_under_masked_slave_service(true),
+            Some(SLAVE_BASE + 3)
+        );
+        assert_eq!(slave_request_under_masked_slave_service(false), None);
+    }
+
+    /// A slave request already pending behind an unmasked slave level in
+    /// service: masking that level in special mask mode raises slave INT with
+    /// no new request, through the bus face's cascade sync after the write,
+    /// and the master delivers it (Intel 8259A datasheet, Special Mask Mode
+    /// and Cascade Mode).
+    #[test]
+    fn masking_the_slave_level_in_service_releases_a_pending_slave_request() {
+        let mut pic = init_pair();
+        let mut master = pic.master_device();
+        let mut slave = pic.slave_device();
+        slave.port_write(SLAVE_CMD, 1, 0x68).unwrap();
+        pic.set_irq_line(8, true);
+        assert_eq!(pic.acknowledge(), Some(SLAVE_BASE));
+        master.port_write(MASTER_CMD, 1, 0x62).unwrap();
+        pic.set_irq_line(11, true);
+        // Slave line 0 is in service and unmasked: line 3 waits, INT is low.
+        assert!(!slave.irq_pending());
+        assert_eq!(pic.poll(), None);
+        let mut bus = testkit::MockBus::new(Box::new(slave.clone()));
+        bus.port_write(SLAVE_DATA, 1, 0x01).unwrap();
+        assert!(slave.irq_pending());
+        assert_eq!(
+            pic.master.inner.borrow().highest_pending(),
+            Some(CASCADE_IRQ)
+        );
+        assert_eq!(pic.poll(), Some(SLAVE_BASE + 3));
+        assert_eq!(pic.acknowledge(), Some(SLAVE_BASE + 3));
+        assert_eq!(pic.slave.inner.borrow().isr(), 0x09);
+    }
+
+    /// While the master still has IR2 in service, a second slave request
+    /// waits even with the slave in special mask mode: the master's nesting
+    /// is its own.
+    #[test]
+    fn master_ir2_in_service_still_holds_a_special_mask_slave() {
+        let mut pic = init_pair();
+        let mut slave = pic.slave_device();
+        slave.port_write(SLAVE_CMD, 1, 0x68).unwrap();
+        pic.set_irq_line(8, true);
+        pic.acknowledge().unwrap();
+        slave.port_write(SLAVE_DATA, 1, 0x01).unwrap();
+        pic.set_irq_line(11, true);
+        assert!(slave.irq_pending());
+        assert_eq!(pic.poll(), None);
+    }
+
+    /// In special mask mode the cascade wrapper's single EOI follows the
+    /// master line a non-specific EOI ends, skipping a masked IR2.
+    #[test]
+    fn cascaded_eoi_follows_the_special_mask_non_specific_line() {
+        let mut pic = init_pair();
+        let mut master = pic.master_device();
+        master.port_write(MASTER_CMD, 1, 0x68).unwrap();
+        pic.set_irq_line(8, true);
+        pic.acknowledge().unwrap();
+        // Mask IR2 on the master: the cascade in service stops nesting.
+        master.port_write(MASTER_DATA, 1, 0x04).unwrap();
+        pic.set_irq_line(5, true);
+        assert_eq!(pic.acknowledge(), Some(MASTER_BASE + 5));
+        pic.end_of_interrupt();
+        // IRQ5 ended; the masked cascade and its slave line stay in service.
+        assert_eq!(pic.master.inner.borrow().isr(), 1 << CASCADE_IRQ);
+        assert_eq!(pic.slave.inner.borrow().isr(), 0x01);
     }
 
     #[test]

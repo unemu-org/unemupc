@@ -547,9 +547,20 @@ traffic in every Windows phase, which makes it a throughput factor (Intel 8254
 datasheet, Read-Back Command). Setup also selects CRTC index F9h, and the
 Enhanced-mode display driver selects sequencer 06h and graphics 0Ah/0Fh, all
 outside the IBM VGA register ranges; whether they read back a value was not
-examined. VPICD's special mask mode is not implemented by the PIC model
-(Intel 8259A datasheet, OCW3 ESMM/SMM); Windows 3.1 ran without a visible fault
-regardless, so this is recorded rather than fixed here.
+examined. VPICD's special mask mode was not implemented by the PIC model at
+the time of these runs (Intel 8259A datasheet, OCW3 ESMM/SMM); Windows 3.1 ran
+without a visible fault regardless.
+
+**MEASURED** rerun with special mask mode modelled (MS-DOS 6.22 floppy,
+`user_media_win31_stage1` to `stage3` pass; the PIC counts of the Enhanced
+column are unchanged). The runner now also prints the PIC command writes that
+follow each controller's first special-mask write, and the 8259 lines of the
+diagnostic report at the stage end. No ICW1 follows the 6Bh on either
+controller, so VPICD sets the mode after re-initialising at 50h/58h. After the
+6Bh the master sees specific EOIs 60h (100) and 61h (50) and IRR reads 0Ah
+(17,297), the slave 0Ah (3); all 172 non-specific 20h EOIs come before it. At
+the end of the Enhanced stage both controllers report special mask on, at
+bases 50h and 58h.
 
 Screen polling costs: capturing the 640x480 frame after every 10,000-unit run
 slice held setup's graphical phase to about 0.3 million instructions per host
