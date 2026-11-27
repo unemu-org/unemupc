@@ -35,16 +35,18 @@ def dos_path(value):
 
 
 def msbatch(key):
-    # Windows 95 Resource Kit, Appendix D, Setup/NameAndOrg/Network/System.
-    # Device descriptions and OSR2 ProductKey support are hypotheses until run.
+    # Windows 95 Resource Kit, Appendix D, Setup/NameAndOrg/System.
+    # The Resource Kit names the key ProductID. OSR2's OEM certificate page
+    # takes neither this nor a ProductKey entry; the stage runner types it.
     if key is not None and not re.fullmatch(r"[A-Za-z0-9-]{1,64}", key):
         raise ValueError("invalid product key format")
     lines = ["[Setup]", "Express=1", r"InstallDir=C:\WINDOWS", "EBD=0",
              'TimeZone="GMT"', "Verify=0", "PenWinWarning=0"]
     if key:
-        lines.append("ProductKey=" + key)
+        lines.append("ProductID=" + key)
+    # No [Network] section: with one, even with empty client and protocol
+    # lists, setup asks for a network adapter the board does not have.
     lines += ["", "[NameAndOrg]", 'Name="User"', 'Org="Local test"', "",
-              "[Network]", "Display=0", "Clients=", "Protocols=", "",
               "[System]", 'Display="Standard Display Adapter (VGA)"',
               'Monitor="Standard VGA 640x480"', 'Mouse="Standard PS/2 Port Mouse"', ""]
     return "\r\n".join(lines).encode("ascii")

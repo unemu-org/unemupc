@@ -223,8 +223,9 @@ A clean stage or budget boundary finishes a journal generation. An execution
 error checkpoints only completed sectors, preserving a diagnostic generation
 without marking the session successfully finished. This is a disk checkpoint,
 not a whole-machine snapshot: a later stage boots anew from the same immutable
-base plus journal. Continuation to file-copy completion, setup's reboots and
-first desktop are follow-up work; no later-stage runner is claimed here.
+base plus journal. `user_media_win95_stage2` continues the same setup run to
+the restart setup requests after its file copy (§Windows 95 stage 2); setup's
+first boot and the first desktop are follow-up work.
 
 The stop report prints mode, CPL, CR0, CS:EIP, linear address, retired count,
 a payload-free error category, per-device access counts, the last port access
@@ -253,19 +254,31 @@ private-media variables.
 [sample script](https://techshelps.github.io/MSDN/DNWIN95/HTML/S7376.HTM).
 The generator requests express installation to C:\WINDOWS, suppresses boot-disk
 creation and the Pen Windows warning, selects full installation and GMT, sets
-a generic name/organization, hides network pages, and specifies VGA, a VGA
-monitor and PS/2 mouse. The sample spells the organization key `Org`.
-**ASSUMED:** empty Clients/Protocols disable networking for this source version;
-the English display/monitor/mouse descriptions match its INF database. These
-choices have not been qualified through a completed installation.
+a generic name/organization, and specifies VGA, a VGA monitor and PS/2 mouse.
+The sample spells the organization key `Org`. **MEASURED** (OSR2, stage 2):
+setup skips its directory, setup-options, user-information, network and
+startup-disk pages with this file, and its own log lists the batch settings it
+applied (express, no startup disk, no verify, C:\WINDOWS). It writes the master
+boot record and restarts by itself (its logged `MBR` and `Reboot` defaults).
+The file has **no [Network] section**: an earlier version with `Display=0` and
+empty `Clients=`/`Protocols=` made setup open its network-adapter selection
+list after hardware detection, although detection found no adapter.
+**ASSUMED:** the English display/monitor/mouse descriptions match its INF
+database (what the first boot installs is the next stage's to check).
 
-**READ:** the Resource Kit documents `ProductID`, whereas the optional generator
-emits `ProductKey` as requested for OSR2; acceptance of that spelling is
-**ASSUMED** until a keyed run. Invalid key characters, including newlines, are
-refused without logging their value. Synthetic tests check the key is present
-only in the on-disk generated file, absent from builder stdout/stderr, omitted
-when unset, and never staged as another host file. The key's acceptance is
-separate from reaching the first screen.
+**READ:** the Resource Kit documents `ProductID`, and setup's own wizard program
+reads `ProductID` from the batch file's [Setup] section (the name appears among
+its strings; `ProductKey` does not). The generator therefore writes the key as
+`ProductID`. **MEASURED** on the OSR2 OEM source: neither spelling, and neither
+the full `xxxxx-OEM-xxxxxxx-xxxxx` form nor its 17 digits alone, gets past the
+certificate-of-authenticity page. Setup presses Next by itself and shows its
+refusal; with the full form under either spelling the refusal reports empty
+boxes. The stage-2 runner therefore types the number (below).
+Retail product IDs through the batch file remain **ASSUMED**. Invalid key
+characters, including newlines, are refused without logging their value.
+Synthetic tests check the key is present only in the on-disk generated file,
+absent from builder stdout/stderr, omitted when unset, and never staged as
+another host file.
 
 **READ:** Resource Kit chapter 3,
 [setup switches](https://bitsavers.trailing-edge.com/pdf/microsoft/resource_kits/Windows_95_Resource_Kit_1995.pdf),
@@ -283,11 +296,132 @@ With OSR2 source and the DOS 7.1 floppy, the no-CD option is chosen at
 43,791,849 retired (12.6 s), the setup command is typed at 130,677,747
 (42.5 s), and a populated 640x480 frame with three palette indices and BDA mode
 12h is seen at 273,257,205 retired, 58–99 s after assembly across three runs
-on the shared host. The coarser polling
+on the shared host (48–59 s in the stage-2 change's runs, also at x86jit
+`75ef58a2`). The coarser polling
 moves each boundary by up to one million instructions. At `8f23fdcd`, with
 per-slice polling, the same screen was seen at 271,888,056 retired after
-120.96 s. The earlier refusal below is historical at `4bf91c8d`. This recheck
-still qualifies neither full installation nor the product-key prompt.
+120.96 s. The earlier refusal below is historical at `4bf91c8d`. The product-key
+prompt and the file copy are qualified by stage 2 below.
+
+### Windows 95 stage 2: file copy to setup's restart
+
+`user_media_win95_stage2` (ignored, local) needs `UNEMUPC_USER_WIN95_KEY` as
+well and skips without it. It builds a fresh disk, boots the same floppy,
+selects the same boot option and types the same setup command as stage 1, then
+keeps the machine running through hardware detection and file copy:
+
+```sh
+cargo test --offline -p machine-file --test user_media_win95 user_media_win95_stage2 -- --ignored --nocapture
+```
+
+Setup still stops at three dialogs on the OSR2 OEM source. The runner answers
+each once its frame has held, apart from at most 64 pixels (a blinking text
+caret), for 30 million retired instructions with no ATA command at all. Setup's
+own long phases behind a still frame keep reading the disk; a caret in a
+focused text box would defeat an exact-frame test. The keys, in order:
+
+1. Licence agreement: **Alt+Y** (its Yes button). No batch key accepts the
+   OEM licence agreement.
+2. Certificate-of-authenticity refusal: **ENTER** (the default Re-enter
+   button). Setup presses Next on the certificate page by itself and refuses
+   the empty number, because it takes no batch key for it (§MSBATCH.INF
+   evidence).
+3. Certificate page: the key's **digit groups typed back to back**, then
+   **ENTER** (the default Next button). The page has one box per group and
+   moves the focus to the next box when one is full, so a TAB would skip a
+   box (**MEASURED** on a TAB-separated attempt). The runner reads the key
+   from the variable and never logs it.
+
+Every progress and findings line passes a guard that fails the run, without
+printing the line, if it would carry the key in any case, with or without its
+dashes, or its digit groups joined as they are typed
+(`diagnostic_lines_carrying_the_product_key_are_withheld`). Single groups are
+not checked, since five digits occur in ordinary retired counts. The retained
+port history omits the values of the 8042 data port (60h), which carries the
+typed digits as scancodes, as it already omits ATA data words
+(`recent_port_history_hides_keyboard_data_values`).
+
+Boundary: a guest reset request after the setup command whose last port
+access is a write to the reset control register (CF9h), followed by a private
+snapshot of the merged disk (base plus journal, read through the drive's
+overlay) that holds `IO.SYS`, `MSDOS.SYS`, `COMMAND.COM`,
+`WINDOWS\WIN.COM`, `WINDOWS\SYSTEM.DAT`, `WINDOWS\USER.DAT`,
+`WINDOWS\SYSTEM\VMM32.VXD` and `WINDOWS\SYSTEM.INI`, a master boot record
+with code (the builder writes none) and a volume boot record without the
+builder's OEM name. Only booleans are printed. Any other restart path fails
+the stage; none was observed. The stage then finishes the journal
+generation, which a first-boot stage can mount. The budgets are 30 billion
+retired instructions after the command, a 60-billion virtual-time ceiling and
+150 million retired instructions without any ATA command.
+
+The retained stage directory holds the product key: the generated
+MSBATCH.INF is on its base image, and setup copies it into its working
+directory on the disk, so the journal holds it too. Delete the directory
+after use; never copy it into the repository or share it.
+
+**MEASURED**, x86jit `f0785d5a`, Windows 95 OSR2 source, MS-DOS 7.1 boot
+floppy, generic-486-isa / 80486DX / 16 MiB RAM / PS/2 mouse, test profile on
+a shared host; retired counts and port counts were identical in the two full
+test-profile runs (host time 2,657 s and 3,009 s), in a release-profile run at
+x86jit `75ef58a2` (`cargo test --release`, 1,071 s, about 17 M instructions/s)
+and in every partial run that reached a point:
+
+| Point in setup | Retired instructions | Host elapsed |
+| --- | ---: | ---: |
+| No-CD boot option chosen | 43,791,849 | 9 s |
+| Setup command typed | 130,677,747 | 28 s |
+| Licence agreement held from 1,082,742,147; Alt+Y | 1,121,690,606 | 177 s |
+| Certificate refusal held from 1,640,000,341; ENTER | 1,670,000,341 | 300 s |
+| Certificate digits and ENTER | 1,703,927,562 | 307 s |
+| Hardware detection, then "preparing to copy" (frames) | about 1.75–2.32 billion | — |
+| File copy at 3% / 49% / 99% (frames) | about 2.70 / 8.50 / 17.83 billion | — |
+| Reset request: boundary | 18,166,410,386 | 2,657 s (44 min) |
+
+The reset request is made at CPL 0 by flat protected code at a firmware
+address (F5E93h), and the last port access is a write to CF9h: setup hands
+the restart to the BIOS, whose reset routine ends there. Setup's own path to
+the BIOS is not recorded. At the boundary the snapshot holds all eight files,
+the master boot record has code (the builder writes none) and the volume boot
+record no longer carries the builder's OEM name: setup wrote both, as its
+logged `MBR=1` default says. SETUPLOG.TXT and DETLOG.TXT exist; BOOTLOG.TXT
+does not yet. Setup ran in real mode and in protected mode at CPL 3, never with paging or
+V86: its front end is a Windows 3.1-style kernel, not the Windows 95 VMM.
+
+Hardware detection (DETLOG.TXT, Plug and Play identifiers of its "Detected"
+lines only): `*PNP0000` (PIC), `*PNP0100` (PIT), `*PNP0200` (DMA), `*PNP0301`
+(keyboard controller), `*PNP0500` (serial port), `*PNP0600` (IDE controller),
+`*PNP0700` (floppy controller), `*PNP0800` (speaker), `*PNP0900` (VGA),
+`*PNP0B00` (RTC), `*PNP0C00` (Plug and Play BIOS), `*PNP0C01` (system board),
+`*PNP0C04` (numeric coprocessor), `*PNP0C05` (APM BIOS), `*PNP0F0E` (PS/2-style
+mouse). No parallel port, network adapter or sound card was detected; the
+board has none of them in this machine file.
+
+Per-device port summary for the whole stage (our counts):
+
+| Device | Accesses | Command/register writes |
+| --- | ---: | --- |
+| ATA | 102,748,611 | READ SECTORS 20h: 4,616; WRITE SECTORS 30h: 17,607; IDENTIFY ECh: 1; IDENTIFY PACKET A1h: 2. No multiple-block or DMA commands |
+| PIT | 58,838,451 | read-back D2h (latch counter 0): 19,612,816; counter 0 mode 2 (34h): 1. Counter 1 is never programmed |
+| PIC | 136,927 | ICW1 11h once per controller (BIOS bases); non-specific EOI 20h: 21,624; specific EOI 61h: 42; OCW3 0Bh (read ISR) 57,496 master, 1 slave; 0Ah (read IRR) 3 + 2. No special mask mode, no poll, no re-initialisation |
+| 8042 | 112,120 | command 60h: 54; AEh: 84; A7h/AAh/ABh/ADh: once each; D4h: 18. Auxiliary bytes: reset FFh ×5, ID F2h ×2, sample rate F3h ×3 (values 0Ah ×2, 28h), resolution E8h (03h), scaling E6h, enable F4h, disable F5h |
+| FDC | 31,603 | READ DATA E6h: 827; SENSE INTERRUPT 08h: 232; SEEK 0Fh: 227; SPECIFY, RECALIBRATE and READ ID once each |
+| DMA | 8,358 | channel 2 floppy transfers: 827 mode writes |
+| VGA | 818,390 | indexed sets include CRTC 40h and graphics 0Fh/sequencer 06h, probes of extended registers the standard VGA lacks |
+
+The 8042 auxiliary sequence is the mouse driver of setup's front end
+initialising the PS/2 mouse. No device fault, CPU stop or wrong device answer
+appeared: the stage needed no device or CPU change.
+
+Where the time goes (**MEASURED** with `/usr/bin/sample`, 10 s during file
+copy, about 7,000 active samples): the x86jit core about 79% (block-cache
+hashing with the standard library's SipHash about 21%, debug IR verification
+`verify_temp_defs` about 13%, lifting and interpretation the rest), screen
+rendering 11%, allocation 8%, devices under 1%. Before the runner shared one
+frame capture per poll between all screen checks, rendering was 37%. The
+test profile keeps debug assertions; the release profile drops them and runs
+the whole stage 2.5 times faster (1,071 s against 2,657 s, **MEASURED**), the
+verification share presumably among the savings (not sampled). File copy alone takes about 15.8 billion retired
+instructions, most of the stage.
 
 ### Windows 95 findings (2026-11-25)
 

@@ -9,3 +9,9 @@ mod windows;
 fn user_media_win95_stage1() {
     windows::run(windows::Stage::Win95, None);
 }
+
+#[test]
+#[ignore = "local-only commercial media; set UNEMUPC_USER_WIN95_DIR, UNEMUPC_USER_DOS_FLOPPY and UNEMUPC_USER_WIN95_KEY"]
+fn user_media_win95_stage2() {
+    windows::run(windows::Stage::Win95FileCopy, None);
+}

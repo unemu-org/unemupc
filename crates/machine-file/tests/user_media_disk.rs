@@ -576,8 +576,10 @@ fn msbatch_key_is_only_in_generated_disk_never_in_builder_logs() {
         let mut fat = Fat16::open(&path, (1015, 16, 63));
         let batch = String::from_utf8(fat.file(&[*b"MSBATCH INF"])).unwrap();
         assert!(batch.contains("Express=1\r\n") && batch.contains("Mouse="));
+        // A [Network] section makes setup ask for an adapter the board lacks.
+        assert!(!batch.contains("[Network]"));
         assert_eq!(batch.contains(key), supplied.is_some());
-        assert_eq!(batch.contains("ProductKey="), supplied.is_some());
+        assert_eq!(batch.contains("ProductID="), supplied.is_some());
         drop(fat);
         assert_eq!(
             std::fs::read_dir(path.parent().unwrap()).unwrap().count(),

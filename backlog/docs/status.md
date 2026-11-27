@@ -1,5 +1,36 @@
 # Status
 
+## Local Windows 95 setup to its first restart (2026-11-27)
+
+The ignored `user_media_win95_stage2` runs Windows 95 OSR2 setup from the
+FAT16 IDE disk past its first screen, through hardware detection and the whole
+file copy, to the restart setup requests. It needs `UNEMUPC_USER_WIN95_KEY`
+besides the stage-1 variables and skips without it.
+
+**MEASURED**, x86jit `f0785d5a`, generic-486-isa / 80486DX / 16 MiB RAM /
+PS/2 mouse, MS-DOS 7.1 boot floppy: the boundary, a guest reset request (last
+write to CF9h, from the firmware's reset routine), comes at 18,166,410,386
+retired instructions, after 2,657 s (44 min) on a shared host in the test
+profile, or 1,071 s (18 min) with `cargo test --release` at x86jit
+`75ef58a2`; all three full runs gave identical counts. A
+private snapshot of the merged disk then holds IO.SYS, MSDOS.SYS, COMMAND.COM,
+WIN.COM, SYSTEM.DAT, USER.DAT, VMM32.VXD and SYSTEM.INI, and setup has written
+the master boot record and the boot sector; the journal generation is kept for
+a first-boot stage. Setup still asks three things the batch file cannot
+answer on the OEM source, which the runner types once the screen holds with
+the disk idle: Alt+Y for the licence, ENTER for the certificate refusal, and
+the certificate digits plus ENTER. The product key never reaches a log line
+(a guard fails the run instead). The generated batch file now writes the key
+as `ProductID` and has no `[Network]` section, which had opened the
+network-adapter list. Detection found the PIC, PIT, DMA, keyboard controller,
+serial port, IDE and floppy controllers, speaker, VGA, RTC, Plug and Play
+BIOS, system board, coprocessor, APM and the PS/2 mouse. No device or CPU
+fix was needed; setup used no paging, V86, PIC special mask mode or port 61h
+refresh timing. File copy is about 15.8 billion of the 18.2 billion retired
+instructions; host time goes mostly to the x86jit core (block-cache hashing,
+debug IR verification). See
+[stage 2](user-media.md#windows-95-stage-2-file-copy-to-setups-restart).
+
 ## 8259A special mask mode (2026-11-27)
 
 The PIC model implements special mask mode (Intel 8259A datasheet, Special
@@ -125,10 +156,10 @@ See [the measured gap rows and hardware references](design/windows95-on-486.md#5
 
 **MEASURED**, x86jit `f0785d5a`: the unchanged stage-1 qualification passes
 through the shared Windows runner, reaching its first populated 640×480 setup
-screen at 273,257,205 retired instructions (58–99 s across runs; at `8f23fdcd` 271,888,056
-in 120.96 s with finer screen polling). Full installation and the product-key
-prompt remain unqualified. The following refusal is historical at the earlier
-CPU pin.
+screen at 273,257,205 retired instructions (58–99 s across the earlier runs,
+48–59 s in the stage-2 change's runs; at `8f23fdcd` 271,888,056
+in 120.96 s with finer screen polling). Stage 2 (above) continues to setup's
+first restart. The following refusal is historical at the earlier CPU pin.
 
 **MEASURED**, x86jit `4bf91c8d`: the ignored `user_media_win95_stage1`
 boots the supplied MS-DOS 7.1 floppy read-only on generic-486-isa, 80486DX,

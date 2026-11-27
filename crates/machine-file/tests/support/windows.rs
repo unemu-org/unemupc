@@ -21,6 +21,49 @@ use std::{
 #[path = "private_diagnostics.rs"]
 mod private_diagnostics;
 
+/// Every progress and findings line of the runner goes through [`emit`].
+macro_rules! say {
+    ($($arg:tt)*) => {
+        emit(format!($($arg)*))
+    };
+}
+
+/// The product key is written only into the generated batch file on the
+/// temporary disk and typed as digits on setup's certificate page. A line that
+/// would carry it, with or without its dashes and in any case, or carry its
+/// digit groups joined as they are typed, is withheld and fails the run
+/// without being printed.
+fn emit(line: String) {
+    let key = std::env::var("UNEMUPC_USER_WIN95_KEY").ok();
+    assert!(
+        !carries_secret(&line, key.as_deref()),
+        "a diagnostic line would carry the product key; withheld"
+    );
+    eprintln!("{line}");
+}
+
+fn carries_secret(line: &str, secret: Option<&str>) -> bool {
+    let fold = |text: &str| -> String {
+        text.chars()
+            .filter(|c| *c != '-')
+            .map(|c| c.to_ascii_uppercase())
+            .collect()
+    };
+    let Some(secret) = secret else {
+        return false;
+    };
+    let folded = fold(line);
+    let key = fold(secret);
+    // The digit groups alone, as certificate_keys types them. A single group
+    // is not checked: five digits turn up in ordinary retired counts.
+    let digits: String = secret
+        .split('-')
+        .filter(|group| !group.is_empty() && group.bytes().all(|byte| byte.is_ascii_digit()))
+        .collect();
+    (!key.is_empty() && (line.to_ascii_uppercase().contains(&key) || folded.contains(&key)))
+        || (digits.len() >= 10 && folded.contains(&digits))
+}
+
 #[derive(Default, Debug)]
 struct Ports {
     accesses: BTreeMap<&'static str, u64>,
@@ -164,11 +207,13 @@ impl Ports {
                 *self.writes.entry((command, *port, *value)).or_default() += 1;
             }
         }
-        // ATA data words can contain batch-file secrets. Retain access metadata
-        // without retaining payloads in any printable diagnostic structure.
+        // ATA data words can contain batch-file secrets, and the 8042 data
+        // port carries typed keys, the product key among them, as scancodes.
+        // Retain access metadata without retaining payloads in any printable
+        // diagnostic structure.
         self.recent.extend(events.iter().skip(events.len().saturating_sub(64)).map(|event| {
             match event {
-                TraceEvent::Port { at, port: port @ (0x1f0 | 0x170), size, dir, .. } =>
+                TraceEvent::Port { at, port: port @ (0x1f0 | 0x170 | 0x60), size, dir, .. } =>
                     format!("Port {{ at: {at:?}, port: {port:04x}, size: {size}, dir: {dir:?}, value: [payload omitted] }}"),
                 _ => format!("{event:x?}"),
             }
@@ -233,6 +278,9 @@ fn command_keys(command: &str) -> Vec<u8> {
 pub enum Stage {
     /// Windows 95 setup from the DOS floppy, up to setup's first screen.
     Win95,
+    /// The same setup run on, through hardware detection and file copy, up to
+    /// the restart it requests at the end of its DOS-hosted phase.
+    Win95FileCopy,
     /// SYS C: from the DOS floppy, plus our startup files and XMS driver.
     SystemTransfer,
     /// Windows 3.1 SETUP /H from C:, back to DOS with WIN386.EXE installed.
@@ -250,7 +298,7 @@ pub enum Stage {
 impl Stage {
     fn command(self) -> &'static str {
         match self {
-            Self::Win95 => "c:\\win95\\setup /is /iq c:\\msbatch.inf\n",
+            Self::Win95 | Self::Win95FileCopy => "c:\\win95\\setup /is /iq c:\\msbatch.inf\n",
             Self::SystemTransfer => "c:\\sys31.bat\n",
             Self::Install => "c:\\inst31.bat\n",
             Self::Standard => "c:\\windows\\win /s c:\\windows\\progman.exe\n",
@@ -272,6 +320,10 @@ impl Stage {
     fn windows(self) -> bool {
         matches!(self, Self::Standard | Self::Enhanced)
     }
+
+    fn win95(self) -> bool {
+        matches!(self, Self::Win95 | Self::Win95FileCopy)
+    }
 }
 
 /// The private disk after a stage, and whether stage 1 found a DOS 7 kernel
@@ -281,8 +333,8 @@ pub struct Staged {
     pub dos7: bool,
 }
 
-fn decoded_text(assembled: &assembly::AssembledMachine) -> String {
-    match assembled.capture_text(DeviceId::Vga).unwrap().frame {
+fn decoded_text(frame: &video::Frame) -> String {
+    match frame {
         video::Frame::Text(grid) => grid.rows_as_strings().join("\n"),
         _ => String::new(),
     }
@@ -290,9 +342,9 @@ fn decoded_text(assembled: &assembly::AssembledMachine) -> String {
 
 /// A digest of the captured graphics frame, to tell a settled screen from one
 /// still being drawn. `None` in text mode.
-fn frame_digest(assembled: &assembly::AssembledMachine) -> Option<u64> {
+fn frame_digest(frame: &video::Frame) -> Option<u64> {
     use std::hash::{Hash, Hasher};
-    match assembled.capture_text(DeviceId::Vga).unwrap().frame {
+    match frame {
         video::Frame::Pixels(pixels) => {
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
             pixels.indices.hash(&mut hasher);
@@ -303,10 +355,15 @@ fn frame_digest(assembled: &assembly::AssembledMachine) -> Option<u64> {
     }
 }
 
-fn first_screen(assembled: &assembly::AssembledMachine, text: &str, stage: Stage) -> bool {
+fn first_screen(
+    assembled: &assembly::AssembledMachine,
+    frame: &video::Frame,
+    text: &str,
+    stage: Stage,
+) -> bool {
     let mut mode = [0];
     assembled.machine.cpu().read_mem(0x449, &mut mode).unwrap();
-    if let video::Frame::Pixels(pixels) = assembled.capture_text(DeviceId::Vga).unwrap().frame {
+    if let video::Frame::Pixels(pixels) = frame {
         let mut counts = [0usize; 256];
         for index in &pixels.indices {
             counts[*index as usize] += 1;
@@ -372,9 +429,12 @@ fn installed_choices(ini: &str) -> BTreeMap<&'static str, bool> {
     .into()
 }
 
-fn report_installed_choices(assembled: &mut assembly::AssembledMachine) {
-    // Inspect the merged sector view through the drive's existing overlay.
-    // mtools reads a new private snapshot, never the immutable mounted base.
+/// A private copy of the merged sector view of the IDE master, read through
+/// the drive's existing overlay. mtools reads this new snapshot, never the
+/// immutable mounted base. The directory is removed when it is dropped.
+fn disk_snapshot(
+    assembled: &mut assembly::AssembledMachine,
+) -> (machine_file::test_support::TempDir, PathBuf) {
     let bytes = assembled
         .machine
         .bus_mut()
@@ -387,7 +447,7 @@ fn report_installed_choices(assembled: &mut assembly::AssembledMachine) {
         .drive(0)
         .unwrap()
         .image();
-    let directory = machine_file::test_support::TempDir::new("private-win31-inspection");
+    let directory = machine_file::test_support::TempDir::new("private-windows-inspection");
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -396,20 +456,101 @@ fn report_installed_choices(assembled: &mut assembly::AssembledMachine) {
     }
     let snapshot = directory.path().join("inspection.img");
     std::fs::write(&snapshot, bytes).expect("private inspection snapshot failed");
+    (directory, snapshot)
+}
+
+/// Read one file of the first partition (it starts at sector 63) from a
+/// snapshot. `None` when it is absent.
+fn snapshot_file(snapshot: &std::path::Path, path: &str) -> Option<Vec<u8>> {
     let output = Command::new("mtype")
         .arg("-i")
         .arg(format!("{}@@32256", snapshot.display()))
-        .arg("::/WINDOWS/SYSTEM.INI")
+        .arg(format!("::/{path}"))
         .env("MTOOLSRC", "/dev/null")
         .output()
-        .expect("start private settings inspection");
-    eprintln!("FINDINGS SYSTEM.INI readable={}", output.status.success());
-    if output.status.success() {
-        eprintln!(
+        .expect("start private file inspection");
+    output.status.success().then_some(output.stdout)
+}
+
+fn report_installed_choices(assembled: &mut assembly::AssembledMachine) {
+    let (_directory, snapshot) = disk_snapshot(assembled);
+    let ini = snapshot_file(&snapshot, "WINDOWS/SYSTEM.INI");
+    say!("FINDINGS SYSTEM.INI readable={}", ini.is_some());
+    if let Some(ini) = ini {
+        say!(
             "FINDINGS installed choices (derived, no source text): {:?}",
-            installed_choices(&String::from_utf8_lossy(&output.stdout))
+            installed_choices(&String::from_utf8_lossy(&ini))
         );
     }
+}
+
+/// Files the DOS-hosted phase of Windows 95 setup leaves for the first boot.
+const WIN95_INSTALLED_FILES: [&str; 8] = [
+    "IO.SYS",
+    "MSDOS.SYS",
+    "COMMAND.COM",
+    "WINDOWS/WIN.COM",
+    "WINDOWS/SYSTEM.DAT",
+    "WINDOWS/USER.DAT",
+    "WINDOWS/SYSTEM/VMM32.VXD",
+    "WINDOWS/SYSTEM.INI",
+];
+
+/// Booleans for the files and boot records setup must have written, plus the
+/// hardware identifiers its detection log names. Returns whether every file
+/// in [`WIN95_INSTALLED_FILES`] is present and both boot records are setup's.
+fn report_win95_files(assembled: &mut assembly::AssembledMachine) -> bool {
+    let (_directory, snapshot) = disk_snapshot(assembled);
+    let present: BTreeMap<&str, bool> = WIN95_INSTALLED_FILES
+        .iter()
+        .map(|path| (*path, snapshot_file(&snapshot, path).is_some()))
+        .collect();
+    say!("FINDINGS installed files present: {present:?}");
+    // The master boot record and the partition's boot record (sector 63)
+    // both lie in the first 32 KiB.
+    let mut head = [0u8; 32 * 1024];
+    {
+        use std::io::Read;
+        std::fs::File::open(&snapshot)
+            .and_then(|mut file| file.read_exact(&mut head))
+            .expect("private inspection snapshot unreadable");
+    }
+    // The builder leaves the master boot record without code and writes its
+    // own OEM name into the volume boot record.
+    let mbr_code = head[..446].iter().any(|byte| *byte != 0);
+    let vbr_replaced = &head[63 * 512 + 3..63 * 512 + 11] != b"UNEMUPC ";
+    say!("FINDINGS boot records: MBR code present={mbr_code}; VBR replaced={vbr_replaced}");
+    for log in ["SETUPLOG.TXT", "DETLOG.TXT", "BOOTLOG.TXT"] {
+        say!(
+            "FINDINGS {log} present={}",
+            snapshot_file(&snapshot, log).is_some()
+        );
+    }
+    if let Some(log) = snapshot_file(&snapshot, "DETLOG.TXT") {
+        say!(
+            "FINDINGS detected device identifiers: {:?}",
+            detected_ids(&String::from_utf8_lossy(&log))
+        );
+    }
+    present.values().all(|present| *present) && mbr_code && vbr_replaced
+}
+
+/// Plug and Play identifiers (three letters and four hexadecimal digits, as
+/// the Plug and Play ISA Specification, Appendix A, writes them) from the
+/// detection log's "Detected:" lines. Device descriptions are left out.
+fn detected_ids(log: &str) -> BTreeSet<String> {
+    log.lines()
+        .filter_map(|line| line.trim().strip_prefix("Detected:"))
+        .filter_map(|rest| {
+            let id = rest.trim().strip_prefix('*').unwrap_or(rest.trim());
+            let id: String = id.chars().take(7).collect();
+            let bytes = id.as_bytes();
+            (bytes.len() == 7
+                && bytes[..3].iter().all(u8::is_ascii_uppercase)
+                && bytes[3..].iter().all(u8::is_ascii_hexdigit))
+            .then(|| format!("*{id}"))
+        })
+        .collect()
 }
 
 /// The delivery log reduced to totals and, for the latest entries, their
@@ -442,6 +583,73 @@ fn delivery_summary(log: Option<machine::RecentDeliveries>) -> String {
     text
 }
 
+/// Keys for the dialogs Windows 95 OSR2 setup still shows with our batch
+/// file, in the order it shows them. Each goes out once the setup frame has
+/// held (all but a caret's pixels) with no disk command at all for
+/// [`WIN95_DIALOG_HOLD`] instructions; setup's long phases behind a still
+/// frame keep the disk busy.
+const WIN95_ANSWERS: [(&str, Answer); 3] = [
+    // No batch key accepts the OEM licence agreement. Alt+Y picks its Yes
+    // button whichever control has the focus.
+    (
+        "licence agreement: Alt+Y",
+        Answer::Keys(&[0x38, 0x15, 0x95, 0xb8]),
+    ),
+    // The OEM certificate page does not take the batch file's ProductID: setup
+    // presses its Next button with the boxes empty and refuses the number.
+    // ENTER picks the refusal's default Re-enter button.
+    (
+        "certificate refusal: ENTER for Re-enter",
+        Answer::Keys(&[0x1c, 0x9c]),
+    ),
+    // One box per digit group; a full box moves the focus to the next one by
+    // itself, so a TAB would skip a box. ENTER picks the default Next button.
+    (
+        "certificate page: digit groups, then ENTER for Next",
+        Answer::Certificate,
+    ),
+];
+
+/// What the runner types at a held setup dialog.
+#[derive(Clone, Copy)]
+enum Answer {
+    /// Fixed scancodes, make and break.
+    Keys(&'static [u8]),
+    /// The digit groups of the product key, then ENTER. The key itself
+    /// never reaches a log line.
+    Certificate,
+}
+
+impl Answer {
+    fn scancodes(self) -> Vec<u8> {
+        match self {
+            Self::Keys(keys) => keys.to_vec(),
+            Self::Certificate => {
+                certificate_keys(&std::env::var("UNEMUPC_USER_WIN95_KEY").unwrap_or_default())
+            }
+        }
+    }
+}
+
+/// Scancodes for an OEM certificate number: its digit groups back to back,
+/// then ENTER. The "OEM" group is printed on the page.
+fn certificate_keys(key: &str) -> Vec<u8> {
+    let digits: String = key
+        .split('-')
+        .filter(|group| group.bytes().all(|byte| byte.is_ascii_digit()))
+        .collect();
+    let mut keys = command_keys(&digits);
+    keys.extend([0x1c, 0x9c]);
+    keys
+}
+
+/// How long a setup frame must hold before it is taken as a dialog waiting
+/// for a key. Progress pages redraw well within this.
+const WIN95_DIALOG_HOLD: u64 = 30_000_000;
+
+/// Pixels a held setup frame may differ by from where the hold began.
+const WIN95_CARET_PIXELS: usize = 64;
+
 /// Run slices (of ten thousand virtual-time units each) between two screen
 /// captures: about one million guest instructions.
 const SCREEN_POLL_SLICES: u64 = 100;
@@ -450,7 +658,7 @@ const SCREEN_POLL_SLICES: u64 = 100;
 /// a freshly built one, and assert that it reached its boundary. Returns
 /// `None` without running when the private-media variables are unset.
 pub fn run(stage: Stage, previous: Option<Staged>) -> Option<Staged> {
-    let source = if stage == Stage::Win95 {
+    let source = if stage.win95() {
         "UNEMUPC_USER_WIN95_DIR"
     } else {
         "UNEMUPC_USER_WIN31_DIR"
@@ -459,19 +667,21 @@ pub fn run(stage: Stage, previous: Option<Staged>) -> Option<Staged> {
         std::env::var_os(source),
         std::env::var_os("UNEMUPC_USER_DOS_FLOPPY"),
     ) else {
-        eprintln!("skipping: set {source} and UNEMUPC_USER_DOS_FLOPPY");
+        say!("skipping: set {source} and UNEMUPC_USER_DOS_FLOPPY");
         return None;
     };
+    // Past its first screen, setup refuses to continue without the product
+    // key, which the runner types on the certificate page.
+    if stage == Stage::Win95FileCopy && std::env::var_os("UNEMUPC_USER_WIN95_KEY").is_none() {
+        say!("skipping: set UNEMUPC_USER_WIN95_KEY");
+        return None;
+    }
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let mut dos7 = previous.as_ref().is_some_and(|disk| disk.dos7);
     let image = previous.map(|disk| disk.image).unwrap_or_else(|| {
         let built = Command::new("bash")
             .arg(root.join("scripts/user-media-disk.sh"))
-            .arg(if stage == Stage::Win95 {
-                "--win95"
-            } else {
-                "--win31"
-            })
+            .arg(if stage.win95() { "--win95" } else { "--win31" })
             .output()
             .expect("start private disk builder");
         assert!(built.status.success(), "private disk builder failed");
@@ -531,7 +741,7 @@ pub fn run(stage: Stage, previous: Option<Staged>) -> Option<Staged> {
         .unwrap_or_else(|_| panic!("private media assembly failed"));
     for handle in &assembled.persistence {
         let generation = handle.mount_report().last_closed_generation;
-        eprintln!("{stage:?} mounted journal generation={generation:?}");
+        say!("{stage:?} mounted journal generation={generation:?}");
         if stage.boots_hard_disk() {
             assert!(
                 generation.is_some_and(|id| id >= 1),
@@ -557,12 +767,17 @@ pub fn run(stage: Stage, previous: Option<Staged>) -> Option<Staged> {
     let mut settled: Option<(u64, u64)> = None;
     let mut last_disk_write = 0;
     let mut disk_writes = 0;
+    let mut last_disk_command = 0;
+    let mut disk_commands = 0;
     let mut dos_launch = None;
     let mut dos_prompt = false;
     let mut exit_sent = None;
     let mut first_graphics = None;
     let mut setup_confirmed = false;
     let mut execution_error = false;
+    let mut reset_after_launch = false;
+    let mut held: Option<(u64, Vec<u8>)> = None;
+    let mut answered = 0;
     let reason;
     // The retired budget is independent of wall time. A second virtual-time
     // ceiling bounds HLT waits, which can consume no retired instructions.
@@ -620,6 +835,10 @@ pub fn run(stage: Stage, previous: Option<Staged>) -> Option<Staged> {
                 break;
             }
             Ok(machine::RunOutcome::ResetRequested) => {
+                // Setup hands its restart to the firmware, whose reset routine
+                // ends with a write to the reset control register at CF9h.
+                reset_after_launch =
+                    launched.is_some() && ports.last_access == Some((0xcf9, AccessDir::Write, 1));
                 reason = "guest reset requested".into();
                 break;
             }
@@ -631,11 +850,52 @@ pub fn run(stage: Stage, previous: Option<Staged>) -> Option<Staged> {
         if !slice.is_multiple_of(SCREEN_POLL_SLICES) {
             continue;
         }
-        let text = decoded_text(&assembled);
+        // One capture per poll: rendering a 640x480 frame dominates the
+        // harness's host time, so every screen decision below shares it.
+        let frame = assembled.capture_text(DeviceId::Vga).unwrap().frame;
+        let text = decoded_text(&frame);
+        if stage == Stage::Win95FileCopy && launched.is_some() {
+            // A blinking caret in a focused text box changes a few pixels;
+            // any real redraw changes more than WIN95_CARET_PIXELS.
+            held = match (held, &frame) {
+                (Some((since, start)), video::Frame::Pixels(pixels))
+                    if start.len() == pixels.indices.len()
+                        && start
+                            .iter()
+                            .zip(&pixels.indices)
+                            .filter(|(a, b)| a != b)
+                            .count()
+                            <= WIN95_CARET_PIXELS =>
+                {
+                    Some((since, start))
+                }
+                (_, video::Frame::Pixels(pixels)) => Some((retired, pixels.indices.clone())),
+                (_, video::Frame::Text(_)) => None,
+            };
+            if let Some((since, _)) = &held {
+                let since = *since;
+                if retired.saturating_sub(since.max(last_disk_command)) >= WIN95_DIALOG_HOLD
+                    && answered < WIN95_ANSWERS.len()
+                {
+                    let (what, answer) = WIN95_ANSWERS[answered];
+                    assembly::inject_scancodes(
+                        &mut assembled.machine,
+                        keyboard,
+                        &answer.scancodes(),
+                    );
+                    answered += 1;
+                    held = None;
+                    say!(
+                        "{stage:?} held setup dialog {answered} ({what}): retired={retired}; held since={since}; wall={:?}",
+                        started.elapsed()
+                    );
+                }
+            }
+        }
         if !boot_menu_selected && text.contains("Startup Menu") && text.contains("without CD-ROM") {
             assembly::inject_scancodes(&mut assembled.machine, keyboard, &[0x03, 0x83, 0x1c, 0x9c]);
             boot_menu_selected = true;
-            eprintln!(
+            say!(
                 "{stage:?} floppy no-CD boot option: retired={retired}; wall={:?}",
                 started.elapsed()
             );
@@ -649,7 +909,7 @@ pub fn run(stage: Stage, previous: Option<Staged>) -> Option<Staged> {
             // prompt appears directly.
             assembly::inject_scancodes(&mut assembled.machine, keyboard, &[0x3f, 0xbf]);
             clean_boot = true;
-            eprintln!(
+            say!(
                 "{stage:?} MS-DOS clean boot (F5): retired={retired}; wall={:?}",
                 started.elapsed()
             );
@@ -669,12 +929,15 @@ pub fn run(stage: Stage, previous: Option<Staged>) -> Option<Staged> {
             reason = "the DOS kernel refused Enhanced mode before paging".into();
             break;
         }
-        if stage == Stage::Install && launched.is_some() && first_screen(&assembled, &text, stage) {
+        if stage == Stage::Install
+            && launched.is_some()
+            && first_screen(&assembled, &frame, &text, stage)
+        {
             let first = *first_graphics.get_or_insert(retired);
             if !setup_confirmed && retired.saturating_sub(first) >= 5_000_000 {
                 assembly::inject_scancodes(&mut assembled.machine, keyboard, &[0x1c, 0x9c]);
                 setup_confirmed = true;
-                eprintln!(
+                say!(
                     "Install GUI confirmation ENTER: retired={retired}; wall={:?}",
                     started.elapsed()
                 );
@@ -693,8 +956,8 @@ pub fn run(stage: Stage, previous: Option<Staged>) -> Option<Staged> {
                 // Keys typed while Windows still shows its hourglass are lost,
                 // so wait for a populated frame that stays identical at every
                 // poll for ten million instructions in the stage's mode.
-                let digest = (in_mode && first_screen(&assembled, &text, stage))
-                    .then(|| frame_digest(&assembled))
+                let digest = (in_mode && first_screen(&assembled, &frame, &text, stage))
+                    .then(|| frame_digest(&frame))
                     .flatten();
                 settled = match (settled, digest) {
                     (Some((since, previous)), Some(digest)) if previous == digest => {
@@ -714,7 +977,7 @@ pub fn run(stage: Stage, previous: Option<Staged>) -> Option<Staged> {
                 keys.extend(command_keys("c:\\command.com\n"));
                 assembly::inject_scancodes(&mut assembled.machine, keyboard, &keys);
                 dos_launch = Some(retired);
-                eprintln!(
+                say!(
                     "{stage:?} settled frame / File/Run COMMAND.COM: retired={retired}; wall={:?}",
                     started.elapsed()
                 );
@@ -739,7 +1002,7 @@ pub fn run(stage: Stage, previous: Option<Staged>) -> Option<Staged> {
                     &command_keys("exit\n"),
                 );
                 exit_sent = Some(retired);
-                eprintln!(
+                say!(
                     "{stage:?} DOS prompt / EXIT: retired={retired}; wall={:?}",
                     started.elapsed()
                 );
@@ -747,7 +1010,7 @@ pub fn run(stage: Stage, previous: Option<Staged>) -> Option<Staged> {
             // After EXIT, a populated frame must hold at every poll for five
             // million instructions while the CPU stays in the stage's mode.
             if exit_sent.is_some() {
-                if in_mode && first_screen(&assembled, &text, stage) {
+                if in_mode && first_screen(&assembled, &frame, &text, stage) {
                     shell_back.get_or_insert(retired);
                 } else {
                     shell_back = None;
@@ -769,13 +1032,15 @@ pub fn run(stage: Stage, previous: Option<Staged>) -> Option<Staged> {
                 &command_keys(stage.command()),
             );
             launched = Some(retired);
-            eprintln!(
+            say!(
                 "{stage:?} DOS prompt / command: retired={retired}; wall={:?}",
                 started.elapsed()
             );
         } else if launched.is_some()
             && match stage {
-                Stage::Win95 => first_screen(&assembled, &text, stage),
+                Stage::Win95 => first_screen(&assembled, &frame, &text, stage),
+                // Only the restart, handled above, ends this stage.
+                Stage::Win95FileCopy => false,
                 Stage::SystemTransfer => {
                     dos7 = text.lines().any(|line| line.trim() == "UM31DOS7");
                     text.lines().any(|line| line.trim() == "UM31SYSOK")
@@ -793,17 +1058,25 @@ pub fn run(stage: Stage, previous: Option<Staged>) -> Option<Staged> {
             reason = format!("{stage:?} boundary");
             break;
         }
-        let writes = ports
-            .writes
-            .iter()
-            .filter(|((kind, _, value), _)| {
-                *kind == "ATA command" && matches!(*value, 0x30 | 0x31 | 0xc5)
-            })
-            .map(|(_, count)| *count)
-            .sum::<u64>();
+        let commands = |write_only: bool| {
+            ports
+                .writes
+                .iter()
+                .filter(|((kind, _, value), _)| {
+                    *kind == "ATA command" && (!write_only || matches!(*value, 0x30 | 0x31 | 0xc5))
+                })
+                .map(|(_, count)| *count)
+                .sum::<u64>()
+        };
+        let writes = commands(true);
         if launched.is_none() || writes != disk_writes {
             disk_writes = writes;
             last_disk_write = retired;
+        }
+        let accesses = commands(false);
+        if launched.is_none() || accesses != disk_commands {
+            disk_commands = accesses;
+            last_disk_command = retired;
         }
         if stage == Stage::Install
             && launched.is_some()
@@ -814,30 +1087,36 @@ pub fn run(stage: Stage, previous: Option<Staged>) -> Option<Staged> {
                     .into();
             break;
         }
+        // Windows 95 setup reads for long stretches without writing (its
+        // component scan, for one), so only a disk left idle counts as a stall.
+        if stage == Stage::Win95FileCopy
+            && launched.is_some()
+            && retired.saturating_sub(last_disk_command) >= 150_000_000
+        {
+            reason = "setup issued no disk command for 150 million retired instructions".into();
+            break;
+        }
         if retired >= next_progress {
-            eprintln!(
+            say!(
                 "{stage:?} progress: retired={retired}; wall={:?}; command={}; protected={}; paging={}; CPL={}",
                 started.elapsed(),
                 launched.is_some(), system.protected(), system.paging(), system.cpl
             );
             next_progress += 25_000_000;
         }
-        let budget = if launched.is_some() {
-            if stage == Stage::Install {
-                1_000_000_000
-            } else {
-                300_000_000
-            }
-        } else {
-            200_000_000
+        let budget = match (launched.is_some(), stage) {
+            (false, _) => 200_000_000,
+            (true, Stage::Install) => 1_000_000_000,
+            (true, Stage::Win95FileCopy) => 30_000_000_000,
+            (true, _) => 300_000_000,
+        };
+        let virtual_ceiling = match stage {
+            Stage::Install => 2_000_000_000,
+            Stage::Win95FileCopy => 60_000_000_000,
+            _ => 600_000_000,
         };
         if retired.saturating_sub(launched.unwrap_or(0)) >= budget
-            || assembled.machine.virtual_time()
-                >= if stage == Stage::Install {
-                    2_000_000_000
-                } else {
-                    600_000_000
-                }
+            || assembled.machine.virtual_time() >= virtual_ceiling
         {
             reason = "instruction/virtual-time budget exhausted".into();
             break;
@@ -848,7 +1127,7 @@ pub fn run(stage: Stage, previous: Option<Staged>) -> Option<Staged> {
         palette.extend(pixels.indices.iter().copied());
         let mut mode = [0];
         assembled.machine.cpu().read_mem(0x449, &mut mode).unwrap();
-        eprintln!("FINDINGS scanout: {}x{}; distinct indices={}; BDA mode={:02x}; setup ENTER={setup_confirmed}",
+        say!("FINDINGS scanout: {}x{}; distinct indices={}; BDA mode={:02x}; setup ENTER={setup_confirmed}",
             pixels.width, pixels.height, palette.len(), mode[0]);
     }
     let state = assembled.machine.cpu().diagnostic_state();
@@ -862,18 +1141,18 @@ pub fn run(stage: Stage, previous: Option<Staged>) -> Option<Staged> {
     };
     let eip = assembled.machine.cpu().reg(cpu::CpuReg::Rip);
     let linear = state.cs().base.wrapping_add(eip as u32);
-    eprintln!("FINDINGS stage={stage:?}; DOS 7={dos7}; after launch: protected={protected_seen}, paging={paging_seen}, V86={v86_seen}, V86 exit delivery={v86_exit_seen}; File/Run sent={}; DOS prompt={dos_prompt}; EXIT sent={}; frame held after EXIT={}", dos_launch.is_some(), exit_sent.is_some(), shell_back.is_some());
-    eprintln!("FINDINGS: {reason}; command={}; mode={mode}; CS:EIP={:04x}:{:08x}; linear={:08x}; CPL={}; CR0={:08x}; retired={}; wall={:?}", launched.is_some(), state.cs().selector, eip, linear, system.cpl, system.cr0, state.retired, started.elapsed());
+    say!("FINDINGS stage={stage:?}; DOS 7={dos7}; after launch: protected={protected_seen}, paging={paging_seen}, V86={v86_seen}, V86 exit delivery={v86_exit_seen}; File/Run sent={}; DOS prompt={dos_prompt}; EXIT sent={}; frame held after EXIT={}", dos_launch.is_some(), exit_sent.is_some(), shell_back.is_some());
+    say!("FINDINGS: {reason}; command={}; mode={mode}; CS:EIP={:04x}:{:08x}; linear={:08x}; CPL={}; CR0={:08x}; retired={}; wall={:?}", launched.is_some(), state.cs().selector, eip, linear, system.cpl, system.cr0, state.retired, started.elapsed());
     // Guest bytes (code, registers, screen text, port data) stay out of the
     // log; commands, register indices, addresses and counts are enough to
     // name the device or CPU path that stopped.
-    eprintln!(
-        "FINDINGS counters: device accesses={:?}; last port access (port, direction, size)={:x?}",
+    say!(
+        "FINDINGS counters: device accesses={:?}; last port access (port, direction, size)={:x?}; last ATA command at retired={last_disk_command}; last ATA write at retired={last_disk_write}; dialogs answered={answered}",
         ports.accesses, ports.last_access
     );
-    eprintln!("FINDINGS command/register writes (hex)={:x?}", ports.writes);
-    eprintln!("FINDINGS PIC special-mask writes={}; poll requests={}; PIT (channel, mode)={:?}; VGA indexed registers={:x?}", ports.pic_special_mask, ports.pic_poll, ports.pit_modes, ports.vga_registers);
-    eprintln!(
+    say!("FINDINGS command/register writes (hex)={:x?}", ports.writes);
+    say!("FINDINGS PIC special-mask writes={}; poll requests={}; PIT (channel, mode)={:?}; VGA indexed registers={:x?}", ports.pic_special_mask, ports.pic_poll, ports.pit_modes, ports.vga_registers);
+    say!(
         "FINDINGS PIC command writes after the first special-mask write (port, value)={:x?}",
         ports.pic_after_special_mask
     );
@@ -881,14 +1160,18 @@ pub fn run(stage: Stage, previous: Option<Staged>) -> Option<Staged> {
     // guest code or memory bytes.
     let report = assembled.diagnostic_report("stage end").to_string();
     for line in report.lines().filter(|line| line.starts_with("pic ")) {
-        eprintln!("FINDINGS {line}");
+        say!("FINDINGS {line}");
     }
-    eprintln!(
+    say!(
         "FINDINGS deliveries: {}",
         delivery_summary(assembled.machine.recent_deliveries())
     );
     if stage.boots_hard_disk() {
         report_installed_choices(&mut assembled);
+    }
+    if stage == Stage::Win95FileCopy {
+        let installed = report_win95_files(&mut assembled);
+        success = reset_after_launch && installed;
     }
     if execution_error {
         // A CPU failure must not be published as a successfully finished session.
@@ -904,7 +1187,7 @@ pub fn run(stage: Stage, previous: Option<Staged>) -> Option<Staged> {
             .finish_persistence()
             .expect("private stage generation failed");
     }
-    eprintln!("{stage:?} private stage directory: {}", directory.display());
+    say!("{stage:?} private stage directory: {}", directory.display());
     assert!(
         success,
         "{stage:?} recorded its first stop before the required boundary"
@@ -987,6 +1270,34 @@ fn private_port_diagnostics_cannot_reconstruct_disk_payloads() {
     ] {
         assert!(
             private.contains(metadata),
+            "missing port metadata: {metadata}"
+        );
+    }
+}
+
+#[test]
+fn recent_port_history_hides_keyboard_data_values() {
+    let history = |scancode: u32| {
+        let mut ports = Ports::default();
+        ports.observe(
+            [AccessDir::Read, AccessDir::Write]
+                .into_iter()
+                .map(|dir| TraceEvent::Port {
+                    at: device::VClock(7),
+                    port: 0x60,
+                    size: 1,
+                    dir,
+                    value: scancode,
+                })
+                .collect(),
+        );
+        ports.recent.join("\n")
+    };
+    let typed = history(0x02);
+    assert_eq!(typed, history(0x0b), "scancode must not affect the history");
+    for metadata in ["0060", "Read", "Write", "VClock(7)", "[payload omitted]"] {
+        assert!(
+            typed.contains(metadata),
             "missing port metadata: {metadata}"
         );
     }
@@ -1135,6 +1446,7 @@ fn port_summary_decodes_pic_requests_pit_modes_and_vga_indices() {
 fn commands_release_shift_and_keys_before_the_next_character() {
     for stage in [
         Stage::Win95,
+        Stage::Win95FileCopy,
         Stage::SystemTransfer,
         Stage::Install,
         Stage::Standard,
@@ -1153,6 +1465,43 @@ fn commands_release_shift_and_keys_before_the_next_character() {
         command_keys("c:\\3\n"),
         [0x2e, 0xae, 0x2a, 0x27, 0xa7, 0xaa, 0x2b, 0xab, 0x04, 0x84, 0x1c, 0x9c]
     );
+}
+
+#[test]
+fn certificate_keys_type_digit_groups_back_to_back_and_skip_oem() {
+    let mut expected = command_keys("123456");
+    expected.extend([0x1c, 0x9c]);
+    assert_eq!(certificate_keys("12-OEM-345-6"), expected);
+    assert_eq!(certificate_keys("12-oem-345-6"), expected);
+    assert!(!certificate_keys("12-OEM-345-6").contains(&0x0f), "no TAB");
+}
+
+#[test]
+fn diagnostic_lines_carrying_the_product_key_are_withheld() {
+    let key = Some("SYNTH-0123-ABCDE");
+    for line in [
+        "FINDINGS SYNTH-0123-ABCDE",
+        "progress synth-0123-abcde",
+        "joined SYNTH0123ABCDE here",
+        "split SYNTH-01-23-ABCDE",
+    ] {
+        assert!(carries_secret(line, key), "missed a key form");
+    }
+    for line in ["FINDINGS retired=12345; SYNTH-0123", "ABCDE-0123-SYNTH"] {
+        assert!(!carries_secret(line, key), "withheld an ordinary line");
+    }
+    // The joined digit groups, as typed on the certificate page.
+    let oem = Some("12345-OEM-0012345-67890");
+    for line in ["typed 12345001234567890", "typed 12345-0012345-67890"] {
+        assert!(carries_secret(line, oem), "missed the typed digits");
+    }
+    assert!(
+        !carries_secret("retired=12345678901; at 0012345", oem),
+        "a single digit group must not withhold a line"
+    );
+    assert!(!carries_secret("anything", None));
+    assert!(!carries_secret("anything", Some("")));
+    assert!(!carries_secret("anything", Some("--")));
 }
 
 #[test]
