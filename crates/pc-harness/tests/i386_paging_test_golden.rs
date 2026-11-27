@@ -66,7 +66,7 @@ supervisor wp=0 write ok\n";
 
 fn run(chip: CpuChip) {
     assert!(
-        include_str!("../../../Cargo.lock").contains("641d4d9698c79dfd351716c9f7fac8ed0bf00c90")
+        include_str!("../../../Cargo.lock").contains("aca03742f526a867415ea584fa27c7988b9d344f")
     );
     let Some(rom) = fixtures::fixture("i386-paging-test/i386-paging-test.bin") else {
         return;
