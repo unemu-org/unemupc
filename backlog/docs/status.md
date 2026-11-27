@@ -1,5 +1,46 @@
 # Status
 
+## Local Windows 95 first boots to the desktop (2026-11-27)
+
+The ignored `user_media_win95_stage3` boots the disk Windows 95 OSR2 setup
+leaves at its restart, from C: without the floppy, through setup's first-boot
+phase to the desktop; it then moves the pointer with the PS/2 mouse, opens
+the Start menu with a click, and shuts down from it. `user_media_win95_stage4`
+boots the generation stage 3 closed and repeats the desktop script. Stage 3
+runs stage 2 first and stage 4 runs stages 2 and 3, unless
+`UNEMUPC_USER_WIN95_STAGE2_DIR` or `UNEMUPC_USER_WIN95_STAGE3_DIR` names a
+retained directory to start from (the runner copies it).
+
+**MEASURED**, x86jit `75ef58a2`, generic-486-isa / 80486DX / 16 MiB RAM /
+PS/2 mouse, release profile: the first boot runs the VMM (paging, V86 exits,
+ring-3 protected applications), sets up the hardware and its first-boot items
+with no restart, and reaches the desktop at 2,204,930,207 retired; the only
+question the batch file leaves is the Add Printer Wizard, which the runner
+cancels with ESC. The pointer moves, the click opens the Start menu, U and
+ENTER shut Windows down, and the run ends at 2,227,119,752 retired
+(568–922 s on a shared host) in SeaBIOS's APM power-off halt, reached through the real-mode
+INT 15h interface. The second boot reaches the desktop at 421,966,371 retired
+and powers off at 441,824,004 (124–166 s). Counts were identical in every
+run. The desktop test is payload-free: a held 640x480 frame with a taskbar's
+shape (white edge over a light-grey band, over a background colour), with no
+disk command during the hold, after paging, a V86 exit and a ring-3
+protected delivery.
+
+The IDE disk runs in protected mode: ESDI_506.PDR initialises with success,
+IOS.LOG lists only the absent floppy units as real-mode, and the registry
+enumerates the disk under `ESDI`. The registry's device tree holds the
+stage-2 detection's identifiers (PIC, PIT, DMA, keyboard controller, serial
+port, IDE and floppy controllers, speaker, VGA, RTC, Plug and Play BIOS,
+system board, coprocessor, APM, PS/2 mouse) plus the disk and the default
+monitor. VPICD sets 8259 special mask mode as Windows 3.1's does. No device
+or CPU fix was needed. Windows idles through APM CPU Idle, whose firmware
+routine halts with interrupts enabled; the boot stages therefore keep a
+halted machine waiting for the next interrupt (unbounded idle limit), which
+the earlier stages never needed. The paged phases run at about 3–5 million
+instructions per second, nearly all of it in x86jit's paged decode and lift
+path. See
+[stages 3 and 4](user-media.md#windows-95-stages-3-and-4-first-boots-to-the-desktop).
+
 ## Local Windows 95 setup to its first restart (2026-11-27)
 
 The ignored `user_media_win95_stage2` runs Windows 95 OSR2 setup from the

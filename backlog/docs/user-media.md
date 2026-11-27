@@ -224,8 +224,10 @@ error checkpoints only completed sectors, preserving a diagnostic generation
 without marking the session successfully finished. This is a disk checkpoint,
 not a whole-machine snapshot: a later stage boots anew from the same immutable
 base plus journal. `user_media_win95_stage2` continues the same setup run to
-the restart setup requests after its file copy (§Windows 95 stage 2); setup's
-first boot and the first desktop are follow-up work.
+the restart setup requests after its file copy (§Windows 95 stage 2);
+`user_media_win95_stage3` and `user_media_win95_stage4` boot the installed
+system to the desktop, use the mouse and shut it down (§Windows 95 stages 3
+and 4).
 
 The stop report prints mode, CPL, CR0, CS:EIP, linear address, retired count,
 a payload-free error category, per-device access counts, the last port access
@@ -422,6 +424,189 @@ test profile keeps debug assertions; the release profile drops them and runs
 the whole stage 2.5 times faster (1,071 s against 2,657 s, **MEASURED**), the
 verification share presumably among the savings (not sampled). File copy alone takes about 15.8 billion retired
 instructions, most of the stage.
+
+### Windows 95 stages 3 and 4: first boots to the desktop
+
+`user_media_win95_stage3` boots the disk setup leaves at its restart:
+setup's first-boot phase, the desktop, the pointer, the Start menu and Shut
+Down, ending in the firmware's APM power-off. `user_media_win95_stage4` boots
+the generation stage 3 closed and runs the same desktop script again. Both
+need the stage-2 variables, the product key included: the installed disk
+holds the key, so the log guard stays armed. By default stage 3 runs stage 2
+first and stage 4 runs stages 2 and 3 in the same directory. To start from a
+retained directory instead, name it in `UNEMUPC_USER_WIN95_STAGE2_DIR` (for
+stage 3) or `UNEMUPC_USER_WIN95_STAGE3_DIR` (for stage 4): the runner copies
+its `data.img` and `ide.journal` into a new private directory beside the
+builder's and boots the copy's last generation, leaving the original as it
+was. If a stage run on the copy fails, the test deletes the copy; if it
+passes, the copy is the stage's retained result. Like stage 2's, these
+directories hold the product key on their disks: delete them after use.
+
+```sh
+cargo test --offline --release -p machine-file --test user_media_win95 user_media_win95_stage3 -- --ignored --nocapture
+cargo test --offline --release -p machine-file --test user_media_win95 user_media_win95_stage4 -- --ignored --nocapture
+```
+
+The machine is stage 2's without its floppy drive, so the firmware boots C:.
+Windows idles through the APM CPU Idle call, whose SeaBIOS routine halts with
+interrupts enabled; the boot stages give the machine an unbounded idle limit,
+so a halt waits for the next interrupt and only a halt with interrupts off
+ends the run (**MEASURED**: without it, the first run ended at that HLT during
+"Setting up hardware", 1,164,242,567 retired, at F8F84h in the protected
+32-bit APM entry). The budgets are 25 billion retired instructions and a
+50-billion virtual-time ceiling; virtual time counts the halted stretches.
+
+Desktop, payload-free: a 640x480 frame that holds (apart from 64 pixels) for
+40 million virtual-time units with no ATA command at all, after the run has
+seen paging, a delivery that leaves V86 for ring 0 (the VMM running a V86
+task) and a delivery that interrupts ring-3 protected code under paging (a
+Windows application in the system VM), and whose shape is a desktop with a
+taskbar: a row at least 90% white just above a bottom band at least 70%
+light grey (the bar's raised edge and face), over an area at least 30% one
+other colour. Setup's first-boot screens and dialogs leave the bottom rows to
+their background bitmap. No text, frame hash or picture is kept. In stage 3 a
+desktop counts only after the first-boot answer below has been given. The
+test does not look inside the desktop: a message box open over it would
+still pass detection.
+
+Setup's first boot asks one thing the batch file cannot answer. Its last
+item opens the Add Printer Wizard (the board has no printer port); once the
+frame has held for 40 million units with the disk idle and without the
+desktop's shape, the runner presses **ESC** (the wizard's Cancel). The time
+zone, set to GMT by the batch file, is not asked. A frame that holds 400
+million units with the disk idle and no answer left stops the stage. No
+restart happens between file copy and the desktop: setup's first boot goes
+straight on from hardware setup to its items and the desktop (with the
+Welcome window open). A restart before the desktop would be followed only
+when the board was asked for it (8042 command FEh, port 92h bit 0 or CF9h
+bit 2) and is then listed as board-signalled; a reset request without one
+of them, which is also how a processor shutdown (triple fault) ends, stops
+the stage, as does any reset request after the desktop.
+
+The desktop script, each step once the frame has held for 10 million units
+after its last input. Each step must settle within a billion units of its
+start, and the power-off must follow the last key within a billion units;
+otherwise the stage stops with that step named. Pointer packets go through the PS/2 mouse
+(`board.mouse = true`), each once the previous one has drained:
+
+1. Twelve moves of (-60, -60) pin the pointer to the bottom-left corner.
+2. Two moves of (+4, +4) back it onto the Start button.
+3. Left button down, then up: the Start menu opens.
+4. **U**, the Start menu's Shut Down access key: the Shut Down dialog.
+5. **ENTER**: its default choice, shut down the computer.
+
+Proof, from changed-pixel counts between the frames before and after each
+step: the pointer leaves the centre box (316..352, 236..276) and appears in
+the bottom-left box (0..48, 432..480) at step 1; the Start-menu region
+(0..200, 160..450) changes by at least 10,000 pixels at step 3; at step 4 at
+least 10,000 pixels change outside that region (the dialog opens over the
+middle of the screen). The stage then passes when, after the last key, the
+machine halts with interrupts off, in real mode, at a firmware address,
+with software INT 15h as the last delivery (the APM power-off below), and
+a private snapshot of the disk yields the registry's device tree. A reset
+request never passes.
+
+**MEASURED**, x86jit `75ef58a2`, same machine and media as stage 2,
+`cargo test --release`, shared host (load average about 20 in the slower
+runs); the counts were identical in every run that reached them (seven
+stage-3 runs, three stage-4 runs):
+
+| Point | Stage 3 retired | Stage 4 retired |
+| --- | ---: | ---: |
+| Paging on (the VMM) | 390,994,536 | 155,655,227 |
+| First V86 exit delivery | 394,766,773 | 158,574,397 |
+| First ring-3 protected delivery | 482,056,827 | 238,811,276 |
+| First 640x480 frame | 530,331,118 | — |
+| "Setting up hardware" (frames) | about 0.6–1.2 billion | — |
+| Setup's first-boot items (frames) | about 1.8–2.0 billion | — |
+| Add Printer Wizard held; ESC | 2,090,490,562 | — |
+| Settled desktop | 2,204,930,207 | 421,966,371 |
+| Shut Down's ENTER | 2,210,809,695 | 427,303,581 |
+| APM power-off halt: boundary | 2,227,119,752 | 441,824,004 |
+| Host time to the boundary | 568–922 s | 124–166 s |
+
+Stage 3's step changes: pointer 105 pixels in the centre box and 1 in the
+corner (the hot spot alone at 0,479), then 541 in the corner box as the arrow
+backs off it; the click changes 38,442 pixels in the Start-menu region
+(51,162 in all); U changes 185,240 (the dialog over a shaded screen).
+
+Shutdown: Windows leaves protected mode, sets mode 13h for its shutdown
+picture and calls the APM BIOS through the real-mode INT 15h interface (the
+last delivery is software INT 15h); SeaBIOS's power-off routine halts with
+interrupts off at F000:C7C0. The PIC is back at the BIOS vector bases with
+special mask mode reset (OCW3 4Ah on both controllers). The halt in the
+firmware with interrupts off is the APM path; no reset is used.
+
+IDE path: protected mode. The boot log records ESDI_506.PDR initialising and
+its init success, no ESDI_506 failure; IOS.LOG lists only DOS units 00 and 01
+(the floppy units A: and B:, the drive being absent) as going through
+real-mode drivers, not C:; and the registry enumerates the disk under the
+ESDI_506 enumerator (`ESDI\GENERIC_IDE__DISK_TYPE47_`). The driver issues
+IDENTIFY (ECh) three times, IDENTIFY PACKET (A1h) twice, INITIALIZE DEVICE
+PARAMETERS (91h) and READ VERIFY (40h) once each, then only READ SECTORS
+(20h) and WRITE SECTORS (30h), PIO with an interrupt per sector; no SET
+MULTIPLE, READ/WRITE MULTIPLE or DMA command. The boot log's other failures are of components that have
+nothing to drive here: the floppy driver HSFLOP.PDR (no floppy drive), the
+printer-port VxD VPD, VSHARE and SDVXD; the first boot also logs a font
+failure for MARLETT.TTF that the second does not. SYSTEM.DA0 (the registry
+backup made at a successful start) exists after either stage; SYSTEM.1ST
+does not.
+
+What Device Manager lists (the registry's `Enum` keys, enumerator and device
+identifier only; both stages agree): `Root\*PNP0000` (PIC),
+`Root\*PNP0100` (PIT), `Root\*PNP0200` (DMA), `Root\*PNP0301` (keyboard
+controller), `Root\*PNP0500` (serial port), `Root\*PNP0600` (IDE
+controller), `Root\*PNP0700` (floppy controller), `Root\*PNP0800`
+(speaker), `Root\*PNP0900` (VGA), `Root\*PNP0B00` (RTC), `Root\*PNP0C00`
+(Plug and Play BIOS), `Root\*PNP0C01` (system board), `Root\*PNP0C04`
+(coprocessor), `Root\*PNP0C05` (APM), `Root\*PNP0F0E` (PS/2 mouse),
+`ESDI\GENERIC_IDE__DISK_TYPE47_` (the disk), `Monitor\Default_Monitor`
+and `HTREE\RESERVED`. These are the stage-2 detection's identifiers,
+installed; nothing new was enumerated.
+
+Port summary for stage 3 (our counts, whole stage):
+
+| Device | Accesses | Command/register writes |
+| --- | ---: | --- |
+| ATA | 30,280,611 | READ SECTORS 20h: 6,978; WRITE SECTORS 30h: 5,328; IDENTIFY ECh: 3; IDENTIFY PACKET A1h: 2; INITIALIZE DEVICE PARAMETERS 91h: 1; READ VERIFY 40h: 1 |
+| PIT | 7,549,727 | read-back D2h: 2,481,506; latch counter 0 (00h): 35,578; counter 0 mode 2 (34h): 2; mode 3 (36h): 1 at shutdown. Counter 1 is never programmed |
+| PIC | 514,508 | ICW1 11h three times per controller (BIOS, VPICD at 50h/58h, back to 08h/70h at shutdown); OCW3 6Bh (set special mask) once per controller, then specific EOIs 60h–62h (master) and 64h/66h (slave), IRR reads 0Ah; OCW3 4Ah resets the mode at shutdown. Non-specific EOI 20h: 447, five of them after the first special-mask write. No poll |
+| 8042 | 18,643 | command 60h: 39; ADh/AEh: 6 each; D4h: 12; A7h/AAh/ABh, 20h once each. Auxiliary bytes: reset FFh ×3, ID F2h, sample rate F3h ×2 (0Ah, 28h), resolution E8h (03h), scaling E6h, enable F4h |
+| VGA | 7,742,346 | the standard register set; no extended-register probes after setup |
+| DMA | 48 | the firmware's initialisation only; no transfers |
+
+VPICD, the Windows 95 interrupt controller driver, programs the 8259 as
+Windows 3.1's did: re-initialisation at 50h/58h, special mask mode set once
+per controller, then only specific EOIs and IRR reads, with the masks
+toggled around each interrupt: the slave's IRQ14 line (IMR 8Eh/CEh, the
+disk) about 80,000 times, the master's IRQ0 (B8h/B9h) about 10,800. Port 61h's refresh bit was never waited on; no device fault, CPU
+stop or wrong device answer appeared, and no device or CPU change was needed.
+
+Where the time goes: stage 3 runs at about 3–5 million instructions per
+second in its paged phases (17 M/s in stage 2's unpaged ones). **MEASURED**
+with `/usr/bin/sample`, 10 s during "Setting up hardware" (6,703 active
+samples, self time): the x86jit core takes all but about 5%: its paging
+translation 16%, the interpreter 14%, instruction decoding (iced) 11%,
+lifting 9%, its proof map 3%, other core code 14%, and the allocation (16%)
+and memory copies (12%) its paged path makes; screen capture and devices
+under 1%. Paged guest code is decoded and lifted again at each execution
+instead of running from a cached block: a CPU-side cost, for x86jit.
+
+`UNEMUPC_PRIVATE_FRAMES=1` makes each boot stage write its 640x480 frames as
+BMP files into `frames/` inside its private stage directory (created with
+mode 0700), every 200 million retired instructions and at each runner event
+(a held dialog, the desktop, each script step). A failed write is logged
+and the stage goes on. The pictures show the commercial screens: they are a
+local diagnostic only, deleted with the directory, never to be committed or
+shared.
+
+The snapshot reader passes `MTOOLS_SKIP_CHECK=1` to mtools. Windows 95 keeps
+two volume flags in the second entry of the FAT16 volume's first FAT (bit
+15: shut down cleanly, bit 14: no disk error), clears the first while the
+volume is mounted, and mtools refuses a FAT whose second entry is not all
+ones. The boot stages print both flags as booleans from the snapshot:
+**MEASURED**, after the power-off of stages 3 and 4 both are set; the earlier
+snapshots that mtools refused were taken with Windows still running.
 
 ### Windows 95 findings (2026-11-25)
 
