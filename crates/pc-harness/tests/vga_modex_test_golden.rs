@@ -21,7 +21,7 @@ mod host_profile;
 #[path = "support/serving.rs"]
 mod serving;
 
-const CPU_REV: &str = "aca03742f526a867415ea584fa27c7988b9d344f";
+const CPU_REV: &str = "fb7bc5b7fea0bef47ddfc31f557dd6b14db34668";
 const IMAGE: &str = "vga-modex-test/vga-modex-test-1200.img";
 const PAS_IMAGE: &str = "vga-modex-test/vga-pas-test-1200.img";
 const OPEN_BIOS: &str = "unemu-at-bios/bios-unemu-at.bin";
