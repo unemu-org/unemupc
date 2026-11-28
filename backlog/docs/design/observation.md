@@ -360,7 +360,16 @@ the field maximum map to 0 and 255; bit 15 of 15-bit pixels and the top byte of
 (`InvalidStride`), a buffer that ends before the last visible pixel
 (`InvalidPixelCount`), zero repeat factors and oversized output before
 converting any pixel, then applies the repeat factors and integer scale as for
-indexed frames. No card produces direct-colour frames yet.
+indexed frames. The Bochs VBE card produces them while its DISPI interface is
+enabled at 15, 16, 24 or 32 bpp, and an indexed frame through the DAC palette
+at 8 bpp. Capture reads the visible bytes from the card's video memory in
+guest RAM in one read from the display start (Y_OFFSET × line + X_OFFSET ×
+bytes per pixel), with the virtual width as stride, and needs the CPU:
+`AssembledMachine::capture_text` supplies it; a capture without one sees the
+blank screen the VGA scanout reports in DISPI modes. MEASURED on one host:
+reading a 1024×768×32 frame takes 0.07 ms (debug and release builds alike);
+the shared `to_xrgb8888` conversion of that frame takes 0.4 ms in a release
+build (20 ms in a debug build).
 
 READ: IBM VGA/XGA Technical Reference Manual, Graphics Modes (modes D, E, 10,
 12 and 13), Video Memory Organization, sequencer Fig. 2-31, CRTC Figs. 2-50,

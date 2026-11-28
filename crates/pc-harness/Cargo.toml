@@ -38,3 +38,5 @@ toml.workspace = true
 machine-file = { workspace = true, features = ["test-support"] }
 machine = { workspace = true, features = ["reference-scheduler"] }
 assembly = { workspace = true, features = ["reference-scheduler", "test-support"] }
+# The JIT backend a host program supplies, for the framebuffer speed check.
+x86jit-cranelift.workspace = true

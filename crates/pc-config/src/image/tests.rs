@@ -261,3 +261,52 @@ fn optional_80387_survives_projection_defaults_and_image_roundtrip() {
         crate::compat::Release(0, 0, 6)
     );
 }
+
+#[test]
+fn bochs_vbe_card_survives_projection_defaults_and_image_roundtrip() {
+    let document = crate::parse_toml(
+        "probe.toml",
+        "schema = 1\n[board]\nmodel = 'generic-486-isa'\n\
+         [[card]]\nkind = 'vga'\nmodel = 'bochs-vbe'\nmemory_mib = 8\n",
+    )
+    .unwrap();
+    let mut hardware = encode::machine(&document);
+    assert_eq!(hardware["card"][0]["model"].as_str(), Some("bochs-vbe"));
+    assert_eq!(hardware["card"][0]["memory_mib"].as_integer(), Some(8));
+    let mut config =
+        assembly::capabilities::Draft::for_board(assembly::BoardModel::Generic486Isa).config;
+    config
+        .devices
+        .retain(|device| device.id != assembly::DeviceId::Vga);
+    config.devices.push(assembly::DeviceConfig::new(
+        assembly::DeviceId::Vga,
+        assembly::DeviceKind::BochsVbe(assembly::BochsVbeCfg { memory_mib: 8 }),
+        assembly::BochsVbeCfg::port_windows(),
+    ));
+    hardware["card"][0]
+        .as_table_mut()
+        .unwrap()
+        .remove("memory_mib");
+    defaults::materialize(&mut hardware, &config).unwrap();
+    assert_eq!(hardware["card"][0]["model"].as_str(), Some("bochs-vbe"));
+    assert_eq!(
+        hardware["card"][0]["memory_mib"].as_integer(),
+        Some(8),
+        "defaults name the lowered memory size"
+    );
+    let image = Config {
+        schema: 1,
+        platform: "ibm-pc".into(),
+        machine: hardware,
+        firmware: vec![],
+        media: vec![],
+        slots: vec![],
+        nvram: None,
+    };
+    let decoded = Config::decode(image.encode().unwrap().parse().unwrap()).unwrap();
+    assert_eq!(decoded.machine, image.machine);
+    assert_eq!(
+        crate::compat::machine(&decoded.encode().unwrap().parse().unwrap()).unwrap(),
+        crate::compat::Release(0, 0, 6)
+    );
+}

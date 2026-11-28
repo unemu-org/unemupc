@@ -68,6 +68,7 @@
 
 use std::cell::Cell;
 use std::num::NonZeroU64;
+use std::ops::RangeInclusive;
 
 use bus::Bus;
 use cpu::{AccessControl, AccessResult, AccessSpace, DeviceAccess, ServedRange};
@@ -185,6 +186,30 @@ pub(crate) struct ServedRun {
     pub served: ServedAccesses,
 }
 
+/// The port writes a memory-map hook observes.
+#[derive(Clone, Copy)]
+pub(crate) enum ObservedPorts<'a> {
+    /// No hook is attached.
+    None,
+    /// The hook runs after every port write.
+    All,
+    /// The hook runs after writes to these ports.
+    Only(&'a [RangeInclusive<u16>]),
+}
+
+impl ObservedPorts<'_> {
+    fn observes(self, port: u64, size: u8) -> bool {
+        let last = port + u64::from(size.max(1)) - 1;
+        match self {
+            Self::None => false,
+            Self::All => true,
+            Self::Only(ranges) => ranges
+                .iter()
+                .any(|range| u64::from(*range.start()) <= last && port <= u64::from(*range.end())),
+        }
+    }
+}
+
 /// Reads the board A20 line: (transition count, enabled).
 type A20Line<'a> = &'a dyn Fn() -> (u64, bool);
 
@@ -204,8 +229,11 @@ pub(crate) struct InProcess<'a> {
     /// The board A20 line and the change count the CPU last saw.
     pub a20_line: Option<(A20Line<'a>, u64)>,
     pub reset_signal: Option<&'a Cell<bool>>,
-    /// A memory-map hook is attached; it must run after every port write.
-    pub memory_map: bool,
+    /// The port writes an attached memory-map hook must observe; those are
+    /// left to the loop, which applies the hook after each.
+    pub memory_map: ObservedPorts<'a>,
+    /// A trapped window served from guest RAM.
+    pub ram_window: Option<&'a crate::RamWindow>,
     /// The run stops by itself at the first boundary that can accept a
     /// maskable interrupt, and began with IF clear, a request pending at the
     /// controller and none queued in the CPU: a request a served access
@@ -308,7 +336,7 @@ impl InProcess<'_> {
             return false;
         }
         let port = access.space == AccessSpace::Port;
-        if port && access.write && self.memory_map {
+        if port && access.write && self.memory_map.observes(access.address, access.size) {
             return false;
         }
         // The CPU core matches an access by its first port only; a wider
@@ -377,7 +405,39 @@ impl InProcess<'_> {
 
 impl cpu::DeviceAccessHandler for InProcess<'_> {
     fn access(&mut self, access: &DeviceAccess, control: &mut AccessControl) -> AccessResult {
+        self.serve(access, control, None)
+    }
+
+    fn access_with_ram(
+        &mut self,
+        access: &DeviceAccess,
+        control: &mut AccessControl,
+        ram: &mut dyn cpu::GuestRam,
+    ) -> AccessResult {
+        self.serve(access, control, Some(ram))
+    }
+}
+
+impl InProcess<'_> {
+    /// Serve one access as the loop would; see the module docs.
+    fn serve(
+        &mut self,
+        access: &DeviceAccess,
+        control: &mut AccessControl,
+        ram: Option<&mut dyn cpu::GuestRam>,
+    ) -> AccessResult {
         let port = access.space == AccessSpace::Port;
+        // An access the RAM window maps reaches guest RAM, as in the loop;
+        // without RAM at hand it returns to the loop.
+        let in_ram = (!port)
+            .then(|| {
+                self.ram_window
+                    .and_then(|w| w.route(access.address, access.size))
+            })
+            .flatten();
+        if in_ram.is_some() && ram.is_none() {
+            return AccessResult::Fallback;
+        }
         // The loop charges a port access's own step after the access, and an
         // MMIO access's when its instruction completes.
         let Some(charge) = access.steps.checked_sub(self.outcome.charged) else {
@@ -399,6 +459,23 @@ impl cpu::DeviceAccessHandler for InProcess<'_> {
             return self.fail(error);
         }
         let result = match (access.space, access.write) {
+            (AccessSpace::Mmio, write) if in_ram.is_some() => {
+                let (Some(base), Some(ram)) = (in_ram, ram) else {
+                    return AccessResult::Fallback;
+                };
+                let len = usize::from(access.size.min(8));
+                if write {
+                    // As in the loop, bytes outside RAM are dropped.
+                    let _ = ram.write(base, &access.value.to_le_bytes()[..len]);
+                    Ok(0)
+                } else {
+                    let mut bytes = [0xFF; 8];
+                    if !ram.read(base, &mut bytes[..len]) {
+                        bytes = [0xFF; 8];
+                    }
+                    Ok(u64::from_le_bytes(bytes) & (u64::MAX >> (64 - 8 * len)))
+                }
+            }
             (AccessSpace::Port, true) => self
                 .bus
                 .port_write(access.address as u16, access.size, access.value as u32)
@@ -633,7 +710,8 @@ mod tests {
             dma_channel_wirings: &[],
             a20_line: None,
             reset_signal: None,
-            memory_map: false,
+            memory_map: ObservedPorts::None,
+            ram_window: None,
             irq_stop_armed: false,
             budget: 100,
             deadline_at: None,

@@ -665,7 +665,39 @@ impl<R: ImageReader> Context<'_, R> {
                 "frame and size_kib are only supported by lotech-ems cards",
             ));
         }
+        if kind != v1::CardKind::Vga && card.model.is_some() {
+            return Err(self.error(
+                &format!("{field}.model"),
+                "model is only supported by vga cards",
+            ));
+        }
+        let bochs_vbe = card.model == Some(v1::VgaModel::BochsVbe);
+        if !bochs_vbe && card.memory_mib.is_some() {
+            return Err(self.error(
+                &format!("{field}.memory_mib"),
+                "memory_mib is only supported by vga cards of model bochs-vbe",
+            ));
+        }
         let mut device = match kind {
+            v1::CardKind::Vga if bochs_vbe => {
+                let cfg = assembly::BochsVbeCfg {
+                    memory_mib: card
+                        .memory_mib
+                        .unwrap_or(assembly::BochsVbeCfg::default().memory_mib),
+                };
+                if !assembly::descriptors::VBE_MEMORY_SIZES_MIB.contains(&cfg.memory_mib) {
+                    return Err(self.error(
+                        &format!("{field}.memory_mib"),
+                        "Bochs VBE video memory must be 4, 8 or 16 MiB",
+                    ));
+                }
+                mmio.push(MmioWindow::new(0xA0000, 0x20000, DeviceId::Vga));
+                DeviceConfig::new(
+                    DeviceId::Vga,
+                    DeviceKind::BochsVbe(cfg),
+                    assembly::BochsVbeCfg::port_windows(),
+                )
+            }
             v1::CardKind::LotechEms => {
                 let defaults = assembly::LotechEmsCfg::default();
                 let cfg = assembly::LotechEmsCfg {
@@ -1113,6 +1145,12 @@ impl<R: ImageReader> Context<'_, R> {
                 .map(|field| format!("{field}.base"))
                 .into_iter()
                 .collect(),
+            BochsVbeAddressSpace { device, .. } | BochsVbeOverlap { device, .. } => {
+                device_fields(&[*device])
+                    .into_iter()
+                    .map(|field| format!("{field}.model"))
+                    .collect()
+            }
             LotechEmsFrameInSystemRom { device } => device_fields(&[*device])
                 .into_iter()
                 .map(|field| format!("{field}.frame"))
@@ -1138,6 +1176,7 @@ impl<R: ImageReader> Context<'_, R> {
             InvalidDmaChannel { device, .. }
             | InvalidSb16Resources { device }
             | InvalidLotechEmsResources { device }
+            | InvalidBochsVbeResources { device }
             | InvalidIdeResources { device }
             | InvalidDebugConsoleResources { device }
             | InvalidSysCtrlPortAResources { device }
@@ -1986,6 +2025,99 @@ mod tests {
                 allow_unlisted_firmware: true,
             },
         )
+    }
+
+    fn lower_input(input: &str) -> Result<MachineConfig, LowerError> {
+        struct Rom;
+        impl ImageReader for Rom {
+            fn read(&mut self, _: &Path) -> io::Result<Vec<u8>> {
+                Ok(vec![0xF4; 0x20000])
+            }
+        }
+        let document = crate::parse_toml("machine.toml", input).unwrap();
+        let origins = Origins::from_toml("machine.toml", input).unwrap();
+        lower(
+            &document,
+            &origins,
+            &mut Rom,
+            assembly::AssemblyOptions {
+                allow_unlisted_firmware: true,
+            },
+        )
+    }
+
+    fn vbe_486(card: &str) -> Result<MachineConfig, LowerError> {
+        lower_input(&format!(
+            "schema=1\n[board]\nmodel='generic-486-isa'\n[cpu]\nmodel='80486dx'\n\
+             [firmware.bios]\nimage='synthetic.bin'\n[[card]]\nkind='uart-16550'\n\
+             [[card]]\nkind='vga'\n{card}"
+        ))
+    }
+
+    #[test]
+    fn vga_model_selects_the_bochs_vbe_card_and_its_memory() {
+        for (fields, memory_mib) in [
+            ("model='bochs-vbe'\n", 16),
+            ("model='bochs-vbe'\nmemory_mib=4\n", 4),
+            ("model='bochs-vbe'\nmemory_mib=8\n", 8),
+            ("model='bochs-vbe'\nmemory_mib=16\n", 16),
+        ] {
+            let config = vbe_486(fields).unwrap();
+            let card = config
+                .devices
+                .iter()
+                .find(|d| d.id == DeviceId::Vga)
+                .unwrap();
+            assert_eq!(
+                card.kind,
+                DeviceKind::BochsVbe(assembly::BochsVbeCfg { memory_mib })
+            );
+            assert_eq!(card.ports, assembly::BochsVbeCfg::port_windows());
+            assert!(config
+                .memory
+                .mmio
+                .contains(&MmioWindow::new(0xA0000, 0x20000, DeviceId::Vga)));
+        }
+        for fields in ["", "model='ibm'\n"] {
+            let config = vbe_486(fields).unwrap();
+            let card = config
+                .devices
+                .iter()
+                .find(|d| d.id == DeviceId::Vga)
+                .unwrap();
+            assert_eq!(card.kind, DeviceKind::VgaRegisters(assembly::VgaCfg {}));
+        }
+    }
+
+    #[test]
+    fn vga_model_and_memory_errors_name_their_field() {
+        for (card, field) in [
+            ("model='bochs-vbe'\nmemory_mib=12\n", "card[vga].memory_mib"),
+            ("model='bochs-vbe'\nmemory_mib=0\n", "card[vga].memory_mib"),
+            ("memory_mib=16\n", "card[vga].memory_mib"),
+            ("model='ibm'\nmemory_mib=16\n", "card[vga].memory_mib"),
+            ("model='bochs-vbe'\nirq=5\n", "card[vga].irq"),
+        ] {
+            let error = vbe_486(card).unwrap_err().to_string();
+            assert!(error.contains(field), "{card}: {error}");
+        }
+        let error = sb16_config("[[card]]\nkind='sb16'\nmodel='bochs-vbe'\n")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("card[sb16].model"), "{error}");
+        assert!(error.contains("only supported by vga cards"), "{error}");
+        let error = sb16_config("[[card]]\nkind='vga'\nmodel='bochs-vbe'\n")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("card[vga].model"), "{error}");
+        assert!(error.contains("32-bit address bus"), "{error}");
+        let error = crate::parse_toml(
+            "machine.toml",
+            "schema=1\n[[card]]\nkind='vga'\nmodel='cirrus'\n",
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("expected `ibm` or `bochs-vbe`"), "{error}");
     }
 
     #[test]

@@ -338,6 +338,49 @@ impl VgaCfg {
     }
 }
 
+/// Register-level IBM VGA with the Bochs VBE DISPI interface (Bochs VBE
+/// DISPI interface, `vbe.h`): index and data ports 1CEh–1D0h and video memory
+/// mapped as RAM at the linear-framebuffer address E0000000h, so the board
+/// needs a 32-bit address bus. See `backlog/docs/design/machine-config.md`,
+/// §Display cards.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct BochsVbeCfg {
+    /// Video memory in MiB, one of [`devices::bochs_vbe::MEMORY_SIZES_MIB`].
+    pub memory_mib: u32,
+}
+
+impl Default for BochsVbeCfg {
+    fn default() -> Self {
+        Self {
+            memory_mib: devices::bochs_vbe::DEFAULT_MEMORY_MIB,
+        }
+    }
+}
+
+impl BochsVbeCfg {
+    /// The VGA decode plus the DISPI index port and both data ports.
+    #[must_use]
+    pub fn port_windows() -> Vec<PortWindow> {
+        let mut windows = VgaCfg::port_windows();
+        // Word cycles, so a 16-bit access at the index or the alias is one
+        // access; one at the odd data port arrives as two byte cycles.
+        windows.push(
+            PortWindow::new(
+                devices::bochs_vbe::INDEX_PORT,
+                devices::bochs_vbe::DATA_ALIAS_PORT,
+            )
+            .with_width(bus::PortWidth::Word),
+        );
+        windows
+    }
+
+    /// Video memory size in bytes.
+    #[must_use]
+    pub fn memory_bytes(self) -> u64 {
+        u64::from(self.memory_mib) << 20
+    }
+}
+
 /// IBM Monochrome Display Adapter selection (display portion only).
 ///
 /// IBM PC Technical Reference, Options and Adapters, Monochrome Display and
@@ -567,6 +610,8 @@ pub enum DeviceKind {
     Vga(VgaTextCfg),
     /// Register-level IBM VGA with planar memory and alphanumeric scanout.
     VgaRegisters(VgaCfg),
+    /// The register-level VGA with the Bochs VBE DISPI interface.
+    BochsVbe(BochsVbeCfg),
     /// IBM Monochrome Display Adapter (display portion only).
     Mda(MdaTextCfg),
     /// System control port.

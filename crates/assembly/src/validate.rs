@@ -120,6 +120,10 @@ const WORD_PORT_SUPPORT: &[WordPortSupport] = &[
     WordPortSupport {
         supports: |kind, port| matches!(kind, DeviceKind::FwCfg(_) if port == 0x510),
     },
+    // The DISPI index and the data alias are 16-bit registers at even ports.
+    WordPortSupport {
+        supports: |kind, port| matches!(kind, DeviceKind::BochsVbe(_) if matches!(port, 0x1CE | 0x1D0)),
+    },
 ];
 
 impl MachineConfig {
@@ -266,10 +270,12 @@ impl MachineConfig {
             .devices
             .iter()
             .any(|d| matches!(d.kind, DeviceKind::Vga(_)))
-            && self
-                .devices
-                .iter()
-                .any(|d| matches!(d.kind, DeviceKind::VgaRegisters(_)))
+            && self.devices.iter().any(|d| {
+                matches!(
+                    d.kind,
+                    DeviceKind::VgaRegisters(_) | DeviceKind::BochsVbe(_)
+                )
+            })
         {
             return Err(ConfigError::ConflictingVgaCards);
         }
@@ -312,6 +318,7 @@ impl MachineConfig {
             hardware(Self::check_ide_resources),
             hardware(Self::check_sb16_resources),
             hardware(Self::check_lotech_ems_resources),
+            hardware(Self::check_bochs_vbe_resources),
             hardware(Self::check_port_widths),
             hardware(Self::check_port_overlaps),
             hardware(Self::check_mmio_devices_present),
@@ -969,6 +976,75 @@ impl MachineConfig {
                         base: uart.base,
                     });
                 }
+            }
+        }
+        Ok(())
+    }
+
+    /// Bochs VBE DISPI interface (`vbe.h`): fixed VGA and DISPI decode and a
+    /// linear framebuffer at E0000000h, which a 24-bit bus cannot reach.
+    pub(crate) fn check_bochs_vbe_resources(&self) -> Result<(), ConfigError> {
+        for device in &self.devices {
+            let DeviceKind::BochsVbe(cfg) = device.kind else {
+                continue;
+            };
+            let windows: Vec<_> = self
+                .memory
+                .mmio
+                .iter()
+                .filter(|w| w.device == device.id)
+                .collect();
+            if !devices::bochs_vbe::MEMORY_SIZES_MIB.contains(&cfg.memory_mib)
+                || device.ports != crate::BochsVbeCfg::port_windows()
+                || device.irq.is_some()
+                || device.dma.is_some()
+                || windows.len() != 1
+                || windows[0].base != 0xA0000
+                || windows[0].size != 0x20000
+            {
+                return Err(ConfigError::InvalidBochsVbeResources { device: device.id });
+            }
+            let bits = if self.board == BoardModel::Ibm5170 {
+                24
+            } else {
+                self.cpu.chip.physical_address_bits()
+            };
+            if bits < 32 {
+                return Err(ConfigError::BochsVbeAddressSpace {
+                    device: device.id,
+                    board: self.board.id(),
+                    bits,
+                });
+            }
+            // Assembly would otherwise refuse the mapping as a CPU error.
+            let lfb = devices::bochs_vbe::LFB_BASE;
+            let end = lfb + cfg.memory_bytes();
+            let high_bios = self.board.is_generic_isa().then_some((
+                crate::memory::I386_HIGH_BIOS_BASE,
+                crate::memory::I386_PHYSICAL_END,
+            ));
+            let taken = self
+                .memory
+                .ram
+                .iter()
+                .map(|region| (region.base, region.end()))
+                .chain(self.memory.mmio.iter().map(|w| (w.base, w.end())))
+                .chain(self.images.iter().map(|image| {
+                    (
+                        image.base,
+                        image.base + image.source.known_len().unwrap_or(1).max(1),
+                    )
+                }))
+                .chain(high_bios);
+            if let Some(addr) = taken
+                .filter(|&(base, stop)| base < end && lfb < stop)
+                .map(|(base, _)| base.max(lfb))
+                .min()
+            {
+                return Err(ConfigError::BochsVbeOverlap {
+                    device: device.id,
+                    addr,
+                });
             }
         }
         Ok(())

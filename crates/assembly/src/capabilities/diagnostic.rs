@@ -250,6 +250,20 @@ pub(super) fn from_error(draft: &Draft, error: &ConfigError) -> Diagnostic {
         InvalidLotechEmsResources { device } => {
             ("ems-resources", vec![draft.card_path(*device)], None)
         }
+        InvalidBochsVbeResources { device } => {
+            ("vbe-resources", vec![card(*device, "memory_mib")], None)
+        }
+        BochsVbeAddressSpace { device, .. } => {
+            ("vbe-address-space", vec![card(*device, "model")], None)
+        }
+        BochsVbeOverlap { device, addr } => (
+            "vbe-overlap",
+            vec![card(*device, "model")],
+            Some(Resource::Memory {
+                start: *addr,
+                end: addr.saturating_add(1),
+            }),
+        ),
         InvalidIdeResources { device } | InvalidIdePortWindows { device } => {
             ("ide-resources", vec![draft.card_path(*device)], None)
         }

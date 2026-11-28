@@ -378,6 +378,7 @@ pub fn assemble_preverified(
     let mut persistence = Vec::new();
     let mut native_audio = Vec::new();
     let mut ems_frame = None;
+    let mut vbe = None;
     let mut trace_cmos = None;
 
     for dc in &config.devices {
@@ -466,6 +467,12 @@ pub fn assemble_preverified(
             }
             DeviceKind::Vga(_) => Box::new(VgaText::new()),
             DeviceKind::VgaRegisters(_) => Box::new(devices::Vga::new()),
+            DeviceKind::BochsVbe(cfg) => {
+                let vga = devices::Vga::with_bochs_vbe(cfg.memory_mib)
+                    .map_err(|_| ConfigError::InvalidBochsVbeResources { device: dc.id })?;
+                vbe = vga.bochs_vbe().cloned();
+                Box::new(vga)
+            }
             DeviceKind::Mda(_) => Box::new(MdaText::new()),
             DeviceKind::SysControl(_) => Box::new(SysControl::new().with_pit(pit.clone())),
             DeviceKind::Post(c) => Box::new(PostPort::with_port(c.port)),
@@ -624,24 +631,34 @@ pub fn assemble_preverified(
             .ok_or(ConfigError::InvalidLotechEmsResources { device })?;
         ems_map = Some(crate::ems_frame::EmsFrameMap::new(board, frame, run));
     }
-    match (ems_map, speaker_trace) {
-        (Some(mut map), None) => {
-            machine = machine.with_memory_map(move |cpu, event| map.sync(cpu, event));
-        }
-        // The trace shares the one memory-map hook, which runs after every
-        // guest port write; it only reads state after the EMS map is applied.
-        (mut map, Some(trace)) => {
-            machine = machine.with_memory_map(move |cpu, event| {
-                if let Some(map) = &mut map {
-                    map.sync(cpu, event)?;
-                }
-                if event == ::machine::MemoryMapSync::Apply {
-                    trace.after_port_write(cpu);
-                }
-                Ok(())
-            });
-        }
-        (None, None) => {}
+    if let Some(vbe) = &vbe {
+        let (window, target) = crate::bochs_vbe_map::window(vbe.clone());
+        machine = machine.with_ram_window(window, target);
+    }
+    let mut vbe_clear = vbe.map(crate::bochs_vbe_map::BochsVbeClear::new);
+    if ems_map.is_some() || speaker_trace.is_some() {
+        // One hook serves every CPU-held device memory. The trace runs after
+        // every guest port write and only reads state the maps have applied.
+        let mut ems_map = ems_map;
+        machine = machine.with_memory_map(move |cpu, event| {
+            if let Some(map) = &mut ems_map {
+                map.sync(cpu, event)?;
+            }
+            if let Some(clear) = &mut vbe_clear {
+                clear.sync(cpu, event)?;
+            }
+            if let (Some(trace), ::machine::MemoryMapSync::Apply) = (&speaker_trace, event) {
+                trace.after_port_write(cpu);
+            }
+            Ok(())
+        });
+    } else if let Some(mut clear) = vbe_clear {
+        // Only a DISPI write can request a clear, so every other port keeps
+        // its in-process service.
+        machine = machine.with_memory_map_for_ports(
+            std::iter::once(crate::bochs_vbe_map::DISPI_PORTS),
+            move |cpu, event| clear.sync(cpu, event),
+        );
     }
 
     let mouse_target = config.devices.iter().find_map(|device| match &device.kind {
@@ -688,7 +705,10 @@ pub fn validate_observation_policy(
                 matches!(
                     (&dc.kind, output),
                     (
-                        DeviceKind::Vga(_) | DeviceKind::VgaRegisters(_) | DeviceKind::Mda(_),
+                        DeviceKind::Vga(_)
+                            | DeviceKind::VgaRegisters(_)
+                            | DeviceKind::BochsVbe(_)
+                            | DeviceKind::Mda(_),
                         OutputKind::TextScanout
                     ) | (
                         DeviceKind::Uart(_),
@@ -856,6 +876,15 @@ fn build_cpu_traced(
     for (base, end) in trap_runs(config) {
         cpu.map_mmio(base, end - base)?;
         record_mapping(base, end, "mmio");
+    }
+    // Bochs VBE video memory is ordinary page-aligned CPU RAM that never
+    // executes, so framebuffer stores take the RAM path on every engine.
+    for device in &config.devices {
+        if let DeviceKind::BochsVbe(cfg) = device.kind {
+            let base = devices::bochs_vbe::LFB_BASE;
+            cpu.map_data_ram(base, cfg.memory_bytes())?;
+            record_mapping(base, base + cfg.memory_bytes(), "lfb");
+        }
     }
     if firmware_board && !config.board.is_generic_isa() {
         // Physical adapter decoding belongs to the board, independently of

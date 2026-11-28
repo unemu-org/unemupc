@@ -83,6 +83,8 @@ view!(Card {
     id: Option<String>,
     kind: Option<super::CardKind>,
     controller_model: Option<super::ControllerModel>,
+    model: Option<super::VgaModel>,
+    memory_mib: Option<u32>,
     mouse: Option<super::SerialMouseModel>,
     port: Option<u16>,
     frame: Option<u16>,

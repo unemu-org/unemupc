@@ -456,7 +456,7 @@ fn console_contains(
     needle: &str,
 ) -> Result<bool, RunError> {
     let Frame::Text(grid) = observation
-        .capture_text(machine.bus(), probe.device)
+        .capture_display(machine.bus(), Some(machine.cpu()), probe.device)
         .map_err(|source| RunError::ConsoleUnavailable {
             device: probe.device,
             source,

@@ -1,5 +1,9 @@
 # Status
 
+## Bochs VBE display adapter (2026-11-28)
+
+A `vga` card with `model = "bochs-vbe"` (and `memory_mib` 4/8/16, default 16) adds the Bochs VBE DISPI interface to the register-level VGA on the generic 386/486 boards: video memory is CPU RAM at the E0000000h linear framebuffer, the A0000h window banks into it, and capture presents 8 bpp through the DAC and 15/16/24/32 bpp as direct-colour frames ([machine files § Bochs VBE card](design/machine-files.md#bochs-vbe-card)). A project-owned 486 program sets 640×480 at 32 and 16 bpp and every captured pixel matches, on both CPU engines; framebuffer stores retire as fast as RAM stores (MEASURED, debug build: interpreter 26.8 vs 25.6 M/s, JIT 632.9 vs 615.4 M/s), and the banked window, served straight from video memory, gives the same results under any run slicing (7.0 / 8.0 M/s store loop). No shipped machine file or BIOS uses it yet; planar 4-bit VBE modes are not supported, so the bundled VGA BIOS build must not offer them.
+
 ## Opt-in CPU JIT engine (2026-11-28)
 
 `cpu.engine = "jit"` or `--cpu-engine jit` runs 386/486 boards on the x86jit Cranelift JIT that `unemupc` and `unemupc-view` supply (the core links no backend); the interpreter stays the default and the only engine for the 80286 ([machine files § CPU engine](design/machine-files.md#cpu-engine)), and both give identical retired counts and output (MEASURED, x86jit `3d793fc2`, SeaBIOS 486 diskless POST).

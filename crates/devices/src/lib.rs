@@ -15,6 +15,7 @@
 
 pub mod a20;
 pub mod ata;
+pub mod bochs_vbe;
 pub mod cmos_rtc;
 pub mod coprocessor;
 pub mod debug_console;
@@ -53,6 +54,7 @@ pub const OPL3_NOTICE: &str = concat!(
 
 pub use a20::A20Line;
 pub use ata::{Ata, AtaConfigError, AtaDrive, AtaGeometry};
+pub use bochs_vbe::{BochsVbe, BochsVbeConfigError, DispiRegisters, LinearScanout};
 pub use cmos_rtc::{CmosConfig, CmosDiagnostic, CmosRtc};
 pub use coprocessor::{Absent80287, AtCoprocessor, CoprocessorErrorLine};
 pub use debug_console::DebugConsole;

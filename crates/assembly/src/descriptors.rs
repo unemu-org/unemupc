@@ -67,6 +67,9 @@ pub const IDE_PORTS: &[u16] = &[0x1F0, 0x170];
 pub const EMS_PORTS: &[u16] = devices::LotechEms::PORTS;
 pub const EMS_FRAMES: &[u16] = devices::LotechEms::FRAMES;
 pub const EMS_SIZES_KIB: &[u32] = devices::LotechEms::SIZES_KIB;
+pub const VBE_MEMORY_SIZES_MIB: &[u32] = devices::bochs_vbe::MEMORY_SIZES_MIB;
+/// Models of a `vga` card; the first is the default.
+pub const VGA_MODELS: &[&str] = &["ibm", "bochs-vbe"];
 pub const SB16_DEFAULT: Sb16Cfg = Sb16Cfg {
     base: 0x220,
     dma16: 5,
@@ -143,7 +146,7 @@ impl CardKind {
         Some(match kind {
             DeviceKind::Mda(_) => Self::Mda,
             DeviceKind::Vga(_) => Self::VgaText,
-            DeviceKind::VgaRegisters(_) => Self::Vga,
+            DeviceKind::VgaRegisters(_) | DeviceKind::BochsVbe(_) => Self::Vga,
             DeviceKind::Uart(_) => Self::Uart16550,
             DeviceKind::Fdc(_) => Self::Fdc765,
             DeviceKind::Ide(_) => Self::Ide,

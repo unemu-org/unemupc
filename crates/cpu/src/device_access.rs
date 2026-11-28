@@ -117,6 +117,20 @@ impl AccessControl {
     }
 }
 
+/// Guest RAM as a handler may reach it while serving one access, for a
+/// device window whose bytes live in guest RAM (a banked framebuffer
+/// window). Reads see the access's own earlier writes; writes take effect,
+/// with self-modifying-code tracking, only when the handler returns
+/// [`AccessResult::Handled`]. Paging does not apply: addresses are physical.
+pub trait GuestRam {
+    /// Read `bytes.len()` bytes at `address`; false, with `bytes`
+    /// unspecified, when any of them is not RAM.
+    fn read(&self, address: u64, bytes: &mut [u8]) -> bool;
+    /// Write `bytes` at `address`; false, writing nothing, when any of them
+    /// is not RAM.
+    fn write(&mut self, address: u64, bytes: &[u8]) -> bool;
+}
+
 /// Serves accesses synchronously while the CPU runs (see the module docs).
 ///
 /// Called at most once per access, in guest order, never reentrantly. It must
@@ -128,4 +142,16 @@ impl AccessControl {
 pub trait DeviceAccessHandler {
     /// Serve or decline one access.
     fn access(&mut self, access: &DeviceAccess, control: &mut AccessControl) -> AccessResult;
+
+    /// [`Self::access`] with guest RAM at hand, which a backend that can
+    /// offer it calls instead. The default ignores the RAM.
+    fn access_with_ram(
+        &mut self,
+        access: &DeviceAccess,
+        control: &mut AccessControl,
+        ram: &mut dyn GuestRam,
+    ) -> AccessResult {
+        let _ = ram;
+        self.access(access, control)
+    }
 }

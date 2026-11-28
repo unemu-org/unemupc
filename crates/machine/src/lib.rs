@@ -175,6 +175,29 @@ pub enum MemoryMapSync {
 
 type MemoryMapHook<C> = Box<dyn FnMut(&mut C, MemoryMapSync) -> Result<(), CpuError>>;
 
+/// A trapped window whose bytes live in guest RAM elsewhere (§4.2), such as
+/// a banked framebuffer window: the machine completes an access the target
+/// maps against that RAM instead of the window's device. See
+/// [`Machine::with_ram_window`].
+pub(crate) struct RamWindow {
+    window: std::ops::RangeInclusive<u64>,
+    target: Box<dyn Fn(u64) -> Option<u64>>,
+}
+
+impl RamWindow {
+    /// The physical RAM address of a whole access, or `None` when its first
+    /// byte is unmapped or its bytes are not one contiguous run inside the
+    /// window; the window's device then takes the access.
+    pub(crate) fn route(&self, addr: u64, size: u8) -> Option<u64> {
+        let last = addr.checked_add(u64::from(size.max(1)) - 1)?;
+        if !self.window.contains(&addr) || !self.window.contains(&last) {
+            return None;
+        }
+        let start = (self.target)(addr)?;
+        ((self.target)(last)? == start + (last - addr)).then_some(start)
+    }
+}
+
 /// Errors from running a [`Machine`] (§3.1).
 #[derive(Debug, Error)]
 pub enum MachineError {
@@ -275,6 +298,9 @@ pub struct Machine<C: Cpu> {
     /// code-segment load.
     reset_fetch_window: bool,
     memory_map: Option<MemoryMapHook<C>>,
+    /// The ports whose writes the hook must observe; `None` for every port.
+    memory_map_ports: Option<Vec<std::ops::RangeInclusive<u16>>>,
+    ram_window: Option<RamWindow>,
     /// CS:IP at the last run-slice boundaries, when a diagnostic asked for it.
     code_trail: Option<Box<CodeTrail>>,
     /// The CPU's delivery records, when a diagnostic asked for them.
@@ -384,6 +410,8 @@ impl<C: Cpu> Machine<C> {
             reset_fetch_probe: None,
             reset_fetch_window: false,
             memory_map: None,
+            memory_map_ports: None,
+            ram_window: None,
             code_trail: None,
             deliveries: None,
             irq_bases_of: None,
@@ -534,6 +562,72 @@ impl<C: Cpu> Machine<C> {
         );
         self.memory_map = Some(Box::new(hook));
         self
+    }
+
+    /// [`Self::with_memory_map`] for a hook that only needs to see writes to
+    /// `ports`: a write elsewhere that the machine serves while the CPU runs
+    /// skips the hook, so those ports keep their in-process service. Writes
+    /// the CPU returns for, and every run start, still apply the hook.
+    #[must_use]
+    pub fn with_memory_map_for_ports(
+        mut self,
+        ports: impl IntoIterator<Item = std::ops::RangeInclusive<u16>>,
+        hook: impl FnMut(&mut C, MemoryMapSync) -> Result<(), CpuError> + 'static,
+    ) -> Self {
+        self = self.with_memory_map(hook);
+        self.memory_map_ports = Some(ports.into_iter().collect());
+        self
+    }
+
+    /// Serve the trapped `window` from guest RAM (§4.2): an access whose
+    /// bytes `target` maps to one contiguous run of physical addresses reads
+    /// and writes that RAM, through the CPU's self-modifying-code-safe path,
+    /// both when the CPU returns for it and when it is served while the CPU
+    /// runs. `target` answers `None` to leave an access to the window's
+    /// device; it may change its answer between accesses (a bank register)
+    /// but must not change guest state. A machine has one such window.
+    #[must_use]
+    pub fn with_ram_window(
+        mut self,
+        window: std::ops::RangeInclusive<u64>,
+        target: impl Fn(u64) -> Option<u64> + 'static,
+    ) -> Self {
+        debug_assert!(
+            self.ram_window.is_none(),
+            "a RAM window is already attached"
+        );
+        self.ram_window = Some(RamWindow {
+            window,
+            target: Box::new(target),
+        });
+        self
+    }
+
+    fn window_read(&mut self, addr: u64, size: u8) -> Result<u64, BusError> {
+        let Some(base) = self.ram_window.as_ref().and_then(|w| w.route(addr, size)) else {
+            return self.bus.mmio_read(addr, size);
+        };
+        let mut value = 0;
+        for i in (0..u64::from(size)).rev() {
+            let byte = match self.cpu.guest_dma_read((base + i) as u32) {
+                cpu::DmaAccess::Complete(byte) => byte,
+                cpu::DmaAccess::Mmio => 0xFF,
+            };
+            value = value << 8 | u64::from(byte);
+        }
+        Ok(value)
+    }
+
+    fn window_write(&mut self, addr: u64, size: u8, value: u64) -> Result<(), BusError> {
+        let Some(base) = self.ram_window.as_ref().and_then(|w| w.route(addr, size)) else {
+            return self.bus.mmio_write(addr, size, value);
+        };
+        for i in 0..u64::from(size) {
+            let _ = self
+                .cpu
+                .guest_dma_write((base + i) as u32, (value >> (8 * i)) as u8);
+        }
+        Ok(())
     }
 
     fn sync_memory_map(&mut self, event: MemoryMapSync) -> Result<(), MachineError> {
@@ -1101,7 +1195,12 @@ impl<C: Cpu> Machine<C> {
                             .as_deref()
                             .map(|line| (line, self.a20_changes)),
                         reset_signal: self.reset_signal.as_deref(),
-                        memory_map: self.memory_map.is_some(),
+                        memory_map: match (&self.memory_map, &self.memory_map_ports) {
+                            (None, _) => in_process::ObservedPorts::None,
+                            (Some(_), None) => in_process::ObservedPorts::All,
+                            (Some(_), Some(ports)) => in_process::ObservedPorts::Only(ports),
+                        },
+                        ram_window: self.ram_window.as_ref(),
                         irq_stop_armed: options.stop_when_irq_ready
                             && !self.cpu.has_pending_irq()
                             && !self.cpu.interrupts_enabled(),
@@ -1284,12 +1383,12 @@ impl<C: Cpu> Machine<C> {
                     self.cpu.complete_port_in(u64::from(value));
                 }),
                 CpuStop::MmioWrite { addr, size, value } => {
-                    self.bus.mmio_write(addr, size, value).map(|()| {
+                    self.window_write(addr, size, value).map(|()| {
                         self.cpu.complete_mmio_write();
                         completing = true;
                     })
                 }
-                CpuStop::MmioRead { addr, size } => self.bus.mmio_read(addr, size).map(|value| {
+                CpuStop::MmioRead { addr, size } => self.window_read(addr, size).map(|value| {
                     self.cpu.complete_mmio_read(value);
                     completing = true;
                 }),
@@ -1440,7 +1539,7 @@ impl<C: Cpu> Machine<C> {
                         .map(|ctrl| ctrl.dma_service_write(channel, &mut mem, &data))
                         .unwrap_or_default();
                     for (addr, value) in mem.mmio_writes {
-                        self.bus.mmio_write(u64::from(addr), 1, u64::from(value))?;
+                        self.window_write(u64::from(addr), 1, u64::from(value))?;
                     }
                     DmaOutcome::ToMemory {
                         transferred: transfer.transferred,
@@ -1456,7 +1555,7 @@ impl<C: Cpu> Machine<C> {
                         .unwrap_or_default();
                     buf.truncate(transfer.transferred);
                     for (offset, addr) in mem.mmio_reads.into_inner() {
-                        buf[offset] = self.bus.mmio_read(u64::from(addr), 1)? as u8;
+                        buf[offset] = self.window_read(u64::from(addr), 1)? as u8;
                     }
                     DmaOutcome::FromMemory {
                         bytes: buf,

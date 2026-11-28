@@ -65,7 +65,8 @@ pub use delivery::{
     Delivery, DeliveryCounts, DeliveryKind, DeliveryLogError, DeliveryName, DeliveryRegisters,
 };
 pub use device_access::{
-    AccessControl, AccessResult, AccessSpace, DeviceAccess, DeviceAccessHandler, ServedRange,
+    AccessControl, AccessResult, AccessSpace, DeviceAccess, DeviceAccessHandler, GuestRam,
+    ServedRange,
 };
 pub use diagnostic::CpuDiagnostic;
 pub use stop_report::CpuStopReport;

@@ -736,3 +736,92 @@ fn ems_descriptors_share_the_device_domains() {
     assert!(!devices::LotechEms::valid_frame(0xC800));
     assert!(!devices::LotechEms::valid_size_kib(513));
 }
+
+#[test]
+fn vga_model_and_video_memory_are_card_fields_that_follow_the_kind() {
+    let mut base = Draft::for_board(BoardModel::Generic486Isa);
+    base.config.devices.retain(|d| d.id != DeviceId::Vga);
+    base.config
+        .memory
+        .mmio
+        .retain(|w| w.device != DeviceId::Vga);
+    let vga = CardKind::Vga.device();
+    base.config
+        .memory
+        .mmio
+        .push(CardKind::Vga.mmio(&vga).unwrap());
+    base.config.devices.push(vga);
+    let model = describe(&base, "card[vga].model").unwrap();
+    assert_eq!(
+        model.domain,
+        Domain::Values(vec![
+            Value::Name("ibm".into()),
+            Value::Name("bochs-vbe".into())
+        ])
+    );
+    assert_eq!(model.default, Some(Value::Name("ibm".into())));
+    let memory = describe(&base, "card[vga].memory_mib").unwrap();
+    assert_eq!(
+        memory.domain,
+        Domain::Values([4, 8, 16].map(Value::Integer).to_vec())
+    );
+    assert_eq!(
+        (memory.default, memory.unit),
+        (Some(Value::Integer(16)), Some("MiB"))
+    );
+
+    let mut draft = base.clone();
+    draft.set("card[vga].model", Value::Name("bochs-vbe".into()));
+    draft.set("card[vga].memory_mib", Value::Integer(8));
+    // Naming the same kind again keeps the model.
+    draft.set("card[vga].kind", Value::Name("vga".into()));
+    let result = validate_draft(&draft);
+    let card = result
+        .config
+        .devices
+        .iter()
+        .find(|d| d.id == DeviceId::Vga)
+        .unwrap();
+    assert_eq!(
+        card.kind,
+        DeviceKind::BochsVbe(BochsVbeCfg { memory_mib: 8 })
+    );
+    assert_eq!(card.ports, BochsVbeCfg::port_windows());
+    let sheet = fields(&draft);
+    let value = |path: &str| {
+        sheet
+            .iter()
+            .find(|f| f.path == path)
+            .map(|f| f.value.clone())
+    };
+    assert_eq!(
+        value("card[vga].model"),
+        Some(Value::Name("bochs-vbe".into()))
+    );
+    assert_eq!(value("card[vga].memory_mib"), Some(Value::Integer(8)));
+
+    // Another kind drops both.
+    let mut other = draft.clone();
+    other.set("card[vga].kind", Value::Name("vga-text".into()));
+    let sheet = fields(&other);
+    assert!(!sheet
+        .iter()
+        .any(|f| f.path.starts_with("card[") && f.path.ends_with(".memory_mib")));
+    assert!(!sheet
+        .iter()
+        .any(|f| f.path.starts_with("card[") && f.path.ends_with(".model")));
+
+    // The 24-bit AT board names the model as the cause.
+    let mut at = draft.clone();
+    at.config.board = BoardModel::Ibm5170;
+    at.config.cpu.chip = CpuChip::I80286;
+    let result = validate_draft(&at);
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "vbe-address-space" && d.field_paths == ["card[vga].model"]),
+        "{:?}",
+        result.diagnostics
+    );
+}

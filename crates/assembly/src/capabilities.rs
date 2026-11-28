@@ -469,6 +469,22 @@ pub fn describe(draft: &Draft, path: &str) -> Option<FieldDescriptor> {
                 Some(Value::Integer(EMS_DEFAULT.size_kib)),
             )
         }
+        (CardKind::Vga, "model") => (
+            Domain::Values(
+                VGA_MODELS
+                    .iter()
+                    .map(|model| Value::Name((*model).into()))
+                    .collect(),
+            ),
+            Some(Value::Name(VGA_MODELS[0].into())),
+        ),
+        (CardKind::Vga, "memory_mib") => {
+            unit = Some("MiB");
+            (
+                integers(VBE_MEMORY_SIZES_MIB.iter().copied()),
+                Some(Value::Integer(BochsVbeCfg::default().memory_mib)),
+            )
+        }
         (CardKind::Ide, "port") => (
             integers(IDE_PORTS.iter().copied()),
             Some(Value::Integer(IDE_PORTS[0].into())),
@@ -764,11 +780,25 @@ pub fn validate_draft(draft: &Draft) -> Validation {
             {
                 match (&edit.value, field) {
                     (Value::Name(name), "kind") => {
-                        if let Some(kind) = CARD_KINDS.iter().find(|kind| kind.name() == name) {
+                        // Naming the card's own kind keeps its model.
+                        if let Some(kind) = CARD_KINDS.iter().find(|kind| {
+                            kind.name() == name && CardKind::of(&device.kind) != Some(**kind)
+                        }) {
                             *device = kind.device();
                             remap = true;
                         }
                     }
+                    (Value::Name(name), "model") => match (name.as_str(), &device.kind) {
+                        ("bochs-vbe", DeviceKind::VgaRegisters(_)) => {
+                            device.kind = DeviceKind::BochsVbe(BochsVbeCfg::default());
+                            device.ports = BochsVbeCfg::port_windows();
+                        }
+                        ("ibm", DeviceKind::BochsVbe(_)) => {
+                            device.kind = DeviceKind::VgaRegisters(VgaCfg {});
+                            device.ports = VgaCfg::port_windows();
+                        }
+                        _ => {}
+                    },
                     (Value::Disconnected, "irq") => device.irq = None,
                     (Value::Disconnected, "dma") => device.dma = None,
                     (Value::Integer(value), "irq") => device.irq = Some(*value as u8),
@@ -807,6 +837,9 @@ pub fn validate_draft(draft: &Draft) -> Validation {
                             }
                             device.ports =
                                 vec![PortWindow::new(cfg.base, cfg.base.saturating_add(7))];
+                        }
+                        DeviceKind::BochsVbe(cfg) if field == "memory_mib" => {
+                            cfg.memory_mib = *value;
                         }
                         DeviceKind::Ide(cfg) => {
                             let old_irq = Some(cfg.irq());

@@ -120,7 +120,9 @@ impl FirmwarePart {
                 .images
                 .iter()
                 .any(|image| image.kind == ImageKind::Rom && image.base == 0xC0000),
-            Self::VgaRegisters => has(|kind| matches!(kind, DeviceKind::VgaRegisters(_))),
+            Self::VgaRegisters => {
+                has(|kind| matches!(kind, DeviceKind::VgaRegisters(_) | DeviceKind::BochsVbe(_)))
+            }
             Self::AtaPrimary => config.devices.iter().any(|device| {
                 matches!(device.kind, DeviceKind::Ide(cfg)
                     if cfg.base == 0x1F0 && cfg.control == 0x3F6

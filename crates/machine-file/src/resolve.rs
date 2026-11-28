@@ -328,6 +328,8 @@ fn validate_layer(document: &MachineFile, origins: &Origins) -> Result<(), Lower
         if card.remove == Some(true)
             && (card.kind.is_some()
                 || card.controller_model.is_some()
+                || card.model.is_some()
+                || card.memory_mib.is_some()
                 || card.frame.is_some()
                 || card.size_kib.is_some()
                 || card.port.is_some()
@@ -785,6 +787,8 @@ fn merge(
                 card.controller_model,
                 "controller_model",
             );
+            m.scalar(&mut inherited.model, card.model, "model");
+            m.scalar(&mut inherited.memory_mib, card.memory_mib, "memory_mib");
             m.scalar(&mut inherited.port, card.port, "port");
             m.scalar(&mut inherited.frame, card.frame, "frame");
             m.scalar(&mut inherited.size_kib, card.size_kib, "size_kib");
@@ -1193,6 +1197,33 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.message.contains("only id and remove"));
+    }
+
+    #[test]
+    fn vga_model_and_memory_inherit_override_and_cannot_accompany_removal() {
+        let parent = "[[card]]\nkind='vga'\nmodel='bochs-vbe'\nmemory_mib=8\n";
+        let inherited = merged(parent, "[[card]]\nid='vga'\nmemory_mib=4\n").unwrap();
+        let card = &cards(&inherited.document)[0];
+        assert_eq!(
+            (card.model, card.memory_mib),
+            (Some(VgaModel::BochsVbe), Some(4))
+        );
+        assert_eq!(
+            inherited.origins.get("card[0].model").file,
+            Path::new("parent.toml")
+        );
+        assert_eq!(
+            inherited.origins.get("card[0].memory_mib").file,
+            Path::new("child.toml")
+        );
+        for field in ["model='ibm'", "memory_mib=16"] {
+            let error = merged(
+                parent,
+                &format!("[[card]]\nid='vga'\nremove=true\n{field}\n"),
+            )
+            .unwrap_err();
+            assert!(error.message.contains("only id and remove"), "{field}");
+        }
     }
 
     #[test]

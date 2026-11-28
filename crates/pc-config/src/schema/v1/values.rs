@@ -193,6 +193,13 @@ named_values! {
 }
 
 named_values! {
+    /// Model of a VGA card; omitted means the IBM VGA.
+    VgaModel, "VGA model" {
+        Ibm => "ibm", BochsVbe => "bochs-vbe",
+    } reserved {}
+}
+
+named_values! {
     /// IDE device selection within one controller's channel.
     Channel, "IDE channel" { Master => "master", Slave => "slave" } reserved {}
 }

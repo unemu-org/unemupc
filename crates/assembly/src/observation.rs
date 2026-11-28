@@ -81,7 +81,11 @@ impl AssembledMachine {
         Ok(DisplayCapture {
             virtual_time: self.machine.virtual_time(),
             retired: self.machine.cpu().retired(),
-            frame: self.observation.capture_text(self.machine.bus(), device)?,
+            frame: self.observation.capture_display(
+                self.machine.bus(),
+                Some(self.machine.cpu()),
+                device,
+            )?,
         })
     }
 
@@ -97,6 +101,59 @@ impl AssembledMachine {
             })
             .collect()
     }
+}
+
+/// One frame of a Bochs VBE linear framebuffer (Bochs VBE DISPI interface,
+/// `vbe.h`), read once from the CPU's video memory: indexed through the DAC
+/// `palette` at 8 bpp, the guest's own bytes in a direct-colour frame above.
+/// `None` when the CPU cannot read the visible bytes.
+pub(crate) fn linear_frame(
+    scanout: &devices::LinearScanout,
+    memory: &cpu::X86JitCpu,
+    palette: &[[u8; 3]; 256],
+) -> Option<Frame> {
+    let mut bytes = vec![0; usize::try_from(scanout.byte_len()).ok()?];
+    memory
+        .read_mem(devices::bochs_vbe::LFB_BASE + scanout.offset, &mut bytes)
+        .ok()?;
+    Some(linear_pixels(scanout, bytes, palette))
+}
+
+/// [`linear_frame`] over bytes already read from the display start.
+fn linear_pixels(
+    scanout: &devices::LinearScanout,
+    bytes: Vec<u8>,
+    palette: &[[u8; 3]; 256],
+) -> Frame {
+    let (width, height) = (scanout.width, scanout.height);
+    let format = match scanout.bits_per_pixel {
+        15 => video::PixelFormat::Rgb555,
+        16 => video::PixelFormat::Rgb565,
+        24 => video::PixelFormat::Rgb888,
+        32 => video::PixelFormat::Xrgb8888,
+        _ => {
+            let stride = scanout.stride as usize;
+            let mut indices = Vec::with_capacity(usize::from(width) * usize::from(height));
+            for row in 0..usize::from(height) {
+                indices.extend_from_slice(&bytes[row * stride..][..usize::from(width)]);
+            }
+            return Frame::Pixels(video::IndexedPixels {
+                width,
+                height,
+                repeat: (1, 1),
+                indices,
+                palette: palette.to_vec().into_boxed_slice(),
+            });
+        }
+    };
+    Frame::Direct(video::DirectPixels {
+        width,
+        height,
+        repeat: (1, 1),
+        format,
+        stride: scanout.stride,
+        bytes,
+    })
 }
 
 /// The requested capability, independent of the device's role or port address.
@@ -198,6 +255,8 @@ pub struct Observation {
     routes: Vec<ObservationRoute>,
     streams: BTreeMap<(DeviceId, ByteStreamKind), ByteCapture>,
     displays: BTreeMap<DeviceId, DisplaySubscribers>,
+    /// DISPI interfaces of the bound displays that have one.
+    linear: BTreeMap<DeviceId, devices::BochsVbe>,
     audio: RefCell<AudioObservation>,
     pub(crate) speaker_trace: Option<crate::speaker_trace::SpeakerTrace>,
 }
@@ -272,6 +331,13 @@ impl Observation {
                 .ok_or(ConfigError::UnsupportedObservationOutput { device, output })?;
             match output {
                 OutputKind::TextScanout => {
+                    if let Some(vbe) = producer_device
+                        .as_any_mut()
+                        .and_then(|any| any.downcast_mut::<devices::Vga>())
+                        .and_then(|vga| vga.bochs_vbe())
+                    {
+                        observation.linear.insert(device, vbe.clone());
+                    }
                     if producer_device.text_scanout().is_none()
                         && producer_device.planar_text_scanout().is_none()
                         && producer_device.graphics_scanout().is_none()
@@ -452,9 +518,22 @@ impl Observation {
     /// Render one selected display and fan out the owned frame to its capture
     /// sink, then external subscribers in subscription order. Failed captures
     /// feed no sink. This does not execute or synchronize hardware.
+    #[cfg(test)]
     pub(crate) fn capture_text(
         &self,
         bus: &Bus,
+        device: DeviceId,
+    ) -> Result<Frame, ObservationError> {
+        self.capture_display(bus, None, device)
+    }
+
+    /// [`Self::capture_text`], reading a linear framebuffer from `memory`
+    /// while the card shows one. Without `memory` such a card shows the
+    /// blank screen its VGA scanout reports.
+    pub(crate) fn capture_display(
+        &self,
+        bus: &Bus,
+        memory: Option<&cpu::X86JitCpu>,
         device: DeviceId,
     ) -> Result<Frame, ObservationError> {
         #[cfg(feature = "host-profile")]
@@ -463,7 +542,19 @@ impl Observation {
         let producer = bus
             .device(route.device_index)
             .ok_or(ObservationError::ScanoutUnavailable(device))?;
-        let frame = if let Some(state) = producer.graphics_scanout() {
+        let linear = self
+            .linear
+            .get(&device)
+            .and_then(|vbe| vbe.linear_scanout())
+            .zip(memory);
+        let frame = if let Some((scanout, memory)) = linear {
+            let palette = producer
+                .graphics_scanout()
+                .ok_or(ObservationError::ScanoutUnavailable(device))?
+                .palette;
+            linear_frame(&scanout, memory, &palette)
+                .ok_or(ObservationError::ScanoutUnavailable(device))?
+        } else if let Some(state) = producer.graphics_scanout() {
             Frame::Pixels(render_graphics(&state))
         } else if let Some(state) = producer.planar_text_scanout() {
             Frame::Text(render_planar_text(&state))

@@ -259,6 +259,11 @@ pub fn fields(draft: &Draft) -> Vec<Field> {
                 field("frame", "Page frame", Value::Integer(cfg.frame.into()));
                 field("size_kib", "Memory", Value::Integer(cfg.size_kib));
             }
+            DeviceKind::VgaRegisters(_) => field("model", "Model", Value::Name("ibm".into())),
+            DeviceKind::BochsVbe(cfg) => {
+                field("model", "Model", Value::Name("bochs-vbe".into()));
+                field("memory_mib", "Video memory", Value::Integer(cfg.memory_mib));
+            }
             DeviceKind::Uart(cfg) => field("port", "I/O port", Value::Integer(cfg.base.into())),
             DeviceKind::Ide(cfg) => field("port", "I/O port", Value::Integer(cfg.base.into())),
             _ => {}

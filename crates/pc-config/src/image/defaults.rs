@@ -181,6 +181,10 @@ pub fn materialize(hardware: &mut Table, config: &assembly::MachineConfig) -> Re
                     card.insert("irq".into(), line(d.irq));
                     card.insert("dma".into(), line(d.dma.map(|d| d.channel)));
                 }
+                DeviceKind::BochsVbe(c) => {
+                    card.insert("model".into(), "bochs-vbe".into());
+                    card.insert("memory_mib".into(), i64::from(c.memory_mib).into());
+                }
                 DeviceKind::LotechEms(c) => {
                     card.insert("port".into(), i64::from(c.port).into());
                     card.insert("frame".into(), i64::from(c.frame).into());

@@ -168,6 +168,10 @@ timed_table! {
         pub id: Option<String>,
         pub kind: Option<CardKind>,
         pub controller_model: Option<ControllerModel>,
+        /// VGA card model.
+        pub model: Option<VgaModel>,
+        /// Video memory of a Bochs VBE card in MiB.
+        pub memory_mib: Option<u32>,
         /// Serial pointing device attached to a UART card.
         pub mouse: Option<SerialMouseModel>,
         pub port: Option<u16>,

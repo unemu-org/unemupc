@@ -84,6 +84,7 @@ names!(FpuModel { None => "none", I80287 => "80287", I80387 => "80387", Integrat
 names!(DisplaySwitch { Auto => "auto", Mono => "mono", Colour => "colour" });
 names!(CardKind { Mda => "mda", VgaText => "vga-text", Vga => "vga", Uart16550 => "uart-16550", Fdc765 => "fdc-765", Ide => "ide", Sb16 => "sb16", LotechEms => "lotech-ems" });
 names!(ControllerModel { Ata => "ata", AtAdapter => "at-adapter" });
+names!(VgaModel { Ibm => "ibm", BochsVbe => "bochs-vbe" });
 names!(Channel { Master => "master", Slave => "slave" });
 names!(WriteMode { Volatile => "volatile", ReadOnly => "readonly", Journal => "journal" });
 names!(DriveType { Hd144 => "1.44M", Hd12 => "1.2M", Dd720 => "720K", Dd360 => "360K" });
@@ -155,6 +156,8 @@ table!(Card {
     id,
     kind,
     controller_model,
+    model,
+    memory_mib,
     mouse,
     port,
     frame,

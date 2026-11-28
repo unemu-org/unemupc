@@ -136,6 +136,8 @@ pub const MACHINE_KEYS: &[Row] = &[
     ("machine.card.id", BASELINE),
     ("machine.card.kind", BASELINE),
     ("machine.card.controller_model", BASELINE),
+    ("machine.card.model", Release(0, 0, 6)),
+    ("machine.card.memory_mib", Release(0, 0, 6)),
     ("machine.card.mouse", BASELINE),
     ("machine.card.port", BASELINE),
     ("machine.card.frame", BASELINE),
@@ -248,6 +250,7 @@ fn machine_values(machine: &schema::MachineFile) -> AppVersion {
     for card in machine.card.iter().flatten() {
         values.extend(card.kind.map(card_kind));
         values.extend(card.controller_model.map(controller_model));
+        values.extend(card.model.map(vga_model));
         values.extend(card.mouse.map(serial_mouse));
         values.extend(card.irq.map(number_or_none));
         values.extend(card.dma.map(number_or_none));
@@ -307,6 +310,13 @@ pub fn card_kind(value: schema::CardKind) -> AppVersion {
 pub fn controller_model(value: schema::ControllerModel) -> AppVersion {
     match value {
         schema::ControllerModel::Ata | schema::ControllerModel::AtAdapter => BASELINE,
+    }
+}
+
+/// The release that first reads a VGA card model.
+pub fn vga_model(value: schema::VgaModel) -> AppVersion {
+    match value {
+        schema::VgaModel::Ibm | schema::VgaModel::BochsVbe => Release(0, 0, 6),
     }
 }
 
@@ -673,6 +683,7 @@ mod tests {
             .map(card_kind),
         );
         all.extend([ControllerModel::Ata, ControllerModel::AtAdapter].map(controller_model));
+        all.extend([VgaModel::Ibm, VgaModel::BochsVbe].map(vga_model));
         all.extend([SerialMouseModel::Microsoft, SerialMouseModel::None].map(serial_mouse));
         all.extend(
             [

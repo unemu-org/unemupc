@@ -452,6 +452,16 @@ impl X86JitCpu {
         self.map_region(base, size as usize, Prot::RWX, RegionKind::Ram)
     }
 
+    /// Map card memory `[base, base + size)` as read/write, never executed
+    /// `Ram`, such as a linear framebuffer.
+    ///
+    /// Loads and stores take the same RAM path as system memory, compiled
+    /// blocks included, while code never runs from the region. A host reads
+    /// it back with [`Self::read_mem`]; nothing tracks guest stores to it.
+    pub fn map_data_ram(&mut self, base: u64, size: u64) -> Result<(), CpuError> {
+        self.map_region(base, size as usize, Prot::RW, RegionKind::Ram)
+    }
+
     /// Map a masked **ROM** window at `base` sized to `blob` and load `blob` into
     /// it (a BIOS or option ROM).
     ///
@@ -1198,7 +1208,8 @@ impl DeviceIo for ServingAdapter<'_, '_> {
         // Keep the panic's message, then let the core see the panic: it
         // poisons the VM, whose state the handler may have left half done.
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            self.handler.access(&access, &mut control)
+            self.handler
+                .access_with_ram(&access, &mut control, &mut ContextRam(context))
         }));
         let result = match result {
             Ok(result) => result,
@@ -1230,6 +1241,19 @@ impl DeviceIo for ServingAdapter<'_, '_> {
             crate::AccessResult::Fallback => DeviceResult::Fallback,
             crate::AccessResult::Fault => DeviceResult::DeviceFault(DeviceError::new(0)),
         }
+    }
+}
+
+/// The core's staged RAM access of one device callback, committed with
+/// self-modifying-code tracking when the access is handled.
+struct ContextRam<'c, 'd>(&'c mut DeviceContext<'d>);
+
+impl crate::GuestRam for ContextRam<'_, '_> {
+    fn read(&self, address: u64, bytes: &mut [u8]) -> bool {
+        self.0.read_ram(address, bytes).is_ok()
+    }
+    fn write(&mut self, address: u64, bytes: &[u8]) -> bool {
+        self.0.write_ram(address, bytes).is_ok()
     }
 }
 

@@ -1542,6 +1542,32 @@ for the font/palette frame extension and model limits, and
 [graphics scanout](observation.md#register-level-vga-graphics-scanout) for
 logical geometry, palette ownership and unsupported graphics operations.
 
+`DeviceKind::BochsVbe(BochsVbeCfg { memory_mib })`, lowered from
+`kind = "vga"` with `model = "bochs-vbe"`, is the same register-level VGA
+plus the Bochs VBE DISPI interface (Bochs VBE DISPI interface, `vbe.h`).
+`BochsVbeCfg::port_windows()` adds one word-width window 1CEh–1D0h (index,
+data and data alias) to the VGA windows, and the card owns the same
+A0000h–BFFFFh aperture; validation refuses other wiring, a memory size other
+than 4/8/16 MiB, a board whose bus cannot reach E0000000h (the AT's 24-bit
+decode, or an 80286) and RAM, a ROM or an MMIO window overlapping the
+framebuffer. Assembly maps the
+video memory as read/write, never executed CPU RAM at E0000000h
+(`X86JitCpu::map_data_ram`): framebuffer stores take the CPU's RAM path on
+both engines, nothing tracks them, and observation reads the visible screen
+once per presented frame (`Observation` keeps the card's `BochsVbe` handle).
+The banked A0000h window stays trapped; `Machine::with_ram_window` serves
+each access the card's `window_target` maps (A0000h–AFFFFh while DISPI is
+enabled) straight from video memory at the selected bank, on the loop's exit
+path through the CPU's DMA-style byte access and in process through the
+`GuestRam` a served access receives (`DeviceAccessHandler::access_with_ram`),
+so there is one backing and nothing to synchronize. A memory-map hook
+declared for the DISPI ports only (`with_memory_map_for_ports`) performs the
+clear of the whole video memory that enabling without NOCLEARMEM requests;
+every other port write stays served in process. Firmware requiring
+register-level VGA accepts this card. Planar 4-bit VBE modes are not
+supported (BPP 4 is refused); the bundled VGA BIOS build must not offer them.
+Register coverage is in the `devices::bochs_vbe` module documentation.
+
 ### BIOS monochrome display routing
 
 The `bios` preset, shared by BIOS and FreeDOS runners, includes independent VGA

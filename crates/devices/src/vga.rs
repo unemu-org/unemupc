@@ -80,9 +80,23 @@
 //! stored display state and scanout. ASSUMED reset enables all gates so direct
 //! register users need no firmware; adapter setup and subsystem disable remain
 //! independent. ROM decode is board-owned and stays readable while disabled.
+//!
+//! A card built with [`Vga::with_bochs_vbe`] adds the Bochs VBE DISPI
+//! interface (`vbe.h`) of [`crate::bochs_vbe`]. While DISPI is disabled
+//! every register, memory access and scanout is the IBM VGA above, except
+//! that ENABLE bit 5 still selects the eight-bit DAC. While it is enabled
+//! the machine serves the A0000h–AFFFFh window straight from the selected
+//! 64 KiB bank of video memory ([`BochsVbe::window_target`]); an aperture
+//! access that still reaches this device reads FFh and is dropped. The VGA
+//! scanouts report a blank screen and observation reads the linear
+//! framebuffer instead. Input Status 1 keeps
+//! its raster, so retrace polling works in every mode. Its snapshot appends
+//! the DISPI registers to the VGA blob.
 
 use device::clock::{ClockDomain, PIT, VGA_25, VGA_28};
 use device::{AccessDir, Device, DeviceError, NextEvent, TraceEvent, VClock};
+
+use crate::bochs_vbe::{self, BochsVbe, BochsVbeConfigError};
 
 const NAME: &str = "vga";
 const VERSION: u8 = 4;
@@ -210,6 +224,7 @@ pub struct Vga {
     display_row: u8,
     now: VClock,
     trace: device::TraceBuffer,
+    vbe: Option<BochsVbe>,
 }
 
 impl Vga {
@@ -243,6 +258,55 @@ impl Vga {
             display_row: 0,
             now: VClock::ZERO,
             trace: device::TraceBuffer::default(),
+            vbe: None,
+        }
+    }
+
+    /// The same VGA with the Bochs VBE DISPI interface over `memory_mib` MiB
+    /// of video memory, which the board maps as RAM at
+    /// [`bochs_vbe::LFB_BASE`]. Bochs VBE DISPI interface (`vbe.h`).
+    ///
+    /// # Errors
+    /// [`BochsVbeConfigError`] for an unsupported memory size.
+    pub fn with_bochs_vbe(memory_mib: u32) -> Result<Self, BochsVbeConfigError> {
+        let mut vga = Self::new();
+        vga.vbe = Some(BochsVbe::new(memory_mib)?);
+        Ok(vga)
+    }
+
+    /// The DISPI interface of a Bochs VBE card; `None` on a plain VGA.
+    #[must_use]
+    pub fn bochs_vbe(&self) -> Option<&BochsVbe> {
+        self.vbe.as_ref()
+    }
+
+    fn dispi_enabled(&self) -> bool {
+        self.vbe.as_ref().is_some_and(BochsVbe::enabled)
+    }
+
+    fn dac_8bit(&self) -> bool {
+        self.vbe.as_ref().is_some_and(BochsVbe::dac_8bit)
+    }
+
+    /// One DAC component widened to eight bits for display: six-bit
+    /// components replicate their top bits (IBM VGA/XGA Technical Reference,
+    /// Fig. 2-94); the eight-bit DAC of the DISPI interface shows its byte.
+    fn displayed_component(&self, value: u8) -> u8 {
+        if self.dac_8bit() {
+            value
+        } else {
+            let value = value & 0x3F;
+            (value << 2) | (value >> 4)
+        }
+    }
+
+    /// Bochs VBE DISPI interface (`vbe.h`): ports 1CEh–1D0h hold two
+    /// 16-bit registers; see the coverage matrix in [`crate::bochs_vbe`].
+    fn dispi_access(port: u16, size: u8) -> Option<bool> {
+        match (port, size) {
+            (bochs_vbe::INDEX_PORT, 1 | 2 | 4) => Some(true),
+            (bochs_vbe::DATA_PORT | bochs_vbe::DATA_ALIAS_PORT, 1 | 2) => Some(false),
+            _ => None,
         }
     }
 
@@ -548,8 +612,13 @@ impl Vga {
             0x3C7 => self.dac_state,
             0x3C8 => self.dac_address,
             0x3C9 => {
-                let value =
+                let stored =
                     self.palette[usize::from(self.dac_address)][usize::from(self.dac_component)];
+                let value = if self.dac_8bit() {
+                    stored
+                } else {
+                    stored & 0x3F
+                };
                 Self::advance_dac(&mut self.dac_address, &mut self.dac_component);
                 value
             }
@@ -640,8 +709,9 @@ impl Vga {
                 self.dac_state = 0;
             }
             0x3C9 => {
+                let mask = if self.dac_8bit() { 0xFF } else { 0x3F };
                 self.palette[usize::from(self.dac_address)][usize::from(self.dac_component)] =
-                    value & 0x3F;
+                    value & mask;
                 Self::advance_dac(&mut self.dac_address, &mut self.dac_component);
             }
             0x3CE => self.gc_index = value & 0x0F,
@@ -689,6 +759,9 @@ impl Vga {
         if !self.cpu_enabled() {
             return 0xFF;
         }
+        if self.dispi_enabled() {
+            return 0xFF;
+        }
         let Some(address) = self.window_offset(addr) else {
             return 0xFF;
         };
@@ -723,6 +796,9 @@ impl Vga {
     }
     fn write_byte(&mut self, addr: u64, value: u8) {
         if !self.cpu_enabled() {
+            return;
+        }
+        if self.dispi_enabled() {
             return;
         }
         let Some(address) = self.window_offset(addr) else {
@@ -791,7 +867,12 @@ impl Device for Vga {
     fn graphics_scanout(&self) -> Option<device::GraphicsScanout<'_>> {
         let c = &self.crtc;
         let a = &self.attribute;
-        let text = if a[0x10] & 1 == 0 {
+        // DISPI modes leave the VGA serializers idle: report a blank screen
+        // that still carries the palette an eight-bit mode displays.
+        let dispi = self.dispi_enabled();
+        let text = if dispi {
+            None
+        } else if a[0x10] & 1 == 0 {
             // Preserve cell inspection before horizontal timing is configured;
             // the power-on nine-dot setting is not a programmed scrolling mode.
             if c[0] < 5 {
@@ -854,9 +935,11 @@ impl Device for Vga {
             packed,
             colours,
             palette: std::array::from_fn(|index| {
-                self.palette_entry(index as u8).map(|v| (v << 2) | (v >> 4))
+                self.palette_entry(index as u8)
+                    .map(|v| self.displayed_component(v))
             }),
-            enabled: self.sequencer[1] & 0x20 == 0
+            enabled: !dispi
+                && self.sequencer[1] & 0x20 == 0
                 && self.palette_address_source()
                 && packed == wide_pel
                 && (packed || self.graphics[5] & 0x20 == 0),
@@ -870,6 +953,9 @@ impl Device for Vga {
     /// Cursor start and underline use the ASSUMED zero-based convention
     /// documented with SeaVGABIOS evidence in the coverage matrix.
     fn planar_text_scanout(&self) -> Option<device::PlanarTextState<'_>> {
+        if self.dispi_enabled() {
+            return None;
+        }
         let c = &self.crtc;
         let a = &self.attribute;
         let s = &self.sequencer;
@@ -884,7 +970,7 @@ impl Device for Vga {
         let rows = (lines + 1) / u16::from(height) / if c[9] & 0x80 != 0 { 2 } else { 1 };
         let palette = std::array::from_fn(|index| {
             self.palette_entry(self.attribute_dac_index(index))
-                .map(|value| (value << 2) | (value >> 4))
+                .map(|value| self.displayed_component(value))
         });
         Some(device::PlanarTextState {
             scroll: self.scroll(true),
@@ -917,11 +1003,31 @@ impl Device for Vga {
         NAME
     }
     fn port_read(&mut self, port: u16, size: u8) -> Result<u32, DeviceError> {
-        Self::check_port(port, size)?;
-        let mut value = 0;
-        for i in 0..size {
-            value |= u32::from(self.read_port_byte(port + u16::from(i))) << (8 * i);
-        }
+        let value = if let Some((index, vbe)) = self
+            .vbe
+            .as_ref()
+            .and_then(|vbe| Some((Self::dispi_access(port, size)?, vbe)))
+        {
+            let mask = if size == 1 { 0xFF } else { 0xFFFF };
+            if index {
+                let mut value = u32::from(vbe.read_index()) & mask;
+                if size == 4 {
+                    value |= u32::from(vbe.read_data()) << 16;
+                }
+                value
+            } else if (port, size) == (bochs_vbe::DATA_ALIAS_PORT, 1) {
+                u32::from(vbe.read_data() >> 8)
+            } else {
+                u32::from(vbe.read_data()) & mask
+            }
+        } else {
+            Self::check_port(port, size)?;
+            let mut value = 0;
+            for i in 0..size {
+                value |= u32::from(self.read_port_byte(port + u16::from(i))) << (8 * i);
+            }
+            value
+        };
         self.trace.push(TraceEvent::Port {
             at: self.now,
             port,
@@ -932,9 +1038,33 @@ impl Device for Vga {
         Ok(value)
     }
     fn port_write(&mut self, port: u16, size: u8, value: u32) -> Result<(), DeviceError> {
-        Self::check_port(port, size)?;
-        for i in 0..size {
-            self.write_port_byte(port + u16::from(i), (value >> (8 * i)) as u8);
+        if let Some((index, vbe)) = self
+            .vbe
+            .as_ref()
+            .and_then(|vbe| Some((Self::dispi_access(port, size)?, vbe)))
+        {
+            let low = if size == 1 {
+                value & 0xFF
+            } else {
+                value & 0xFFFF
+            } as u16;
+            if index {
+                vbe.write_index(low);
+                if size == 4 {
+                    vbe.write_data((value >> 16) as u16);
+                }
+            } else if size == 2 {
+                vbe.write_data(low);
+            } else if port == bochs_vbe::DATA_PORT {
+                vbe.write_data_low(low as u8);
+            } else {
+                vbe.write_data_high(low as u8);
+            }
+        } else {
+            Self::check_port(port, size)?;
+            for i in 0..size {
+                self.write_port_byte(port + u16::from(i), (value >> (8 * i)) as u8);
+            }
         }
         self.trace.push(TraceEvent::Port {
             at: self.now,
@@ -1025,8 +1155,13 @@ impl Device for Vga {
     }
     fn reset(&mut self) {
         let policy = self.trace.policy();
+        let vbe = self.vbe.take();
         *self = Self::new();
         self.trace.set_policy(policy);
+        if let Some(vbe) = vbe {
+            vbe.reset();
+            self.vbe = Some(vbe);
+        }
     }
     fn save(&self) -> Vec<u8> {
         let mut blob = Vec::with_capacity(SNAPSHOT_LEN);
@@ -1066,6 +1201,9 @@ impl Device for Vga {
         for plane in &self.planes {
             blob.extend_from_slice(plane);
         }
+        if let Some(vbe) = &self.vbe {
+            blob.extend_from_slice(&vbe.save());
+        }
         blob
     }
     fn restore(&mut self, blob: &[u8]) -> Result<(), DeviceError> {
@@ -1073,9 +1211,21 @@ impl Device for Vga {
             device: NAME,
             reason,
         };
-        if blob.len() != SNAPSHOT_LEN {
+        let dispi_len = if self.vbe.is_some() {
+            bochs_vbe::SNAPSHOT_LEN
+        } else {
+            0
+        };
+        if blob.len() != SNAPSHOT_LEN + dispi_len {
             return Err(invalid("snapshot length mismatch"));
         }
+        let dispi = match &self.vbe {
+            Some(vbe) => Some(
+                vbe.decode(&blob[SNAPSHOT_LEN..])
+                    .ok_or_else(|| invalid("invalid DISPI registers"))?,
+            ),
+            None => None,
+        };
         if !matches!(blob[0], 3 | VERSION) {
             return Err(invalid("unsupported snapshot version"));
         }
@@ -1156,7 +1306,8 @@ impl Device for Vga {
                 .iter()
                 .zip(AC_MASKS)
                 .any(|(v, m)| v & !m != 0)
-            || candidate.palette.iter().flatten().any(|v| *v > 63)
+            // The eight-bit DAC keeps whole bytes, also after it is switched off.
+            || (dispi.is_none() && candidate.palette.iter().flatten().any(|v| *v > 63))
         {
             return Err(invalid("invalid reserved register bits or DAC component"));
         }
@@ -1165,6 +1316,10 @@ impl Device for Vga {
             cursor += PLANE_LEN;
         }
         std::mem::swap(&mut candidate.trace, &mut self.trace);
+        candidate.vbe = self.vbe.take();
+        if let (Some(vbe), Some(regs)) = (&candidate.vbe, dispi) {
+            vbe.restore(regs);
+        }
         *self = candidate;
         Ok(())
     }

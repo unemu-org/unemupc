@@ -15,6 +15,27 @@ pub enum ConfigError {
     /// Jumpers, SRAM population, decode or wiring disagree with the EMS board.
     #[error("invalid Lo-tech EMS resources for {device:?}: require port 260h/264h/268h/26Ch (all aliases), frame C000h/D000h/E000h (64 KiB MMIO), 512/1024/1536/2048 KiB and no IRQ/DMA")]
     InvalidLotechEmsResources { device: DeviceId },
+    /// Bochs VBE resources must match the card's fixed decode.
+    #[error("invalid Bochs VBE resources for {device:?}: require 4, 8 or 16 MiB of video memory, the VGA and DISPI 1CEh-1D0h ports, the A0000h-BFFFFh window and no IRQ/DMA")]
+    InvalidBochsVbeResources { device: DeviceId },
+    /// The linear framebuffer sits at E0000000h, beyond a 24-bit bus.
+    #[error("the Bochs VBE linear framebuffer of {device:?} at E0000000h needs a 32-bit address bus; board \"{board}\" with this CPU has {bits} bits")]
+    BochsVbeAddressSpace {
+        /// The card.
+        device: DeviceId,
+        /// Selected motherboard.
+        board: &'static str,
+        /// Address width the board decodes.
+        bits: u8,
+    },
+    /// The linear framebuffer must not overlap RAM, a ROM or an MMIO window.
+    #[error("the Bochs VBE linear framebuffer of {device:?} overlaps another mapping (RAM, ROM or MMIO) at {addr:#x}")]
+    BochsVbeOverlap {
+        /// The card.
+        device: DeviceId,
+        /// First overlapping RAM address.
+        addr: u64,
+    },
     /// SB16 resources must match its byte/word-DMA ISA wiring and DSP/mixer decode.
     #[error("invalid SB16 resources for {device:?}: bases 220h/240h/260h/280h, IRQ 2/5/7/10, DMA8 0/1/3, DMA16 5/6/7 and DSP/mixer byte ports required")]
     InvalidSb16Resources {

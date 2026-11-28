@@ -431,10 +431,12 @@ impl crate::MachineConfig {
             .devices
             .iter()
             .any(|d| matches!(d.kind, DeviceKind::Mda(_)));
-        let colour = self
-            .devices
-            .iter()
-            .any(|d| matches!(d.kind, DeviceKind::Vga(_) | DeviceKind::VgaRegisters(_)));
+        let colour = self.devices.iter().any(|d| {
+            matches!(
+                d.kind,
+                DeviceKind::Vga(_) | DeviceKind::VgaRegisters(_) | DeviceKind::BochsVbe(_)
+            )
+        });
         let select_mono = match self.display_switch {
             DisplaySwitch::Auto => mono,
             DisplaySwitch::Mono if mono => true,

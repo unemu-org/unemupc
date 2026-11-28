@@ -426,6 +426,65 @@ fn a_memory_map_hook_still_sees_every_port_write() {
 }
 
 #[test]
+fn a_hook_observing_some_ports_keeps_every_other_port_write_served() {
+    let hooked = |ports: std::ops::RangeInclusive<u16>| {
+        let applied = Rc::new(Cell::new(0u64));
+        let count = applied.clone();
+        let rig = rig(true);
+        let rig = Rig {
+            machine: rig.machine.with_memory_map_for_ports(
+                std::iter::once(ports),
+                move |_, event| {
+                    if event == MemoryMapSync::Apply {
+                        count.set(count.get() + 1);
+                    }
+                    Ok(())
+                },
+            ),
+            ..rig
+        };
+        let (outcome, _, served) = run(rig, 1_000_000);
+        (outcome, served, applied.get())
+    };
+    let (plain, _, plain_served) = run(rig(true), 1_000_000);
+    assert!(plain_served.ports > 64 * 2, "{plain_served:?}");
+    // A hook for ports the guest never writes (the DISPI ports of a VBE
+    // card) leaves every port write served.
+    let (outcome, served, applied) = hooked(0x1CE..=0x1D0);
+    assert_eq!(outcome, plain);
+    assert_eq!(served, plain_served);
+    assert!(applied >= 1, "run starts still apply the hook");
+    // A hook for port 80h sees each of its writes, which return to the loop.
+    let (outcome, served, applied) = hooked(0x80..=0x80);
+    assert_eq!(outcome, plain);
+    assert!(served.ports < plain_served.ports, "{served:?}");
+    assert!(applied > 64 * 2, "{applied}");
+}
+
+#[test]
+fn a_ram_window_serves_its_bytes_from_ram_both_ways() {
+    let windowed = |in_process: bool| {
+        let rig = rig(in_process);
+        let rig = Rig {
+            machine: rig.machine.with_ram_window(WINDOW..=WINDOW + 0xFF, |addr| {
+                Some(0xE000 + (addr - WINDOW))
+            }),
+            ..rig
+        };
+        run(rig, 1_000_000)
+    };
+    let (exits, _, exit_served) = windowed(false);
+    let (served, _, in_process) = windowed(true);
+    assert_eq!(served, exits);
+    assert_eq!(exit_served.mmio, 0);
+    assert!(in_process.mmio > 64 * 32, "{in_process:?}");
+    // The last fill stored BX = 1 into each word of the window's RAM.
+    assert_eq!(&exits.ram[0xE000..0xE040], [1, 0].repeat(32).as_slice());
+    // The window's device saw none of the fill, only its control area.
+    assert!(exits.devices[0][..0x100].iter().all(|&b| b == 0));
+}
+
+#[test]
 fn turning_serving_off_between_runs_keeps_the_machine_the_same() {
     let mut toggled = rig(true);
     let mut reference = rig(false);

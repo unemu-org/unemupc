@@ -1335,6 +1335,8 @@ Common fields:
 | `dma8` | u8 | SB16-only byte-DMA channel; default 1. |
 | `dma16` | u8 | SB16-only word-DMA channel; default 5; 5/6/7 allowed. |
 | `controller_model` | `"ata"` or `"at-adapter"` | Only for `ide`; defaults to `"ata"`. Merges by card id like `port`. |
+| `model` | `"ibm"` or `"bochs-vbe"` | Only for `vga`; defaults to `"ibm"`, the register-level IBM VGA. `"bochs-vbe"` adds the Bochs VBE DISPI interface; see [Bochs VBE card](#bochs-vbe-card). Merges by card id. |
+| `memory_mib` | u32 | Only for a `vga` card of model `"bochs-vbe"`: video memory, 4, 8 or 16 MiB, default 16. Merges by card id. |
 | `irq` | `0..15` or `"none"` | An IRQ on a kind with no interrupt source is an error. |
 | `dma` | `0..3` or `"none"` | Only for kinds that master DMA. |
 | `drives` | array of tables | Only for disk controllers. |
@@ -1372,6 +1374,47 @@ default. Both kinds are accepted in TOML and YAML; attaching both fails with
 `vga and vga-text cards are mutually exclusive (shared ports and MMIO)`.
 The full VGA aperture also conflicts with MDA. See
 [machine-config.md §Display cards](machine-config.md#display-cards).
+
+#### Bochs VBE card
+
+```toml
+[[card]]
+kind = "vga"
+model = "bochs-vbe"
+memory_mib = 16          # 4, 8 or 16; default 16
+```
+
+YAML: `card: [{kind: vga, model: bochs-vbe, memory_mib: 16}]`. The card is
+the register-level VGA plus the Bochs VBE DISPI interface (Bochs VBE DISPI
+interface, `vbe.h`): index port `0x1CE`, data port `0x1CF` and its alias
+`0x1D0`, decoded as one word-width window; the VGA ports and the A0000h
+aperture are unchanged. Its video memory is mapped as read/write CPU RAM at
+the linear-framebuffer address `0xE0000000`, so the board needs a 32-bit
+address bus: the generic 386 and 486 boards take it, `ibm-5170` (24-bit) is
+refused with the card's `model` position, and RAM, a ROM or an MMIO window
+overlapping the framebuffer is refused at the card. `memory_mib` outside 4/8/16 is refused at its position; `model`
+on another kind, `memory_mib` without `model = "bochs-vbe"` and any `irq` are
+refused at theirs. A plain `vga` card, or `model = "ibm"`, lowers exactly as
+before. Stored configurations carry both keys, rated for core release 0.0.6.
+
+With DISPI disabled the card is the IBM VGA. Enabled, scanout reads the
+visible screen from the framebuffer once per presented frame: 8 bpp through
+the DAC as an indexed frame, 15/16/24/32 bpp as a direct-colour frame
+([observation.md §Register-level VGA graphics scanout](observation.md#register-level-vga-graphics-scanout)).
+The A0000h–AFFFFh window stays a trapped window, and the machine serves each
+access to it straight from video memory at the selected 64 KiB bank, both
+when the CPU returns for it and in process: one backing, so the window and
+the framebuffer always show the same bytes, whatever the order of stores or
+where a run ends. Every window access is a device access, the cost model of
+a banked card (MEASURED, debug build: a store loop over the window retires
+7.0 M/s on the interpreter and 8.0 M/s on the JIT, against 26.8 and 632.9 M/s
+over the framebuffer). Register behaviour, the eight-bit DAC and the model
+choices are tabled in `crates/devices/src/bochs_vbe.rs`. Planar 4-bit VBE
+modes are not supported: the card refuses BPP 4, so the bundled VGA BIOS
+build must not offer them (SeaVGABIOS lists the MM_PLANAR modes 102h, 104h
+and 106h). Code cannot run from video memory: the framebuffer is mapped
+without execute and the window is trapped. No shipped machine file selects
+the card yet.
 
 When an IDE card uses the primary channel, lowering gives the FDC card
 `0x3F0–0x3F5` and `0x3F7`, using `FdcCfg::port_windows(true)`. The IDE control
