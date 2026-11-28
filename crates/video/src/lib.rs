@@ -21,6 +21,9 @@
 //! - [`render_text_mode`] — turns MDA or colour text video memory into a
 //!   [`TextGrid`] (§9.2, VGA text mode 3, 80×25).
 //! - [`CaptureFrameSink`] — a trivial sink that keeps the last frame, for tests.
+//! - [`DirectPixels`] — a direct-colour frame (VBE memory model 06h) in one
+//!   of the [`PixelFormat`]s, converted to `0x00RRGGBB` by
+//!   [`DirectPixels::to_xrgb8888`].
 //!
 //! Ordinary text frames carry code-page bytes, decoded styles and optional
 //! guest fonts for the presenter. Scrolled VGA text uses indexed pixels instead,
@@ -30,13 +33,16 @@
 
 /// A finished frame handed across the [`FrameSink`] seam (§9.1).
 ///
-/// Owned text or indexed pixels, independent of host presentation.
+/// Owned text, indexed pixels or direct-colour pixels, independent of host
+/// presentation.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Frame {
     /// A character-cell frame produced by a text mode (§9.2).
     Text(TextGrid),
     /// Logical graphics pixels and their captured RGB palette.
     Pixels(IndexedPixels),
+    /// Logical graphics pixels that carry their own colour (15/16/24/32 bpp).
+    Direct(DirectPixels),
 }
 
 /// An owned row-major indexed image. Indices address the captured DAC palette,
@@ -53,6 +59,159 @@ pub struct IndexedPixels {
     pub indices: Vec<u8>,
     /// Captured RGB888 DAC entries, including the PEL mask.
     pub palette: Box<[[u8; 3]]>,
+}
+
+/// The pixel layouts of a direct-colour frame buffer, as stored in memory.
+///
+/// VESA BIOS Extension (VBE) Core Functions Standard 3.0, Mode Information
+/// Block: memory model 06h (Direct Color), with the field sizes and positions
+/// given by RedMaskSize/RedFieldPosition, GreenMaskSize/GreenFieldPosition and
+/// BlueMaskSize/BlueFieldPosition. Multi-byte pixels are little-endian, as the
+/// PC stores them, so blue is always the lowest-addressed field.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum PixelFormat {
+    /// 15 bits per pixel in a 16-bit word: bit 15 unused, red 14–10,
+    /// green 9–5, blue 4–0 (VBE 1:5:5:5).
+    Rgb555,
+    /// 16 bits per pixel: red 15–11, green 10–5, blue 4–0 (VBE 5:6:5).
+    Rgb565,
+    /// 24 bits per pixel, packed: blue, green and red bytes in address order.
+    Rgb888,
+    /// 32 bits per pixel: blue, green, red, then an unused byte.
+    Xrgb8888,
+}
+
+impl PixelFormat {
+    /// Bytes one pixel occupies in the frame buffer.
+    #[must_use]
+    pub const fn bytes_per_pixel(self) -> usize {
+        match self {
+            Self::Rgb555 | Self::Rgb565 => 2,
+            Self::Rgb888 => 3,
+            Self::Xrgb8888 => 4,
+        }
+    }
+
+    /// Decode one pixel of exactly [`Self::bytes_per_pixel`] bytes to `0x00RRGGBB`.
+    ///
+    /// Five- and six-bit fields widen by bit replication, `(v << 3) | (v >> 2)`
+    /// and `(v << 2) | (v >> 4)`: zero stays 0 and the field maximum becomes
+    /// 255, so pure white stays white. The VGA DAC path widens six-bit
+    /// components the same way.
+    fn decode(self, pixel: &[u8]) -> u32 {
+        let five = |v: u16| u32::from((v << 3) | (v >> 2));
+        let six = |v: u16| u32::from((v << 2) | (v >> 4));
+        let (r, g, b) = match self {
+            Self::Rgb555 => {
+                let v = u16::from_le_bytes([pixel[0], pixel[1]]);
+                (five((v >> 10) & 31), five((v >> 5) & 31), five(v & 31))
+            }
+            Self::Rgb565 => {
+                let v = u16::from_le_bytes([pixel[0], pixel[1]]);
+                (five(v >> 11), six((v >> 5) & 63), five(v & 31))
+            }
+            Self::Rgb888 | Self::Xrgb8888 => (
+                u32::from(pixel[2]),
+                u32::from(pixel[1]),
+                u32::from(pixel[0]),
+            ),
+        };
+        (r << 16) | (g << 8) | b
+    }
+}
+
+/// An owned direct-colour image: a copy of the guest's scan lines in their
+/// own pixel format.
+///
+/// The frame keeps the raw bytes rather than converted colours so that the
+/// producing card only copies its visible frame buffer once per presented
+/// frame; conversion to `0x00RRGGBB` happens once, in
+/// [`DirectPixels::to_xrgb8888`], for every presenter. The stride is kept
+/// because a guest may program a virtual width wider than the display
+/// (VBE 3.0, BytesPerScanLine and LinBytesPerScanLine), and the bytes past
+/// each visible row are never shown. The buffer may end right after the last
+/// visible pixel, so a card can hand over its scanout from the display start
+/// without copying or padding the invisible tail of the last row.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DirectPixels {
+    /// Logical width, without dot-clock repetition.
+    pub width: u16,
+    /// Logical height, without repeated scan lines.
+    pub height: u16,
+    /// Horizontal dot and vertical scan-line repetitions for presentation.
+    pub repeat: (u8, u8),
+    /// Layout of each pixel in [`Self::bytes`].
+    pub format: PixelFormat,
+    /// Bytes from the start of one scan line to the next; at least
+    /// width × bytes per pixel.
+    pub stride: u32,
+    /// The scan lines, the first at offset 0: at least
+    /// (height − 1) × stride + width × bytes per pixel bytes. Bytes past the
+    /// last visible pixel are ignored.
+    pub bytes: Vec<u8>,
+}
+
+/// Why a [`DirectPixels`] buffer does not describe its frame.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum DirectLayoutError {
+    /// The stride is shorter than one row of visible pixels.
+    StrideTooShort,
+    /// The buffer ends before the last visible pixel.
+    BufferTooShort,
+}
+
+impl std::fmt::Display for DirectLayoutError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::StrideTooShort => "scan-line stride is shorter than one row of pixels",
+            Self::BufferTooShort => "buffer ends before the last visible pixel",
+        })
+    }
+}
+
+impl std::error::Error for DirectLayoutError {}
+
+impl DirectPixels {
+    /// Check that the stride covers a visible row and the buffer reaches the
+    /// last visible pixel, without converting anything. A frame with no
+    /// width or no height is empty and accepts any buffer.
+    pub fn check_layout(&self) -> Result<(), DirectLayoutError> {
+        if self.width == 0 || self.height == 0 {
+            return Ok(());
+        }
+        let row = usize::from(self.width) * self.format.bytes_per_pixel();
+        let stride = usize::try_from(self.stride).map_err(|_| DirectLayoutError::BufferTooShort)?;
+        if stride < row {
+            return Err(DirectLayoutError::StrideTooShort);
+        }
+        let needed = stride
+            .checked_mul(usize::from(self.height) - 1)
+            .and_then(|start| start.checked_add(row));
+        if needed.is_none_or(|needed| self.bytes.len() < needed) {
+            return Err(DirectLayoutError::BufferTooShort);
+        }
+        Ok(())
+    }
+
+    /// Convert the visible pixels to row-major `0x00RRGGBB`, exactly
+    /// width × height entries, skipping the bytes past each row's end.
+    /// It applies no pixel cap; presenters go through the rasteriser, which
+    /// rejects output above 16,777,216 pixels before converting.
+    pub fn to_xrgb8888(&self) -> Result<Vec<u32>, DirectLayoutError> {
+        self.check_layout()?;
+        let size = self.format.bytes_per_pixel();
+        let row = usize::from(self.width) * size;
+        let mut out = Vec::with_capacity(usize::from(self.width) * usize::from(self.height));
+        for y in 0..usize::from(self.height) {
+            let start = y * self.stride as usize;
+            out.extend(
+                self.bytes[start..start + row]
+                    .chunks_exact(size)
+                    .map(|p| self.format.decode(p)),
+            );
+        }
+        Ok(out)
+    }
 }
 
 struct VgaScanLine {
@@ -622,7 +781,7 @@ impl CaptureFrameSink {
     pub fn last_text(&self) -> Option<&TextGrid> {
         match self.last.as_ref()? {
             Frame::Text(grid) => Some(grid),
-            Frame::Pixels(_) => None,
+            Frame::Pixels(_) | Frame::Direct(_) => None,
         }
     }
 }
@@ -979,6 +1138,148 @@ mod tests {
             },
         });
         assert_eq!(grid.rows_as_strings(), vec!["Hi".to_string()]);
+    }
+
+    fn direct(
+        format: PixelFormat,
+        width: u16,
+        height: u16,
+        stride: u32,
+        bytes: Vec<u8>,
+    ) -> DirectPixels {
+        DirectPixels {
+            width,
+            height,
+            repeat: (1, 1),
+            format,
+            stride,
+            bytes,
+        }
+    }
+
+    /// One row of black, white, pure red, green, blue and a mid value whose
+    /// fields show the bit-replication rule, per format.
+    #[test]
+    fn direct_formats_decode_exact_rgb_values() {
+        let words =
+            |values: &[u16]| -> Vec<u8> { values.iter().flat_map(|v| v.to_le_bytes()).collect() };
+        let expected_555 = [
+            0x000000, 0xFFFFFF, 0xFF0000, 0x00FF00, 0x0000FF, 0x84087B, 0x000000,
+        ];
+        // Mid: red 10000b -> 84h, green 00001b -> 08h, blue 01111b -> 7Bh.
+        // The last pixel sets only the unused bit 15.
+        let bytes = words(&[0x0000, 0x7FFF, 0x7C00, 0x03E0, 0x001F, 0x402F, 0x8000]);
+        assert_eq!(
+            direct(PixelFormat::Rgb555, 7, 1, 14, bytes).to_xrgb8888(),
+            Ok(expected_555.to_vec())
+        );
+        // Mid: red 10000b -> 84h, green 100000b -> 82h, blue 00001b -> 08h.
+        let bytes = words(&[0x0000, 0xFFFF, 0xF800, 0x07E0, 0x001F, 0x8401]);
+        assert_eq!(
+            direct(PixelFormat::Rgb565, 6, 1, 12, bytes).to_xrgb8888(),
+            Ok(vec![
+                0x000000, 0xFFFFFF, 0xFF0000, 0x00FF00, 0x0000FF, 0x848208
+            ])
+        );
+        let colours = [0x000000, 0xFFFFFF, 0xFF0000, 0x00FF00, 0x0000FF, 0x123456];
+        let packed: Vec<u8> = colours
+            .iter()
+            .flat_map(|c: &u32| c.to_le_bytes()[..3].to_vec())
+            .collect();
+        assert_eq!(packed[15..], [0x56, 0x34, 0x12]);
+        assert_eq!(
+            direct(PixelFormat::Rgb888, 6, 1, 18, packed).to_xrgb8888(),
+            Ok(colours.to_vec())
+        );
+        // The unused top byte never leaks into the colour.
+        let padded: Vec<u8> = colours
+            .iter()
+            .flat_map(|c: &u32| (c | 0xAA00_0000).to_le_bytes())
+            .collect();
+        assert_eq!(
+            direct(PixelFormat::Xrgb8888, 6, 1, 24, padded).to_xrgb8888(),
+            Ok(colours.to_vec())
+        );
+    }
+
+    #[test]
+    fn direct_stride_skips_bytes_past_each_visible_row() {
+        // Two Rgb565 pixels per row, two padding bytes that would decode to white.
+        let bytes = vec![
+            0x00, 0xF8, 0x1F, 0x00, 0xFF, 0xFF, // red, blue, padding
+            0xE0, 0x07, 0x00, 0x00, 0xFF, 0xFF, // green, black, padding
+        ];
+        assert_eq!(
+            direct(PixelFormat::Rgb565, 2, 2, 6, bytes).to_xrgb8888(),
+            Ok(vec![0xFF0000, 0x0000FF, 0x00FF00, 0x000000])
+        );
+    }
+
+    #[test]
+    fn direct_packed_24_bit_rows_of_odd_width_stay_aligned() {
+        let row = |base: u8| -> Vec<u8> { (0..9).map(|i| base + i).collect() };
+        let expected = vec![0x020100, 0x050403, 0x080706, 0x121110, 0x151413, 0x181716];
+        let unpadded = [row(0x00), row(0x10)].concat();
+        assert_eq!(
+            direct(PixelFormat::Rgb888, 3, 2, 9, unpadded).to_xrgb8888(),
+            Ok(expected.clone())
+        );
+        let padded = [row(0x00), vec![0xEE; 3], row(0x10), vec![0xEE; 3]].concat();
+        assert_eq!(
+            direct(PixelFormat::Rgb888, 3, 2, 12, padded).to_xrgb8888(),
+            Ok(expected)
+        );
+    }
+
+    #[test]
+    fn direct_layout_needs_bytes_up_to_the_last_visible_pixel_only() {
+        assert_eq!(
+            direct(PixelFormat::Rgb565, 3, 1, 5, vec![0; 6]).to_xrgb8888(),
+            Err(DirectLayoutError::StrideTooShort)
+        );
+        // Two rows of two Rgb565 pixels at stride 6: the last row needs no tail.
+        let last_row_without_tail = vec![0x00, 0xF8, 0, 0, 0xEE, 0xEE, 0x1F, 0x00, 0, 0];
+        assert_eq!(
+            direct(PixelFormat::Rgb565, 2, 2, 6, last_row_without_tail.clone()).to_xrgb8888(),
+            Ok(vec![0xFF0000, 0, 0x0000FF, 0])
+        );
+        let one_byte_short = last_row_without_tail[..9].to_vec();
+        assert_eq!(
+            direct(PixelFormat::Rgb565, 2, 2, 6, one_byte_short).check_layout(),
+            Err(DirectLayoutError::BufferTooShort)
+        );
+        let mut longer = last_row_without_tail;
+        longer.extend([0xFF; 7]);
+        assert_eq!(
+            direct(PixelFormat::Rgb565, 2, 2, 6, longer).to_xrgb8888(),
+            Ok(vec![0xFF0000, 0, 0x0000FF, 0])
+        );
+        assert_eq!(
+            direct(PixelFormat::Rgb888, 4, 1, 12, Vec::new()).check_layout(),
+            Err(DirectLayoutError::BufferTooShort)
+        );
+        // A last row far past the buffer is rejected, never sliced.
+        assert_eq!(
+            direct(PixelFormat::Xrgb8888, 1, u16::MAX, u32::MAX, vec![0; 4]).check_layout(),
+            Err(DirectLayoutError::BufferTooShort)
+        );
+        assert_eq!(
+            direct(PixelFormat::Xrgb8888, 0, 3, 0, Vec::new()).to_xrgb8888(),
+            Ok(Vec::new())
+        );
+        assert_eq!(
+            direct(PixelFormat::Xrgb8888, 1, 0, 4, Vec::new()).to_xrgb8888(),
+            Ok(Vec::new())
+        );
+        let mut sink = CaptureFrameSink::new();
+        sink.present(&Frame::Direct(direct(
+            PixelFormat::Rgb555,
+            1,
+            1,
+            2,
+            vec![0; 2],
+        )));
+        assert_eq!(sink.last_text(), None);
     }
 
     #[test]

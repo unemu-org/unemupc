@@ -341,6 +341,27 @@ repeat factors before allocating a bounded buffer. Invalid frames return a
 `RasterError`. It converts indices to `00RRGGBB`, applies the repeat factors and
 then its integer scale. No window or host clock is needed to test presentation.
 
+`Frame::Direct` carries `DirectPixels` for direct-colour modes (VESA BIOS
+Extension 3.0, memory model 06h): width, height, repeat factors, a
+`PixelFormat` (`Rgb555`, `Rgb565`, packed 24-bit `Rgb888` or `Xrgb8888`), a
+byte stride and the raw scan lines, little-endian as the frame buffer stores
+them. The buffer needs at least (height − 1) × stride + width × bytes per pixel
+bytes; longer buffers are accepted and the bytes past the last visible pixel
+ignored, so a card can hand over its scanout from the display start without
+copying or padding the invisible tail of the last row. A frame with no width
+or no height is empty. The frame keeps guest-format bytes so a card copies its
+visible scan lines once per presented frame and does no colour work; the
+single conversion to `00RRGGBB` is `DirectPixels::to_xrgb8888`, which every
+presenter shares. A stride wider than a row (a virtual width) is honoured and
+the bytes past each visible row are skipped. Five- and six-bit fields widen by
+bit replication, `(v << 3) | (v >> 2)` and `(v << 2) | (v >> 4)`, so zero and
+the field maximum map to 0 and 255; bit 15 of 15-bit pixels and the top byte of
+32-bit pixels are ignored. The window rejects a stride shorter than a row
+(`InvalidStride`), a buffer that ends before the last visible pixel
+(`InvalidPixelCount`), zero repeat factors and oversized output before
+converting any pixel, then applies the repeat factors and integer scale as for
+indexed frames. No card produces direct-colour frames yet.
+
 READ: IBM VGA/XGA Technical Reference Manual, Graphics Modes (modes D, E, 10,
 12 and 13), Video Memory Organization, sequencer Fig. 2-31, CRTC Figs. 2-50,
 2-60–2-65, GC Fig. 2-75, AC Figs. 2-84–2-89 and DAC Fig. 2-94.

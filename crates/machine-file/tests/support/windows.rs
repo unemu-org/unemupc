@@ -375,7 +375,7 @@ fn decoded_text(frame: &video::Frame) -> String {
 }
 
 /// A digest of the captured graphics frame, to tell a settled screen from one
-/// still being drawn. `None` in text mode.
+/// still being drawn. `None` in text mode and for direct-colour frames.
 fn frame_digest(frame: &video::Frame) -> Option<u64> {
     use std::hash::{Hash, Hasher};
     match frame {
@@ -385,7 +385,7 @@ fn frame_digest(frame: &video::Frame) -> Option<u64> {
             pixels.palette.hash(&mut hasher);
             Some(hasher.finish())
         }
-        video::Frame::Text(_) => None,
+        video::Frame::Text(_) | video::Frame::Direct(_) => None,
     }
 }
 
@@ -1001,7 +1001,7 @@ pub fn run(stage: Stage, previous: Option<Staged>) -> Option<Staged> {
                     Some((since, start))
                 }
                 (_, video::Frame::Pixels(pixels)) => Some((retired, pixels.indices.clone())),
-                (_, video::Frame::Text(_)) => None,
+                (_, video::Frame::Text(_) | video::Frame::Direct(_)) => None,
             };
             if let Some((since, _)) = &held {
                 let since = *since;
@@ -1587,7 +1587,7 @@ fn boot_win95(
                 Some((since, start))
             }
             (_, video::Frame::Pixels(pixels)) => Some((now, pixels.indices.clone())),
-            (_, video::Frame::Text(_)) => None,
+            (_, video::Frame::Text(_) | video::Frame::Direct(_)) => None,
         };
         let video::Frame::Pixels(pixels) = &frame else {
             continue;

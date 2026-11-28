@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Pure text-cell and indexed-pixel rasterisation (design/spec.md §9.4).
+//! Pure text-cell, indexed-pixel and direct-colour rasterisation
+//! (design/spec.md §9.4).
 //!
 //! IBM PC Technical Reference, Monochrome Display and Printer Adapter,
 //! Programming Considerations, defines MDA attribute classes; IBM VGA Technical
@@ -31,12 +32,15 @@ pub struct PixelFrame {
 pub enum RasterError {
     /// Frame exceeds 16,777,216 pixels (64 MiB) or dimensions overflow.
     TooLarge,
-    /// The indexed buffer does not contain exactly width × height pixels.
+    /// The indexed buffer does not contain exactly width × height pixels, or
+    /// a direct-colour buffer ends before its last visible pixel.
     InvalidPixelCount,
     /// A pixel selects an entry absent from its captured palette.
     PaletteIndexOutOfRange,
     /// A presentation repetition factor is zero.
     InvalidRepeat,
+    /// A direct-colour scan-line stride is shorter than one row of pixels.
+    InvalidStride,
 }
 impl fmt::Display for RasterError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -45,6 +49,7 @@ impl fmt::Display for RasterError {
             Self::InvalidPixelCount => "pixel count does not match frame dimensions",
             Self::PaletteIndexOutOfRange => "pixel index is outside the frame palette",
             Self::InvalidRepeat => "pixel repetition factors must be nonzero",
+            Self::InvalidStride => "scan-line stride is shorter than one row of pixels",
         })
     }
 }
@@ -67,11 +72,12 @@ impl Rasterizer {
         })
     }
 
-    /// Convert either frame kind into an integer-scaled host buffer.
+    /// Convert any frame kind into an integer-scaled host buffer.
     /// Indexed graphics use their captured DAC palette, without host time.
     pub fn rasterize_frame(&self, frame: &video::Frame) -> Result<PixelFrame, RasterError> {
         let source = match frame {
             video::Frame::Text(grid) => return self.rasterize(grid),
+            video::Frame::Direct(source) => return self.rasterize_direct(source),
             video::Frame::Pixels(source) => source,
         };
         if source.indices.len() != usize::from(source.width) * usize::from(source.height) {
@@ -108,6 +114,55 @@ impl Rasterizer {
                 let [r, g, b] = source.palette[usize::from(index)];
                 pixels[(y * width + x) as usize] =
                     (u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b);
+            }
+        }
+        Ok(PixelFrame {
+            width,
+            height,
+            pixels,
+        })
+    }
+
+    /// Convert a direct-colour frame with the same validation, repetition and
+    /// integer scaling as indexed graphics. The buffer layout and the output
+    /// size are checked before any pixel is converted.
+    fn rasterize_direct(&self, source: &video::DirectPixels) -> Result<PixelFrame, RasterError> {
+        source.check_layout().map_err(layout_error)?;
+        if source.repeat.0 == 0 || source.repeat.1 == 0 {
+            return Err(RasterError::InvalidRepeat);
+        }
+        let scale = u32::from(self.scale.get());
+        let scale_x = scale * u32::from(source.repeat.0);
+        let scale_y = scale * u32::from(source.repeat.1);
+        let width = u32::from(source.width)
+            .checked_mul(scale_x)
+            .ok_or(RasterError::TooLarge)?;
+        let height = u32::from(source.height)
+            .checked_mul(scale_y)
+            .ok_or(RasterError::TooLarge)?;
+        let len = u64::from(width) * u64::from(height);
+        if len > 16_777_216 {
+            return Err(RasterError::TooLarge);
+        }
+        let logical = source.to_xrgb8888().map_err(layout_error)?;
+        if (scale_x, scale_y) == (1, 1) || len == 0 {
+            return Ok(PixelFrame {
+                width,
+                height,
+                pixels: logical,
+            });
+        }
+        // Widen each logical row once, then copy the finished row for the
+        // remaining repeated scan lines.
+        let row = width as usize;
+        let mut pixels = Vec::with_capacity(len as usize);
+        for line in logical.chunks_exact(usize::from(source.width)) {
+            let start = pixels.len();
+            for &pixel in line {
+                pixels.extend(std::iter::repeat_n(pixel, scale_x as usize));
+            }
+            for _ in 1..scale_y {
+                pixels.extend_from_within(start..start + row);
             }
         }
         Ok(PixelFrame {
@@ -200,6 +255,13 @@ impl Rasterizer {
             }
         }
         Ok(image)
+    }
+}
+
+fn layout_error(error: video::DirectLayoutError) -> RasterError {
+    match error {
+        video::DirectLayoutError::StrideTooShort => RasterError::InvalidStride,
+        video::DirectLayoutError::BufferTooShort => RasterError::InvalidPixelCount,
     }
 }
 
@@ -350,6 +412,130 @@ mod planar_tests {
             }))
             .unwrap();
         assert_eq!(pixels.pixels, [0, 0, 0xff0000, 0xff0000].repeat(3));
+    }
+
+    fn direct_frame(width: u16, height: u16, stride: u32, bytes: Vec<u8>) -> video::Frame {
+        video::Frame::Direct(video::DirectPixels {
+            width,
+            height,
+            repeat: (1, 1),
+            format: video::PixelFormat::Rgb565,
+            stride,
+            bytes,
+        })
+    }
+
+    #[test]
+    fn direct_colour_frame_reaches_the_host_buffer_with_repeat_and_scale() {
+        // Rgb565 red and a mid value, then blue and white; two padding bytes per row.
+        let bytes = vec![
+            0x00, 0xF8, 0x01, 0x84, 0xAA, 0xAA, //
+            0x1F, 0x00, 0xFF, 0xFF, 0xAA, 0xAA,
+        ];
+        let video::Frame::Direct(mut source) = direct_frame(2, 2, 6, bytes) else {
+            unreachable!()
+        };
+        source.repeat = (2, 1);
+        let frame = video::Frame::Direct(source);
+        let mut sink = crate::RasterSink::new(NonZeroU16::new(2).unwrap()).unwrap();
+        video::FrameSink::present(&mut sink, &frame);
+        let top = [[0xFF0000; 4], [0x848208; 4]].concat();
+        let bottom = [[0x0000FF; 4], [0xFFFFFF; 4]].concat();
+        assert_eq!(
+            *sink.frame(),
+            Some(PixelFrame {
+                width: 8,
+                height: 4,
+                pixels: [top.clone(), top, bottom.clone(), bottom].concat(),
+            })
+        );
+        assert_eq!(sink.error(), None);
+    }
+
+    #[test]
+    fn direct_colour_unscaled_empty_and_unevenly_repeated_frames_are_exact() {
+        let raster = Rasterizer::bundled(NonZeroU16::new(1).unwrap()).unwrap();
+        // Rgb565 red, blue; the last row ends at its last pixel.
+        let bytes = vec![0x00, 0xF8, 0x1F, 0x00];
+        assert_eq!(
+            raster.rasterize_frame(&direct_frame(2, 1, 4, bytes.clone())),
+            Ok(PixelFrame {
+                width: 2,
+                height: 1,
+                pixels: vec![0xFF0000, 0x0000FF],
+            })
+        );
+        for (width, height) in [(0, 3), (3, 0)] {
+            let video::Frame::Direct(mut source) = direct_frame(width, height, 0, Vec::new())
+            else {
+                unreachable!()
+            };
+            source.repeat = (2, 2);
+            assert_eq!(
+                raster
+                    .rasterize_frame(&video::Frame::Direct(source))
+                    .map(|frame| frame.pixels.len()),
+                Ok(0)
+            );
+        }
+        let video::Frame::Direct(mut source) = direct_frame(2, 1, 4, bytes) else {
+            unreachable!()
+        };
+        source.repeat = (3, 2);
+        let row = [[0xFF0000; 3], [0x0000FF; 3]].concat();
+        assert_eq!(
+            raster.rasterize_frame(&video::Frame::Direct(source)),
+            Ok(PixelFrame {
+                width: 6,
+                height: 2,
+                pixels: [row.clone(), row].concat(),
+            })
+        );
+    }
+
+    #[test]
+    fn direct_colour_frames_validate_stride_length_repeat_and_size() {
+        let raster = Rasterizer::bundled(NonZeroU16::new(1).unwrap()).unwrap();
+        assert_eq!(
+            raster.rasterize_frame(&direct_frame(2, 1, 3, vec![0; 3])),
+            Err(RasterError::InvalidStride)
+        );
+        assert_eq!(
+            raster.rasterize_frame(&direct_frame(2, 1, 4, vec![0; 3])),
+            Err(RasterError::InvalidPixelCount)
+        );
+        assert!(raster
+            .rasterize_frame(&direct_frame(2, 1, 4, vec![0; 5]))
+            .is_ok());
+        for repeat in [(0, 1), (1, 0)] {
+            let video::Frame::Direct(mut source) = direct_frame(1, 1, 2, vec![0; 2]) else {
+                unreachable!()
+            };
+            source.repeat = repeat;
+            assert_eq!(
+                raster.rasterize_frame(&video::Frame::Direct(source)),
+                Err(RasterError::InvalidRepeat)
+            );
+        }
+        // Scaled to 4096 × 4096 a pixel just fits the 16,777,216-pixel host
+        // limit; one more repeated dot does not.
+        let at_limit = Rasterizer::bundled(NonZeroU16::new(4096).unwrap()).unwrap();
+        assert!(at_limit
+            .rasterize_frame(&direct_frame(1, 1, 2, vec![0; 2]))
+            .is_ok());
+        assert_eq!(
+            at_limit.rasterize_frame(&direct_frame(2, 1, 4, vec![0; 4])),
+            Err(RasterError::TooLarge)
+        );
+        let overflow_scale = Rasterizer::bundled(NonZeroU16::new(32768).unwrap()).unwrap();
+        let video::Frame::Direct(mut source) = direct_frame(32768, 1, 65536, vec![0; 65536]) else {
+            unreachable!()
+        };
+        source.repeat = (4, 1);
+        assert_eq!(
+            overflow_scale.rasterize_frame(&video::Frame::Direct(source)),
+            Err(RasterError::TooLarge)
+        );
     }
 
     #[test]

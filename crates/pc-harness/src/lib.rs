@@ -825,7 +825,7 @@ fn run_bios_assembled_with_warnings(
             };
             let grid = match capture.frame {
                 Frame::Text(grid) => grid,
-                Frame::Pixels(_) => blank_screen(),
+                Frame::Pixels(_) | Frame::Direct(_) => blank_screen(),
             };
             (grid, Some(stamp))
         }
@@ -844,7 +844,7 @@ fn run_bios_assembled_with_warnings(
     let mda = match assembled.capture_text(DeviceId::Mda) {
         Ok(capture) => match capture.frame {
             Frame::Text(grid) => grid,
-            Frame::Pixels(_) => blank_screen(),
+            Frame::Pixels(_) | Frame::Direct(_) => blank_screen(),
         },
         Err(error) => {
             if !matches!(
