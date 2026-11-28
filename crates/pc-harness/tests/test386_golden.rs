@@ -21,7 +21,7 @@ mod host_profile;
 #[path = "support/serving.rs"]
 mod serving;
 
-const CPU_REV: &str = "fb7bc5b7fea0bef47ddfc31f557dd6b14db34668";
+const CPU_REV: &str = "09857cc0c2242c420d9a09fc96bf7635c7ec685b";
 const CAP: u64 = 100_000_000;
 const PAGING_STOP_POST: &[u8] = &[
     0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x08, 0x09, 0x20, 0x21, 0x22, 0x0B, 0x0C, 0x0D, 0x0E,
