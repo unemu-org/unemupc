@@ -3,6 +3,11 @@
 
 use cpu::x86jit_backend::RealSegments;
 
+/// How the host executes the guest; a host choice the hardware never sees,
+/// and the embedder's JIT backend for it.
+/// See `backlog/docs/design/machine-files.md` §CPU engine.
+pub use cpu::{CpuEngine, JitBackendFactory};
+
 /// The modelled CPU chip.
 ///
 /// Selects the board interpreter's instruction generation, system semantics
@@ -172,8 +177,9 @@ pub enum FpuChip {
 
 /// The CPU section of a [`crate::MachineConfig`] (§2).
 ///
-/// An execution model, a reset entry, and the seeded segments;
-/// the home for future CPU options that must not force a config restructure.
+/// An execution model, a reset entry, the seeded segments and the host
+/// engine; the home for future CPU options that must not force a config
+/// restructure.
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct CpuConfig {
     /// The modelled processor and its execution semantics.
@@ -185,4 +191,7 @@ pub struct CpuConfig {
     pub reset: ResetSpec,
     /// The real-mode data segments and stack the guest starts with.
     pub segments: SegmentSeed,
+    /// How the host executes the guest. Validation refuses the JIT for the
+    /// 80286, which has no flat 32-bit code for it to compile.
+    pub engine: CpuEngine,
 }

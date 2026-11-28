@@ -142,6 +142,11 @@ pub enum AssemblyError {
     /// a `Trap` window overlapping RAM the config did not catch).
     #[error("cpu memory map: {0}")]
     Cpu(#[from] cpu::CpuError),
+
+    /// `cpu.engine = "jit"` was asked of an assembly given no JIT backend.
+    /// The core links none of its own; the embedder supplies it.
+    #[error("cpu engine jit: this build has no JIT backend; the embedder must supply one")]
+    NoJitBackend,
 }
 
 /// Turn an inline [`MachineConfig`] into a running [`Machine`] and its device-index map
@@ -217,11 +222,24 @@ pub fn assemble_mounted(
     options: crate::AssemblyOptions,
     mount: Rc<dyn Mount>,
 ) -> Result<AssembledMachine, AssemblyError> {
+    assemble_mounted_with_jit(config, observation_policy, options, mount, None)
+}
+
+/// [`assemble_mounted`] with the embedder's JIT backend, which a config
+/// selecting `cpu.engine = "jit"` requires ([`AssemblyError::NoJitBackend`]
+/// without one). See `backlog/docs/design/machine-files.md` §CPU engine.
+pub fn assemble_mounted_with_jit(
+    config: &MachineConfig,
+    observation_policy: &ObservationPolicy,
+    options: crate::AssemblyOptions,
+    mount: Rc<dyn Mount>,
+    jit: Option<crate::JitBackendFactory>,
+) -> Result<AssembledMachine, AssemblyError> {
     assemble_preverified(
         config,
         observation_policy,
         options,
-        build_cpu,
+        |config| build_cpu_with_jit(config, jit),
         config.board.firmware_catalogue(),
         mount.clone(),
         MachineMount::new(mount),
@@ -712,7 +730,16 @@ pub fn validate_step_cpu(cpu: &mut impl cpu::Cpu) -> Result<(), ConfigError> {
 /// regions take priority. See
 /// `backlog/docs/design/machine-config.md` §MemoryConfig for this model choice.
 pub fn build_cpu(config: &MachineConfig) -> Result<X86JitCpu, AssemblyError> {
-    build_cpu_with_mapping_trace(config, |_, _, _| {})
+    build_cpu_with_jit(config, None)
+}
+
+/// [`build_cpu`] with the embedder's JIT backend for `cpu.engine = "jit"`;
+/// that engine without one is [`AssemblyError::NoJitBackend`].
+pub fn build_cpu_with_jit(
+    config: &MachineConfig,
+    jit: Option<crate::JitBackendFactory>,
+) -> Result<X86JitCpu, AssemblyError> {
+    build_cpu_traced(config, jit, |_, _, _| {})
 }
 
 /// The trapped CPU regions covering the configured MMIO windows.
@@ -736,10 +763,26 @@ pub fn has_a20_source(config: &MachineConfig) -> bool {
     })
 }
 
+/// [`build_cpu`] recording each mapping; for tests and test support.
+#[cfg(any(test, feature = "test-support"))]
 pub fn build_cpu_with_mapping_trace(
     config: &MachineConfig,
+    record: impl FnMut(u64, u64, &'static str),
+) -> Result<X86JitCpu, AssemblyError> {
+    build_cpu_traced(config, None, record)
+}
+
+fn build_cpu_traced(
+    config: &MachineConfig,
+    jit: Option<crate::JitBackendFactory>,
     mut record: impl FnMut(u64, u64, &'static str),
 ) -> Result<X86JitCpu, AssemblyError> {
+    // Never fall back to the interpreter silently: a run that asked for the
+    // JIT and cannot have it says so.
+    let jit = match config.cpu.engine {
+        crate::CpuEngine::Interpreter => None,
+        crate::CpuEngine::Jit => Some(jit.ok_or(AssemblyError::NoJitBackend)?),
+    };
     let firmware_board = !config.board.firmware_catalogue().is_empty();
     let board_memory = config.board == crate::BoardModel::Ibm5170;
     let physical_end = match config.board {
@@ -762,6 +805,7 @@ pub fn build_cpu_with_mapping_trace(
             config.cpu.reset.ip(),
             config.cpu.segments.into(),
             config.cpu.fpu == crate::FpuChip::I80387,
+            jit,
         )?,
         (_, chip @ (crate::CpuChip::I80486Dx | crate::CpuChip::I80486DxCpuid)) => {
             X86JitCpu::new_i486_bare(
@@ -769,6 +813,7 @@ pub fn build_cpu_with_mapping_trace(
                 config.cpu.reset.ip(),
                 config.cpu.segments.into(),
                 chip == crate::CpuChip::I80486DxCpuid,
+                jit,
             )?
         }
         (

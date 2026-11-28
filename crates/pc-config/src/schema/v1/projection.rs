@@ -42,6 +42,7 @@ view!(Cpu {
     clock_mhz: Option<super::ClockMhz>,
     turbo: Option<super::Turbo>,
     fpu: Option<super::FpuModel>,
+    engine: Option<super::CpuEngine>,
 } ignore { mhz, frequency, clock_hz, cycles, cycle_exact, wait_states, bus_mhz, memory_wait_states, timing });
 
 view!(Memory {

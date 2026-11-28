@@ -763,6 +763,7 @@ format, recovery diagnostics, host failures and offline tools follow
 | `clock_mhz` | number | 33 on generic boards; unset on IBM AT | yes | Approximate CPU throughput from nominal MHz; see below. |
 | `turbo` | `{ clock_mhz = number }` | absent | yes | Alternate button position; selected through a run option, never stored as initial state. |
 | `rate` | `"A/B"` string or a positive integer `A` | board default (`"8/13"` on `ibm-5170`) | yes | `ClockConfig` A/B. Both parts must be positive. It is a ratio of completed steps per PIT input clock, not a frequency. |
+| `engine` | string | `"interpreter"` | `"interpreter"` everywhere; `"jit"` on 386 and 486 | `CpuConfig.engine`; host execution only, see [CPU engine](#cpu-engine) |
 
 An omitted `rate` comes from `BoardModel::default_clock` in
 `crates/assembly/src/board.rs`: `ibm-5170` uses the 8/13 throughput calibrated
@@ -801,6 +802,48 @@ EM/TS/MP retain the architectural #NM controls. A present 80287 or 80387 uses ex
 ERROR# routing through the board IRQ13 latch; F0h releases BUSY and clears the
 latch without clearing numeric status. F1h reset and F8h–FFh bus transactions
 remain unmodelled; see [coprocessor controls](machine-config.md#coprocessor-controls).
+
+### CPU engine
+
+`cpu.engine` chooses how the host executes the guest, not what hardware is
+modelled: `"interpreter"` (the default, also when the key is absent) runs every
+instruction on the x86jit interpreter; `"jit"` runs a JIT backend the
+embedder supplies (`cpu::JitBackendFactory`, passed to
+`assembly::assemble_mounted_with_jit` or set on `LoadedMachine::jit_backend`).
+The core links no backend itself. `unemupc` and `unemupc-view` supply
+x86jit-cranelift's, which compiles a block of flat 32-bit code after it has
+run 50 times, on its own compile thread, and swaps it in when ready. Without a
+supplied backend, `"jit"` fails to assemble with
+``cpu engine jit: this build has no JIT backend; the embedder must supply one``,
+positioned at `cpu.engine`; it never falls back to the interpreter. 16-bit code,
+including real mode and V86, still runs on the interpreter under the JIT. x86jit
+keeps the retired-instruction stream identical whichever engine runs and
+whenever a compile lands, so virtual time, device timing, serial and screen
+output and golden traces do not depend on the engine (MEASURED by
+`crates/machine-file/tests/cpu_engine.rs`: the SeaBIOS 486 diskless POST gives
+the same retired count, registers and output at every checkpoint, with 94
+blocks compiled under the JIT). The JIT's compile thread is the one accepted
+host thread in the execution path; it belongs to the supplied backend, and the
+core adds no thread of its own.
+
+The 80286 refuses `"jit"` with a positioned `cpu.engine` diagnostic
+(``board "ibm-5170" cpu engine jit needs an 80386 or newer; the 80286 runs only
+on the interpreter``): the JIT compiles only flat 32-bit code, which an 80286
+never runs, so accepting it would only label interpreted execution as JIT.
+Other names receive the typed `ParseError`
+``unsupported cpu.engine `cranelift`; allowed values: `interpreter`, `jit` ``.
+A child layer's `engine` replaces the inherited one, and an absent key
+inherits it. `unemupc run` and `unemupc-view` take `--cpu-engine
+interpreter|jit`, which replaces the file's choice for that run (the file must
+still be valid on its own; `--cpu-engine jit` on an 80286 file is the
+command-line error ``--cpu-engine jit needs an 80386 or newer; the 80286 runs
+only on the interpreter``), and print `cpu <model>, engine <engine>` on stderr
+before the run, naming the engine the assembled CPU reports
+([commands](../commands.md)). The engine is a local run choice of those
+programs (and `machine check`), not hardware: a stored PC config never
+carries it, so encoding a file that says `"jit"` gives the same hardware
+table and identity as one without the key, and contract launches (pc-core,
+`assembly::assemble_mounted`) always run the interpreter.
 
 ### Nominal CPU clocks
 

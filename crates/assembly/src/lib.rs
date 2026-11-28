@@ -67,15 +67,17 @@ mod sb16_audio;
 mod speaker_trace;
 mod validate;
 
+pub use validate::JIT_NEEDS_32_BIT_CPU;
+
 pub use assemble::{
-    assemble, assemble_mounted, assemble_with_observation, assemble_with_observation_and_options,
-    assemble_with_options, derive_cmos_config, derive_cmos_layout, medium_geometry,
-    AssembledMachine, AssemblyError,
+    assemble, assemble_mounted, assemble_mounted_with_jit, assemble_with_observation,
+    assemble_with_observation_and_options, assemble_with_options, derive_cmos_config,
+    derive_cmos_layout, medium_geometry, AssembledMachine, AssemblyError,
 };
 pub use board::{BoardModel, DisplaySwitch, MachineClass, PrimaryDisplay};
 pub use bus::PortWidth;
 pub use clock::ClockConfig;
-pub use cpu::{CpuChip, CpuConfig, FpuChip, ResetSpec, SegmentSeed};
+pub use cpu::{CpuChip, CpuConfig, CpuEngine, FpuChip, JitBackendFactory, ResetSpec, SegmentSeed};
 pub use device::{
     CmosCfg, CmosRam, DebugConsoleCfg, DeviceConfig, DeviceId, DeviceKind, DmaCfg, DmaSpec, FdcCfg,
     FwCfgCfg, I8042Cfg, IdeCfg, LotechEmsCfg, MdaTextCfg, NvramSource, PicCfg, PitCfg, PortWindow,

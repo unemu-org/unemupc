@@ -1321,6 +1321,7 @@ mod tests {
             board: BoardModel::Bare,
             display_switch: assembly::DisplaySwitch::Auto,
             cpu: CpuConfig {
+                engine: assembly::CpuEngine::Interpreter,
                 fpu: assembly::FpuChip::None,
                 chip: assembly::CpuChip::I80286,
                 reset: ResetSpec::reset_vector(),
@@ -2433,6 +2434,7 @@ mod tests {
             board: BoardModel::Bare,
             display_switch: assembly::DisplaySwitch::Auto,
             cpu: CpuConfig {
+                engine: assembly::CpuEngine::Interpreter,
                 fpu: assembly::FpuChip::None,
                 chip: assembly::CpuChip::I80286,
                 reset: ResetSpec::Entry { cs: 0, ip: 0 },

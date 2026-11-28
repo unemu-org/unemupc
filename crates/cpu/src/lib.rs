@@ -73,6 +73,57 @@ pub use x86jit_backend::X86JitCpu;
 
 use thiserror::Error;
 
+/// How the host executes guest instructions: the CPU engine.
+///
+/// A host choice, not modelled hardware: both engines retire the same guest
+/// instructions in the same order, so virtual time, device timing and every
+/// guest-visible result are identical (`backlog/docs/design/machine-files.md`
+/// §CPU engine). The JIT runs a backend the embedder supplies
+/// ([`JitBackendFactory`]); it compiles hot flat 32-bit code on that backend's
+/// compile thread, and everything else, including all 16-bit code, still runs
+/// on the interpreter.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum CpuEngine {
+    /// The `x86jit` interpreter, the default.
+    #[default]
+    Interpreter,
+    /// The `x86jit` Cranelift JIT with background tier-up.
+    Jit,
+}
+
+impl CpuEngine {
+    /// Every engine, in schema order.
+    pub const ALL: [Self; 2] = [Self::Interpreter, Self::Jit];
+
+    /// The engine's spelling in machine files and on the command line.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Interpreter => "interpreter",
+            Self::Jit => "jit",
+        }
+    }
+
+    /// The engine a [`Self::name`] spelling selects.
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|engine| engine.name() == name)
+    }
+}
+
+/// Builds the JIT backend for [`CpuEngine::Jit`]; supplied by the embedder.
+///
+/// The core links no code generator and no executable-memory code of its
+/// own: a host program that offers the JIT passes a function creating the
+/// CPU core's backend (`x86jit-cranelift`'s `JitBackend`, say). See
+/// `backlog/docs/design/core-contract.md` §12.7.
+#[derive(Clone, Copy)]
+pub struct JitBackendFactory(pub fn() -> Box<dyn x86jit_core::Backend>);
+
+impl std::fmt::Debug for JitBackendFactory {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("JitBackendFactory")
+    }
+}
+
 /// Guest registers the [`Cpu`] seam exposes (§3.1).
 ///
 /// A minimal, backend-neutral subset; it grows with real-mode work (segment

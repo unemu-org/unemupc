@@ -14,6 +14,9 @@ allow = [
     "AGPL-3.0-or-later",
     "MIT",
     "Apache-2.0",
+    # Cranelift, regalloc2, target-lexicon and the wasmtime support crates
+    # under the CPU core's opt-in JIT backend.
+    "Apache-2.0 WITH LLVM-exception",
     "Unicode-3.0",
     "BSD-3-Clause",
     "BSD-2-Clause",

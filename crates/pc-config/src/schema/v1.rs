@@ -90,6 +90,8 @@ timed_table! {
         pub fpu: Option<FpuModel>,
         #[serde(default, deserialize_with = "values::reject_present")]
         pub turbo: Option<Turbo>,
+        /// Host execution engine; not hardware, so the guest never sees it.
+        pub engine: Option<CpuEngine>,
     }
 }
 

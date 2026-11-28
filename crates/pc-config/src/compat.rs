@@ -513,8 +513,8 @@ mod tests {
     /// machine never holds, and every row names a field, so a new optional
     /// config key cannot ship without a row. Schema 1 refuses the reserved
     /// names (timing, unmodelled hardware, run and presentation tables); the
-    /// bundle refuses descriptive and inheritance keys, a drive's media keys
-    /// and the NVRAM image's policy keys. Package selectors and zero declarations
+    /// bundle refuses descriptive and inheritance keys, a drive's media keys,
+    /// the NVRAM image's policy keys and the CPU engine. Package selectors and zero declarations
     /// belong to templates and must be composed before a stored config is rated.
     #[test]
     fn every_machine_config_key_has_a_row() {
@@ -580,7 +580,12 @@ mod tests {
             struct_fields::<schema::NvramImage>(),
             &[&["sha256", "write", "journal", "keep_generations"]],
         );
-        check("machine.cpu", struct_fields::<schema::Cpu>(), &[TIMING]);
+        // The CPU engine is a local run choice the encoder never stores.
+        check(
+            "machine.cpu",
+            struct_fields::<schema::Cpu>(),
+            &[TIMING, &["engine"]],
+        );
         check("machine.cpu.turbo", struct_fields::<schema::Turbo>(), &[]);
         check(
             "machine.memory",

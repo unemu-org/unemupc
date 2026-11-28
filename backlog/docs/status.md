@@ -1,5 +1,9 @@
 # Status
 
+## Opt-in CPU JIT engine (2026-11-28)
+
+`cpu.engine = "jit"` or `--cpu-engine jit` runs 386/486 boards on the x86jit Cranelift JIT that `unemupc` and `unemupc-view` supply (the core links no backend); the interpreter stays the default and the only engine for the 80286 ([machine files § CPU engine](design/machine-files.md#cpu-engine)), and both give identical retired counts and output (MEASURED, x86jit `3d793fc2`, SeaBIOS 486 diskless POST).
+
 ## Local Windows 95 first boots to the desktop (2026-11-27)
 
 The ignored `user_media_win95_stage3` boots the disk Windows 95 OSR2 setup

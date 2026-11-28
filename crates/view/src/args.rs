@@ -4,7 +4,8 @@
 use machine_view::pacing::Speed;
 use std::{ffi::OsString, path::PathBuf};
 
-pub const USAGE: &str = "usage: unemupc-view --machine FILE [--rom-dir DIR]... [--allow-unlisted-firmware] [--speed 1|2|4|unlimited]\n\
+pub const USAGE: &str = "usage: unemupc-view --machine FILE [--rom-dir DIR]... [--allow-unlisted-firmware] [--speed 1|2|4|unlimited] [--cpu-engine interpreter|jit]\n\
+--cpu-engine replaces the machine file's cpu.engine (default interpreter)\n\
 controls: ctrl+alt+r reset, ctrl+alt+p pause/resume, ctrl+alt+q quit\n\
 pointer: click to capture; ctrl+alt+g releases (command+g on macOS)\n";
 
@@ -14,6 +15,8 @@ pub struct Args {
     pub rom_dirs: Vec<PathBuf>,
     pub allow_unlisted_firmware: bool,
     pub speed: Speed,
+    /// Replaces the machine file's `cpu.engine`; `None` keeps the file's.
+    pub cpu_engine: Option<assembly::CpuEngine>,
 }
 
 impl Args {
@@ -23,6 +26,7 @@ impl Args {
         let mut allow_unlisted_firmware = false;
         let mut speed = Speed::Normal;
         let mut speed_seen = false;
+        let mut cpu_engine = None;
         let mut words = words.iter();
         while let Some(word) = words.next() {
             match word.to_str() {
@@ -47,6 +51,15 @@ impl Args {
                         _ => return Err("speed must be 1, 2, 4 or unlimited"),
                     };
                 }
+                Some("--cpu-engine") if cpu_engine.is_none() => {
+                    cpu_engine = Some(
+                        words
+                            .next()
+                            .and_then(|word| word.to_str())
+                            .and_then(assembly::CpuEngine::from_name)
+                            .ok_or("cpu engine must be interpreter or jit")?,
+                    );
+                }
                 _ => return Err("unknown or repeated argument"),
             }
         }
@@ -55,6 +68,7 @@ impl Args {
             rom_dirs,
             allow_unlisted_firmware,
             speed,
+            cpu_engine,
         })
     }
 }
@@ -107,6 +121,38 @@ mod tests {
         for word in ["0", "3", "-1", "NaN", "1.5", ""] {
             assert!(parse(&["--machine", "pc.toml", "--speed", word]).is_err());
         }
+    }
+
+    #[test]
+    fn cpu_engine_overrides_only_when_given() {
+        assert_eq!(parse(&["--machine", "pc.toml"]).unwrap().cpu_engine, None);
+        for (word, engine) in [
+            ("interpreter", assembly::CpuEngine::Interpreter),
+            ("jit", assembly::CpuEngine::Jit),
+        ] {
+            assert_eq!(
+                parse(&["--machine", "pc.toml", "--cpu-engine", word])
+                    .unwrap()
+                    .cpu_engine,
+                Some(engine)
+            );
+        }
+        for words in [
+            vec!["--machine", "pc.toml", "--cpu-engine"],
+            vec!["--machine", "pc.toml", "--cpu-engine", "cranelift"],
+            vec!["--machine", "pc.toml", "--cpu-engine", "Jit"],
+            vec![
+                "--machine",
+                "pc.toml",
+                "--cpu-engine",
+                "jit",
+                "--cpu-engine",
+                "interpreter",
+            ],
+        ] {
+            assert!(parse(&words).is_err(), "{words:?}");
+        }
+        assert!(USAGE.contains("[--cpu-engine interpreter|jit]"));
     }
 
     #[test]

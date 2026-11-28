@@ -24,6 +24,7 @@ machine.workspace = true
 device.workspace = true
 video.workspace = true
 anyhow.workspace = true
+x86jit-cranelift.workspace = true
 
 [dev-dependencies]
 pc-config.workspace = true

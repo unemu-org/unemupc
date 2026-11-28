@@ -128,9 +128,14 @@ fn fingerprint(mut config: MachineConfig) -> String {
             source_digest(&mut medium.image, &mut digest);
         }
     }
-    // An absent alternate clock preserves the existing hardware fingerprint;
-    // a configured turbo ratio still participates in the debug projection.
-    digest.update(format!("{config:?}").replace(", turbo: None", ""));
+    // An absent alternate clock and the default interpreter engine preserve
+    // the existing hardware fingerprint; a configured turbo ratio or the JIT
+    // engine still participates in the debug projection.
+    digest.update(
+        format!("{config:?}")
+            .replace(", turbo: None", "")
+            .replace(", engine: Interpreter", ""),
+    );
     format!("{:x}", digest.finalize())
 }
 

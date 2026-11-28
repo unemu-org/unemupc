@@ -112,6 +112,9 @@ pub struct LoadedMachine {
     pub config: assembly::MachineConfig,
     /// Card ids in file order, paired with their assembly roles.
     pub cards: Vec<(String, assembly::DeviceId)>,
+    /// The embedder's JIT backend for `cpu.engine = "jit"`; without one that
+    /// engine fails to assemble. A host program sets it; files never do.
+    pub jit_backend: Option<assembly::JitBackendFactory>,
     diagnostics: pc_config::AssemblyDiagnostics,
     options: assembly::AssemblyOptions,
     bases: std::collections::BTreeMap<PathBuf, journal_files::VerifiedBase>,
@@ -199,10 +202,12 @@ impl LoadedMachine {
             // Hardware validation executes no guest code and must never open a writer.
             rtc.nvram = assembly::NvramSource::Blank;
         }
-        let assembled = crate::assemble_with_observation_and_options(
+        let assembled = assembly::assemble_mounted_with_jit(
             &config,
             &assembly::ObservationPolicy::default(),
             self.options,
+            std::rc::Rc::new(FileMount::new()),
+            self.jit_backend,
         )
         .map_err(|error| self.diagnostics.map(error))?;
         notes.extend(assembled.unlisted_firmware.iter().map(ToString::to_string));
@@ -214,11 +219,12 @@ impl LoadedMachine {
         &self,
         observation: &assembly::ObservationPolicy,
     ) -> Result<assembly::AssembledMachine, LowerError> {
-        let mut assembled = crate::assemble_with_verified_bases(
+        let mut assembled = crate::assemble_with_verified_bases_and_jit(
             &self.config,
             observation,
             self.options,
             &self.bases,
+            self.jit_backend,
         )
         .map_err(|error| self.diagnostics.map(error))?;
         self.diagnostics
@@ -552,6 +558,7 @@ impl PreparedMachineFile {
         Ok(LoadedMachine {
             config,
             cards,
+            jit_backend: None,
             diagnostics,
             options,
             bases: reader.bases,

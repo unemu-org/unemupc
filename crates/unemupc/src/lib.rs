@@ -41,6 +41,9 @@ pub enum Command {
         trace_exceptions: bool,
         turbo: bool,
         print: Option<String>,
+        /// `--cpu-engine`: the CPU engine, replacing the machine file's
+        /// `cpu.engine`; `None` keeps the file's choice.
+        cpu_engine: Option<assembly::CpuEngine>,
         options: assembly::AssemblyOptions,
     },
 }
@@ -120,6 +123,7 @@ fn machine_words(args: &[OsString], with_store: bool) -> Result<Option<Command>,
     if frontend.first().is_some_and(|arg| *arg == "run") {
         let (mut path, mut max_steps, mut idle_limit, mut print) = (None, None, None, None);
         let mut diag_at = None;
+        let mut cpu_engine = None;
         let mut trace_exceptions = false;
         let mut turbo = false;
         let mut store = None;
@@ -155,6 +159,14 @@ fn machine_words(args: &[OsString], with_store: bool) -> Result<Option<Command>,
                 Some("--max-steps") if max_steps.is_none() => max_steps = Some(decimal(value)?),
                 Some("--idle-limit") if idle_limit.is_none() => idle_limit = Some(decimal(value)?),
                 Some("--diag-at") if diag_at.is_none() => diag_at = Some(decimal(value)?),
+                Some("--cpu-engine") if cpu_engine.is_none() => {
+                    cpu_engine = Some(
+                        value
+                            .to_str()
+                            .and_then(assembly::CpuEngine::from_name)
+                            .ok_or("--cpu-engine must be interpreter or jit")?,
+                    )
+                }
                 Some("--print") if print.is_none() => {
                     print = Some(value.to_str().ok_or("invalid card id")?.to_owned())
                 }
@@ -171,6 +183,7 @@ fn machine_words(args: &[OsString], with_store: bool) -> Result<Option<Command>,
             trace_exceptions,
             turbo,
             print,
+            cpu_engine,
             options,
         }));
     }
@@ -224,9 +237,16 @@ pub fn execute_with_loader(
             trace_exceptions,
             turbo,
             print,
+            cpu_engine,
             options,
         } => {
-            let loaded = load(&path, options, &rom_dirs, errors).map_err(|e| line(&e))?;
+            let mut loaded = load(&path, options, &rom_dirs, errors).map_err(|e| line(&e))?;
+            // A frontend's own loader gets the same JIT as the standalone one.
+            loaded.jit_backend.get_or_insert_with(run::jit_backend);
+            if let Err(error) = run::select_cpu_engine(&mut loaded, cpu_engine) {
+                writeln!(errors, "{error}").map_err(|e| line(&e))?;
+                return Ok(2);
+            }
             run::run_machine_with_turbo(
                 loaded,
                 (max_steps, idle_limit, diag_at, trace_exceptions),
@@ -311,8 +331,9 @@ fn commit_line(commit: Option<&str>) -> String {
 macro_rules! machine_usage {
     ($($tail:literal),* $(,)?) => {
         concat!(
-            "       unemu run --machine FILE [--store DIR | --no-store] [--rom-dir DIR]... [--max-steps N] [--idle-limit N] [--diag-at N] [--trace-exceptions] [--turbo] [--print CARD] [--allow-unlisted-firmware]\n",
+            "       unemu run --machine FILE [--store DIR | --no-store] [--rom-dir DIR]... [--max-steps N] [--idle-limit N] [--diag-at N] [--trace-exceptions] [--turbo] [--print CARD] [--cpu-engine interpreter|jit] [--allow-unlisted-firmware]\n",
             "         --diag-at N writes the machine's diagnostic report to stderr when the run reaches step N (the unit of --max-steps), then runs on\n",
+            "         --cpu-engine interpreter|jit runs the CPU on that engine instead of the machine file's cpu.engine (default interpreter); both give the same guest results, the jit is faster on 32-bit code and refuses an 80286\n",
             "         --trace-exceptions writes the exceptions and interrupts the guest takes to stderr when the run ends: the last 10000 entries, each with the registers of the interrupted code (the bytes at CS:IP as at the end of each run slice), consecutive identical deliveries folded into one with a count and the last one's registers, and a summary per vector\n", $($tail),*)
     };
 }
@@ -419,6 +440,7 @@ mod tests {
                 trace_exceptions: false,
                 turbo: false,
                 print: None,
+                cpu_engine: None,
                 options: assembly::AssemblyOptions::default(),
             }
         );
@@ -448,11 +470,51 @@ mod tests {
                 trace_exceptions: true,
                 turbo: false,
                 print: Some("screen".into()),
+                cpu_engine: None,
                 options: assembly::AssemblyOptions {
                     allow_unlisted_firmware: true
                 },
             }
         );
+    }
+
+    #[test]
+    fn cpu_engine_flag_selects_an_engine_once_and_only_for_run() {
+        let args = |words: &[&str]| words.iter().map(OsString::from).collect::<Vec<_>>();
+        for (word, engine) in [
+            ("interpreter", assembly::CpuEngine::Interpreter),
+            ("jit", assembly::CpuEngine::Jit),
+        ] {
+            assert!(matches!(
+                pc(&args(&["run", "--machine", "pc.toml", "--cpu-engine", word])),
+                Command::Run { cpu_engine: Some(found), .. } if found == engine
+            ));
+        }
+        assert!(matches!(
+            pc(&args(&["run", "--machine", "pc.toml"])),
+            Command::Run {
+                cpu_engine: None,
+                ..
+            }
+        ));
+        for words in [
+            vec!["run", "--machine", "pc.toml", "--cpu-engine", "cranelift"],
+            vec!["run", "--machine", "pc.toml", "--cpu-engine", "JIT"],
+            vec!["run", "--machine", "pc.toml", "--cpu-engine"],
+            vec![
+                "run",
+                "--machine",
+                "pc.toml",
+                "--cpu-engine",
+                "jit",
+                "--cpu-engine",
+                "jit",
+            ],
+            vec!["machine", "check", "pc.toml", "--cpu-engine", "jit"],
+        ] {
+            assert!(parse(&args(&words)).unwrap().is_err(), "{words:?}");
+        }
+        assert!(usage().contains("[--cpu-engine interpreter|jit]"));
     }
 
     #[test]

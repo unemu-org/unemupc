@@ -3294,7 +3294,7 @@ allocator, and nothing else of the host.
 | Network, async run times | depend on one | nothing: a core has no use for either | the external-crate list |
 | Time | read the host clock: nothing of `std::time` on any path | virtual ticks and steps (§3.5); the start of an emulated clock is part of the config | the host-interface check (§12.3) |
 | Randomness | use a random source, or let a result depend on the order of a randomly seeded map | seeds in the config, when a machine needs one | the host-interface check for random sources; goldens for the order |
-| Threads | start one | the embedder's thread: a machine lives on the thread that created it (§3.5) | the host-interface check |
+| Threads | start one | the embedder's thread: a machine lives on the thread that created it (§3.5). The one exception is a JIT backend the embedder supplies for `cpu.engine = "jit"` (§12.7): that backend starts its compile thread; the interpreter default starts none | the host-interface check |
 | Process-wide state | keep mutable statics or thread-locals that two machines would share | fields of the machine | the host-interface check |
 | Files | open a path, scan a directory, read an environment variable | content by digest (§3.4) and storage objects (§12.5) | the host-interface check |
 | Standard streams, process exit | print or exit | `drain_messages` and `Error` (§3.10) | the host-interface check |
@@ -3759,7 +3759,8 @@ at extraction"; the embeddability rule decides it now (§12.13 Q4).
 
 ### 12.6. Threads, time and process-wide state
 
-- **Threads.** A core starts none. `Core` is `Send + Sync` and stateless;
+- **Threads.** A core starts none (a JIT backend its embedder supplies
+  starts its own compile thread, §12.7). `Core` is `Send + Sync` and stateless;
   a `Machine` need not be `Send` and lives on the thread that created it
   (§3.3, §3.5). An embedder may run several machines, each on a thread of
   its own. The library worker, the host audio stream and the registry
@@ -3784,10 +3785,19 @@ at extraction"; the embeddability rule decides it now (§12.13 Q4).
 
 [X86JIT], for the way `cpu` uses the core [REPO:
 `crates/cpu/src/x86jit_backend.rs`]: `Vm::new(VmConfig::flat(bytes))`,
-`CpuMode::Real16` or `CpuModel::I80286`, one `Vcpu` on one thread, never a
-backend. The x86jit README states that 16-bit code and every CPU model run
-on the interpreter whichever backend is configured, so a JIT backend would
-add nothing for the PC today.
+`Vm::sparse` for the 386 and 486 boards, `CpuMode::Real16` or
+`CpuModel::I80286`, one `Vcpu` on one thread, and by default no backend
+but the interpreter. With `cpu.engine = "jit"` the 386 and 486 boards run a
+backend their embedder supplies (`cpu::JitBackendFactory`,
+`Vm::with_backend_sparse`), which compiles flat 32-bit Machine code; 16-bit
+code and the 80286 stay on the interpreter. The core itself links no
+executable-memory code. `unemupc` and `unemupc-view` supply
+x86jit-cranelift's `JitBackend` for `--cpu-engine jit` or `engine = "jit"`;
+the compile thread belongs to that backend (background tier-up). Without a
+supplied backend the engine is an assembly error. The engine is a local run
+choice: a stored config never carries it, so contract launches (pc-core,
+`assemble_mounted`) always run the interpreter. See
+[machine files § CPU engine](machine-files.md#cpu-engine).
 
 | x86jit-core needs | When | On the PC's path |
 |---|---|---|
@@ -3800,10 +3810,10 @@ add nothing for the PC today.
 | The host clock for time statistics | only after `Vm::set_time_accounting(true)` | no |
 | Host-fault recovery: assembly routines, memory-map queries | only after `Memory::set_host_fault_recovery(true)` | no |
 | Environment variables and a trace file | only through `Trace::from_environment()`, under the default feature `environment` | no |
-| `pthread_atfork`, the process id, a global code map | a JIT backend or a child view | no |
+| `pthread_atfork`, the process id, a global code map | a JIT backend or a child view | only with `cpu.engine = "jit"`, through the embedder's backend |
 | Signal handlers | never installed by the library | no |
-| Threads | none outside tests | no |
-| Executable memory (`mmap` with `PROT_EXEC`, `MAP_JIT` and the write-protect switch on macOS, instruction-cache flushes), `libc`, `memmap2`, `region`, Cranelift, a compile thread | the JIT backend crate, `x86jit-cranelift` | no: the PC does not depend on it |
+| Threads | none outside tests; a JIT backend starts its compile thread | only with `cpu.engine = "jit"`: the embedder's backend starts one; the interpreter default starts none |
+| Executable memory (`mmap` with `PROT_EXEC`, `MAP_JIT` and the write-protect switch on macOS, instruction-cache flushes), `libc`, `memmap2`, `region`, Cranelift, a compile thread | the JIT backend crate, `x86jit-cranelift` | no: the core never depends on it; `unemupc` and `unemupc-view` link it (feature `jit` only) and supply its backend for `cpu.engine = "jit"` |
 
 What follows:
 
@@ -3820,13 +3830,13 @@ What follows:
    is fixed by a probe today and has no public setter (READ in
    `process_barrier.rs`). And: the table above, kept in x86jit's own
    documentation, so that an embedder knows what each path costs.
-3. **The JIT stays optional for good.** When a protected-mode profile
-   wants it, it is a feature of the PC core that is off by default, with
-   the compile thread supplied by the embedder (x86jit-cranelift lets the
-   embedder replace how its worker is started) and virtual time unchanged,
-   because it counts retired instructions and not blocks. An embedder that
-   cannot map executable memory runs the interpreter with the same guest
-   results.
+3. **The JIT stays optional for good.** It is a run choice that is off by
+   default (`cpu.engine`), with the backend, and so the compile thread,
+   supplied by the embedder (x86jit-cranelift lets the embedder replace how
+   its worker is started), and virtual time unchanged, because it counts
+   retired instructions and not blocks. An embedder that cannot map
+   executable memory supplies no backend and runs the interpreter with the
+   same guest results.
 
 ### 12.8. The core's own command line: `unemupc`
 

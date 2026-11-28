@@ -39,12 +39,40 @@ pub(super) fn check_machine(
     for warning in warnings {
         writeln!(errors, "warning: {warning}")?;
     }
-    let loaded = result?;
+    let mut loaded = result?;
+    loaded.jit_backend = Some(jit_backend());
     for note in loaded.check()? {
         writeln!(errors, "{note}")?;
     }
     Ok(0)
 }
+
+/// The JIT backend this program hands the core for `cpu.engine = "jit"`:
+/// x86jit-cranelift's, whose compile thread does background tier-up. The
+/// core links no code generator itself (core-contract.md §12.7).
+pub fn jit_backend() -> assembly::JitBackendFactory {
+    assembly::JitBackendFactory(|| Box::new(x86jit_cranelift::JitBackend::new()))
+}
+
+/// Apply a `--cpu-engine` choice to a loaded machine. The flag is a local
+/// run choice, so its refusal is a command-line error, not a file position.
+pub fn select_cpu_engine(
+    loaded: &mut machine_file::LoadedMachine,
+    engine: Option<assembly::CpuEngine>,
+) -> Result<(), &'static str> {
+    let Some(engine) = engine else {
+        return Ok(());
+    };
+    if engine == assembly::CpuEngine::Jit && loaded.config.cpu.chip == assembly::CpuChip::I80286 {
+        return Err(CPU_ENGINE_FLAG_NEEDS_32_BIT_CPU);
+    }
+    loaded.config.cpu.engine = engine;
+    Ok(())
+}
+
+/// The refusal of `--cpu-engine jit` for an 80286 machine.
+pub const CPU_ENGINE_FLAG_NEEDS_32_BIT_CPU: &str =
+    "--cpu-engine jit needs an 80386 or newer; the 80286 runs only on the interpreter";
 
 /// Firmware discovery roots in command-line order.
 pub fn firmware_roots(rom_dirs: &[PathBuf]) -> Vec<machine_file::firmware_discovery::FirmwareRoot> {
@@ -88,7 +116,10 @@ pub fn load_named_machine(
     )
     .and_then(|document| {
         let name = document.resolved().0.name.clone();
-        document.load(options).map(|loaded| (name, loaded))
+        document.load(options).map(|mut loaded| {
+            loaded.jit_backend = Some(jit_backend());
+            (name, loaded)
+        })
     });
     for warning in warnings {
         writeln!(errors, "warning: {warning}")?;
@@ -164,6 +195,7 @@ pub fn run_machine_with_turbo(
     for warning in &assembled.unlisted_firmware {
         writeln!(errors, "{warning}")?;
     }
+    writeln!(errors, "{}", cpu_banner(&loaded.config, &assembled))?;
     if trace_exceptions {
         if let Err(error) = assembled.start_delivery_recording() {
             writeln!(errors, "warning: exceptions are not traced: {error}")?;
@@ -224,6 +256,19 @@ pub fn run_machine_with_turbo(
     }
     output.write_all(&bytes)?;
     Ok(u8::from(failed))
+}
+
+/// The run's CPU line on stderr: the modelled chip and the engine that
+/// executes it, as the assembled CPU reports it.
+pub fn cpu_banner(
+    config: &assembly::MachineConfig,
+    assembled: &assembly::AssembledMachine,
+) -> String {
+    format!(
+        "cpu {}, engine {}",
+        config.cpu.chip.name(),
+        assembled.machine.cpu().engine().name()
+    )
 }
 
 /// The CPU stop report of a run the CPU core ended by refusing an

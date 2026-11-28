@@ -84,6 +84,26 @@ impl<'de> Deserialize<'de> for FpuModel {
     }
 }
 
+/// How the host executes the guest; absent means the interpreter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CpuEngine {
+    Interpreter,
+    Jit,
+}
+
+impl<'de> Deserialize<'de> for CpuEngine {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let name = String::deserialize(deserializer)?;
+        match assembly::CpuEngine::from_name(&name) {
+            Some(assembly::CpuEngine::Interpreter) => Ok(Self::Interpreter),
+            Some(assembly::CpuEngine::Jit) => Ok(Self::Jit),
+            None => Err(de::Error::custom(format!(
+                "unsupported cpu.engine `{name}`; allowed values: `interpreter`, `jit`"
+            ))),
+        }
+    }
+}
+
 named_values! {
     /// CPU model names; instruction-set and board compatibility are separate.
     CpuModel, "cpu model" { I80286 => "80286", I80386 => "80386dx", I80486Dx => "80486dx", I80486DxCpuid => "80486dx-cpuid" } reserved {

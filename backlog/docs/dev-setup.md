@@ -98,6 +98,7 @@ gitignored:
 ```toml
 [patch."<the git URL x86jit-core is pinned to in Cargo.toml>"]
 x86jit-core = { path = "<your x86jit checkout>/x86jit-core" }
+x86jit-cranelift = { path = "<your x86jit checkout>/x86jit-cranelift" }
 ```
 
 Cargo resolves the override without fetching the pinned URL, so this also works on a machine that

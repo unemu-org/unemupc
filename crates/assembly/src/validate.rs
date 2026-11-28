@@ -12,6 +12,11 @@ use crate::error::ConfigError;
 use crate::image::ImageKind;
 use crate::machine::MachineConfig;
 
+/// Why the JIT engine is refused for an 80286: see [`crate::CpuEngine`].
+/// The reason of the [`ConfigError::BoardConfiguration`] this check reports.
+pub const JIT_NEEDS_32_BIT_CPU: &str =
+    "cpu engine jit needs an 80386 or newer; the 80286 runs only on the interpreter";
+
 type ConfigCheck = fn(&MachineConfig) -> Result<(), ConfigError>;
 
 /// Whether two half-open ranges `[a_base, a_end)` and `[b_base, b_end)` share any
@@ -645,6 +650,14 @@ impl MachineConfig {
             return Err(ConfigError::BoardConfiguration {
                 board: self.board.id(),
                 reason: "80387 requires board generic-386-isa",
+            });
+        }
+        // The JIT compiles only flat 32-bit code, which an 80286 never runs;
+        // refusing says so instead of silently interpreting under a JIT label.
+        if self.cpu.engine == crate::CpuEngine::Jit && self.cpu.chip == crate::CpuChip::I80286 {
+            return Err(ConfigError::BoardConfiguration {
+                board: self.board.id(),
+                reason: JIT_NEEDS_32_BIT_CPU,
             });
         }
         if self.board == BoardModel::Bare {
@@ -3135,6 +3148,7 @@ mod tests {
             board: BoardModel::Bare,
             display_switch: crate::DisplaySwitch::Auto,
             cpu: CpuConfig {
+                engine: crate::CpuEngine::Interpreter,
                 fpu: crate::FpuChip::None,
                 chip: CpuChip::I80286,
                 reset: ResetSpec::reset_vector(),

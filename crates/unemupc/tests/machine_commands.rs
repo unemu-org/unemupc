@@ -137,6 +137,70 @@ fn inherited_unlisted_firmware_is_positioned_and_escape_reaches_both_commands() 
 }
 
 #[test]
+fn run_names_the_cpu_engine_and_refuses_the_jit_for_an_80286() {
+    let files = Files::new(&[0xFA, 0xF4]);
+    let run = command(
+        &["run", "--machine"],
+        &files.machine(),
+        &["--allow-unlisted-firmware", "--max-steps", "100"],
+    );
+    assert_eq!(run.status.code(), Some(0), "{run:?}");
+    assert!(
+        stderr(&run).contains("\ncpu 80286, engine interpreter\n"),
+        "{run:?}"
+    );
+    let jit = command(
+        &["run", "--machine"],
+        &files.machine(),
+        &["--allow-unlisted-firmware", "--cpu-engine", "jit"],
+    );
+    assert_eq!(jit.status.code(), Some(2), "{jit:?}");
+    assert!(
+        stderr(&jit).lines().any(|line| line
+            == "--cpu-engine jit needs an 80386 or newer; the 80286 runs only on the interpreter"),
+        "{jit:?}"
+    );
+    assert!(!stderr(&jit).contains("cpu 80286"), "{jit:?}");
+}
+
+#[test]
+fn cpu_engine_flag_replaces_the_machine_file_choice() {
+    let (Some(_), Some(_)) = (
+        fixtures::fixture("seabios/bios-1.17.0-isa.bin"),
+        fixtures::fixture("seabios/build/vgabios-1.17.0-stdvga.bin"),
+    ) else {
+        return;
+    };
+    let files = Files::new(&[0xF4]);
+    // Parents must be relative, so the copy names the fixtures absolutely.
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let shipped = std::fs::read_to_string(root.join("machines/generic-486-seabios.toml")).unwrap();
+    let vendor = format!("\"{}/", root.join("vendor").to_str().unwrap());
+    let child = files.write(
+        "jit.toml",
+        shipped.replace("\"../vendor/", &vendor).replacen(
+            "[cpu]\n",
+            "[cpu]\nengine = \"jit\"\n",
+            1,
+        ),
+    );
+    for (flag, engine) in [
+        (None, "jit"),
+        (Some("interpreter"), "interpreter"),
+        (Some("jit"), "jit"),
+    ] {
+        let mut extra = vec!["--max-steps", "100000"];
+        extra.extend(flag.iter().flat_map(|flag| ["--cpu-engine", *flag]));
+        let run = command(&["run", "--machine"], &child, &extra);
+        assert_eq!(run.status.code(), Some(0), "{run:?}");
+        assert!(
+            stderr(&run).starts_with(&format!("cpu 80486dx, engine {engine}\n")),
+            "{flag:?}: {run:?}"
+        );
+    }
+}
+
+#[test]
 fn machine_check_accepts_the_shipped_machine() {
     let (Some(_rom), Some(_)) = (
         fixtures::fixture("kiselev-bios/bios-xi8088.bin"),

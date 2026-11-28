@@ -291,7 +291,7 @@ fn present_in_srgb(window: &Window) {
 
 fn run(args: Args) -> anyhow::Result<()> {
     use assembly::{DeviceId, ObservationPolicy, ObservationRequest, OutputKind};
-    let (name, loaded) = unemupc::run::load_named_machine(
+    let (name, mut loaded) = unemupc::run::load_named_machine(
         &args.machine,
         assembly::AssemblyOptions {
             allow_unlisted_firmware: args.allow_unlisted_firmware,
@@ -299,6 +299,7 @@ fn run(args: Args) -> anyhow::Result<()> {
         &args.rom_dirs,
         &mut std::io::stderr(),
     )?;
+    unemupc::run::select_cpu_engine(&mut loaded, args.cpu_engine).map_err(anyhow::Error::msg)?;
     let display = loaded
         .cards
         .iter()
@@ -320,6 +321,7 @@ fn run(args: Args) -> anyhow::Result<()> {
         }],
         ..ObservationPolicy::default()
     })?;
+    eprintln!("{}", unemupc::run::cpu_banner(&loaded.config, &assembled));
     let machine = unemu_pc_core::PcMachine::from_assembled(&loaded.config, assembled)?;
     let controller = Controller::new(Box::new(machine), args.speed, &mut std::io::stderr())
         .map_err(|e| anyhow::anyhow!("start session: {e}"))?;

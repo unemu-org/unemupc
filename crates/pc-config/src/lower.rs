@@ -1279,6 +1279,9 @@ impl<R: ImageReader> Context<'_, R> {
                     .collect()
             }
             BoardConfiguration { reason, .. } if reason.contains("80387") => vec!["cpu.fpu".into()],
+            BoardConfiguration { reason, .. } if *reason == assembly::JIT_NEEDS_32_BIT_CPU => {
+                vec!["cpu.engine".into()]
+            }
             BoardConfiguration { .. } => vec!["board.model".into()],
             InvalidCpuRate { .. } | StepBoundedCpuRequired(_) => vec!["cpu".into()],
             RegionOutOfSpace { .. } => self.images.clone(),
@@ -1682,6 +1685,10 @@ fn lower_tracked_mode<R: ImageReader>(
             },
             reset: ResetSpec::reset_vector(),
             segments: SegmentSeed::flat(0xF000),
+            engine: match document.cpu.as_ref().and_then(|cpu| cpu.engine) {
+                None | Some(v1::CpuEngine::Interpreter) => assembly::CpuEngine::Interpreter,
+                Some(v1::CpuEngine::Jit) => assembly::CpuEngine::Jit,
+            },
         },
         clock,
         memory: MemoryConfig {
@@ -2854,6 +2861,9 @@ impl AssemblyDiagnostics {
             }
             assembly::AssemblyError::Cpu(error) => {
                 context.error("memory", format!("cpu memory map: {error}"))
+            }
+            error @ assembly::AssemblyError::NoJitBackend => {
+                context.error("cpu.engine", error.to_string())
             }
         }
     }

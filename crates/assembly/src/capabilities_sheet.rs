@@ -59,6 +59,7 @@ impl Draft {
             board,
             display_switch: DisplaySwitch::Auto,
             cpu: CpuConfig {
+                engine: crate::CpuEngine::Interpreter,
                 chip: board.cpu_chip(),
                 fpu: if board == BoardModel::Generic486Isa {
                     FpuChip::Integrated

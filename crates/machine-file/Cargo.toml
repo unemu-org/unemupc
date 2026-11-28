@@ -46,3 +46,5 @@ machine-file = { path = ".", features = ["test-support"] }
 pc-config = { workspace = true, features = ["test-support"] }
 assembly = { workspace = true, features = ["test-support"] }
 machine.workspace = true
+# The JIT backend a host program supplies, for the engine-equality tests.
+x86jit-cranelift.workspace = true

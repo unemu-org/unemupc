@@ -38,11 +38,23 @@ pub fn assemble_with_verified_bases(
     options: AssemblyOptions,
     bases: &BTreeMap<PathBuf, journal_files::VerifiedBase>,
 ) -> Result<AssembledMachine, AssemblyError> {
-    assembly::assemble_mounted(
+    assemble_with_verified_bases_and_jit(config, policy, options, bases, None)
+}
+/// [`assemble_with_verified_bases`] with the embedder's JIT backend, which
+/// `cpu.engine = "jit"` requires; see `assembly::assemble_mounted_with_jit`.
+pub fn assemble_with_verified_bases_and_jit(
+    config: &MachineConfig,
+    policy: &ObservationPolicy,
+    options: AssemblyOptions,
+    bases: &BTreeMap<PathBuf, journal_files::VerifiedBase>,
+    jit: Option<assembly::JitBackendFactory>,
+) -> Result<AssembledMachine, AssemblyError> {
+    assembly::assemble_mounted_with_jit(
         config,
         policy,
         options,
         Rc::new(FileMount::with_verified_bases(bases.clone())),
+        jit,
     )
 }
 /// Validate hardware and every host input/output alias before opening a journal.

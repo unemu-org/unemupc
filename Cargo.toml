@@ -56,6 +56,11 @@ sha2 = "0.10"
 # nix build and CI. To develop against a local x86jit checkout, add a gitignored
 # [patch] override instead of editing this line.
 x86jit-core = { version = "0.3", git = "https://github.com/unemu-org/x86jit", rev = "3d793fc281debe02d998eb13ece3bec658a58edb", default-features = false }
+# The CPU core's Cranelift JIT backend, from the same repository at the same
+# revision. Only the host programs link it and hand it to the core for the
+# opt-in CPU engine (cpu.engine = "jit"); the core itself never depends on it.
+# Only the `jit` feature: no environment variables or trace files.
+x86jit-cranelift = { version = "0.3", git = "https://github.com/unemu-org/x86jit", rev = "3d793fc281debe02d998eb13ece3bec658a58edb", default-features = false, features = ["jit"] }
 # The contract between front ends and emulator cores, at the commit of release
 # v0.2.0. Every core and front end in one build must link the same copy, so the
 # pin is an exact revision, moved together with every pinned core. A bare path

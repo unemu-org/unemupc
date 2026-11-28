@@ -499,6 +499,7 @@ impl Merge for Cpu {
         m.scalar(&mut self.clock_mhz, child.clock_mhz, "clock_mhz");
         m.scalar(&mut self.turbo, child.turbo, "turbo");
         m.scalar(&mut self.fpu, child.fpu, "fpu");
+        m.scalar(&mut self.engine, child.engine, "engine");
     }
 }
 table!(Memory, [conventional_kib, extended_kib], []);

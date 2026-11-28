@@ -17,6 +17,7 @@ cargo run --offline -p unemupc -- --boot
 cargo run --offline -p unemupc -- --bios vendor/kiselev-bios/bios-xi8088.bin
 cargo run --offline -p unemupc -- machine check machines/at-freedos.toml
 cargo run --offline -p unemupc -- run --machine machines/at-freedos.toml --max-steps 12000000 --idle-limit 1000000 --print mda
+cargo run --offline -p unemupc -- run --machine machines/generic-486-freedos.toml --cpu-engine jit
 cargo run --offline -p unemupc -- media generations --base disk.img --journal disk.upfj
 cargo run --offline -p unemupc -- media verify --base disk.img --journal disk.upfj
 cargo run --offline -p unemupc -- media rollback --base disk.img --journal disk.upfj --to 0 --backup before.upfj
@@ -54,6 +55,12 @@ The standalone journal regression tests live in this workspace.
 standalone runner. Firmware comes from the machine file and repeated `--rom-dir DIR` roots;
 `--allow-unlisted-firmware`,
 `--diag-at` and `--trace-exceptions` retain the machine runner's semantics.
+`run --cpu-engine interpreter|jit` replaces the machine file's `cpu.engine`
+for that run (default `interpreter`; the JIT needs an 80386 or newer and is
+refused for an 80286); both engines give identical guest results. Before it
+runs, `run` writes the CPU line `cpu 80486dx, engine jit` (model and engine
+as the assembled CPU reports them) to stderr. See
+[machine files § CPU engine](design/machine-files.md#cpu-engine).
 `--store` and `--no-store` are refused here. Usage names `unemupc`, and
 version/about list only the PC core and its notices. Core release archives
 ship `unemupc` and `unemupc-view`.
@@ -64,12 +71,16 @@ ship `unemupc` and `unemupc-view`.
 cargo run --offline -p unemupc-view -- --machine machines/at-games-open.toml
 cargo run --offline -p unemupc-view -- --machine machines/at-games.toml --rom-dir /path/to/roms
 cargo run --offline -p unemupc-view -- --machine machines/at-freedos.toml --speed 2
+cargo run --offline -p unemupc-view -- --machine machines/generic-486-games.toml --cpu-engine jit
 ```
 
 `unemupc-view --machine FILE [--rom-dir DIR]... [--allow-unlisted-firmware]
-[--speed N|unlimited]` uses the same machine-file loading, firmware discovery,
+[--speed N|unlimited] [--cpu-engine interpreter|jit]` uses the same machine-file loading, firmware discovery,
 validation and assembly path as `unemupc run --machine`. `N` is `1` (default),
 `2` or `4`, the speeds offered by `machine-view`; other numbers are refused.
+`--cpu-engine` replaces the machine file's `cpu.engine` as for `unemupc run`,
+and the viewer writes the same `cpu <model>, engine <engine>` line to stderr
+before it opens the window; the window itself has no engine control.
 Audio plays at speed 1; accelerated modes mute it. Audio-device failures warn
 on stderr and leave the picture running. Linux needs ALSA (`libasound.so.2`;
 `libasound2` on Ubuntu 22.04), plus an X11 or Wayland desktop. Building on
@@ -621,7 +632,7 @@ every crate `unemupc` link for the exact `Cargo.lock`, with the
 licence files of each published crate (and, for a git dependency, of its
 repository root), identical texts written once. A crate that publishes no
 licence file is listed with its `authors` as copyright holders, and the
-standard texts of its licences come from `LICENSES/` (MIT, Apache-2.0, Zlib).
+standard texts of its licences come from `LICENSES/` (MIT, Apache-2.0, Zlib, and the LLVM-exception of the Cranelift crates).
 `OUTPUT` is relative to the calling directory. `TARGET` (a target triple)
 limits the crates to one platform's build; without it every platform's crates
 are listed. It needs only cargo and jq; set `CARGO_NET_OFFLINE=true` to read
@@ -711,6 +722,7 @@ shasum -a 256 --ignore-missing -c SHA256SUMS     # macOS
 cat > .cargo/config.toml <<'TOML'
 [patch."<the git URL x86jit-core is pinned to in Cargo.toml>"]
 x86jit-core = { path = "<your x86jit checkout>/x86jit-core" }
+x86jit-cranelift = { path = "<your x86jit checkout>/x86jit-cranelift" }
 TOML
 git -C <your x86jit checkout> rev-parse HEAD    # must match the rev in Cargo.lock for goldens to be valid
 ```

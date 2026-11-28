@@ -25,8 +25,8 @@ use x86jit_core::{
 };
 
 use crate::{
-    Cpu, CpuError, CpuReg, CpuStepRun, CpuStepStop, CpuStop, DeviceAccessHandler, DmaAccess,
-    StepRunOptions,
+    Cpu, CpuEngine, CpuError, CpuReg, CpuStepRun, CpuStepStop, CpuStop, DeviceAccessHandler,
+    DmaAccess, JitBackendFactory, StepRunOptions,
 };
 
 /// Consecutive deliveries that retire nothing, after which the core ends a
@@ -58,6 +58,25 @@ pub const STALL_RETURNS: u32 = 11;
 fn code_byte_address(linear: u32, ip: u32, index: usize) -> u32 {
     let base = linear.wrapping_sub(ip);
     base.wrapping_add(ip.wrapping_add(index as u32) & 0xFFFF)
+}
+
+/// Executions of a block before the JIT compiles it. Cold code (firmware
+/// set-up, one-off paths) stays interpreted, so only code that has proved
+/// hot pays for a compile.
+const JIT_TIER_UP_AFTER: u32 = 50;
+
+/// The sparse 32-bit board VM with the embedder's JIT backend.
+///
+/// Hot blocks compile on the backend's own worker thread and are swapped in
+/// when ready, so the vCPU never waits for a compile. The CPU core keeps the
+/// retired-instruction stream identical whether a block runs interpreted or
+/// compiled, and whenever its compile lands, so virtual time and every guest
+/// result match the interpreter.
+fn jit_vm(space_bytes: u64, jit: JitBackendFactory) -> Result<Vm, x86jit_core::SparseError> {
+    let mut vm = Vm::with_backend_sparse(VmConfig::reserved(space_bytes), (jit.0)())?;
+    vm.set_tier_up_after(Some(JIT_TIER_UP_AFTER));
+    vm.set_tier_up_background(true);
+    Ok(vm)
 }
 
 /// A CPU backed by the `x86jit` interpreter core (§2.1).
@@ -108,6 +127,24 @@ impl X86JitCpu {
             sparse: self.vm.mem.is_sparse(),
             reserved_bytes: stats.guest_ram_reserved,
             committed_bytes: stats.guest_ram_committed,
+        }
+    }
+
+    /// Hot blocks the JIT has compiled and published to the block cache so
+    /// far; always zero on the interpreter. It counts compiles, not runs of
+    /// compiled code. A diagnostic: when a compile lands depends on the host,
+    /// never on guest results.
+    pub fn published_compiled_blocks(&self) -> u64 {
+        self.vm.memory_stats().cache.tier_bg_published
+    }
+
+    /// The engine this CPU runs on, read from the core's backend rather than
+    /// from the configuration, so a report names what actually executes.
+    pub fn engine(&self) -> CpuEngine {
+        if self.vm.backend.compiles_machine() {
+            CpuEngine::Jit
+        } else {
+            CpuEngine::Interpreter
         }
     }
 
@@ -224,6 +261,7 @@ impl X86JitCpu {
             fpu_present,
             false,
             CpuModel::I80286,
+            None,
         )
     }
 
@@ -234,7 +272,16 @@ impl X86JitCpu {
     /// reserves 4 GiB but commits only mapped RAM, MMIO and BIOS copies.
     /// See `backlog/docs/design/machine-files.md` §Generic 386 ISA board.
     pub fn new_i386_bare(cs: u16, ip: u16, segments: RealSegments) -> Result<Self, CpuError> {
-        Self::new_machine_bare(1 << 32, cs, ip, segments, false, false, CpuModel::I80386)
+        Self::new_machine_bare(
+            1 << 32,
+            cs,
+            ip,
+            segments,
+            false,
+            false,
+            CpuModel::I80386,
+            None,
+        )
     }
 
     /// Build an Intel 80386DX with an optional 80387 coprocessor.
@@ -242,11 +289,14 @@ impl X86JitCpu {
     /// Intel 387 DX User's Manual, System Interface, and Intel 80386
     /// Programmer's Reference Manual, Chapter 11: ERROR# uses external
     /// board logic. See `backlog/docs/design/machine-config.md` §Coprocessor controls.
+    /// `jit` runs the guest on that JIT backend ([`CpuEngine::Jit`]); `None`
+    /// keeps the interpreter.
     pub fn new_i386_bare_with_fpu(
         cs: u16,
         ip: u16,
         segments: RealSegments,
         fpu_present: bool,
+        jit: Option<JitBackendFactory>,
     ) -> Result<Self, CpuError> {
         Self::new_machine_bare(
             1 << 32,
@@ -256,6 +306,7 @@ impl X86JitCpu {
             fpu_present,
             false,
             CpuModel::I80386,
+            jit,
         )
     }
 
@@ -264,11 +315,14 @@ impl X86JitCpu {
     /// both variants reset with CR0.CD/NW/ET set. External FERR routing is
     /// unavailable in the core, so retain internal numeric-error delivery.
     /// See `backlog/docs/design/machine-files.md` §Generic 486 ISA board.
+    /// `jit` runs the guest on that JIT backend ([`CpuEngine::Jit`]); `None`
+    /// keeps the interpreter.
     pub fn new_i486_bare(
         cs: u16,
         ip: u16,
         segments: RealSegments,
         cpuid: bool,
+        jit: Option<JitBackendFactory>,
     ) -> Result<Self, CpuError> {
         Self::new_machine_bare(
             1 << 32,
@@ -282,9 +336,14 @@ impl X86JitCpu {
             } else {
                 CpuModel::I80486Dx
             },
+            jit,
         )
     }
 
+    /// `jit` applies to the 32-bit models only. The 80286 has no flat
+    /// 32-bit code for the JIT to compile, so its constructors always pass
+    /// `None` and configuration refuses the JIT for it.
+    #[allow(clippy::too_many_arguments)]
     fn new_machine_bare(
         space_bytes: u64,
         cs: u16,
@@ -293,6 +352,7 @@ impl X86JitCpu {
         fpu_present: bool,
         low_reset_fetch: bool,
         model: CpuModel,
+        jit: Option<JitBackendFactory>,
     ) -> Result<Self, CpuError> {
         let fpu = if fpu_present {
             FpuModel::Present
@@ -303,8 +363,11 @@ impl X86JitCpu {
             model,
             CpuModel::I80386 | CpuModel::I80486Dx | CpuModel::I80486DxCpuid
         ) {
-            Vm::sparse(VmConfig::reserved(space_bytes))
-                .map_err(|e| CpuError::Memory(format!("{e:?}")))?
+            match jit {
+                None => Vm::sparse(VmConfig::reserved(space_bytes)),
+                Some(jit) => jit_vm(space_bytes, jit),
+            }
+            .map_err(|e| CpuError::Memory(format!("{e:?}")))?
         } else {
             Vm::new(VmConfig::flat(space_bytes))
         };
@@ -367,7 +430,16 @@ impl X86JitCpu {
         ip: u16,
         segments: RealSegments,
     ) -> Result<Self, CpuError> {
-        Self::new_machine_bare(space_bytes, cs, ip, segments, true, true, CpuModel::I80286)
+        Self::new_machine_bare(
+            space_bytes,
+            cs,
+            ip,
+            segments,
+            true,
+            true,
+            CpuModel::I80286,
+            None,
+        )
     }
 
     /// Map a conventional RAM window `[base, base + size)` as `RWX` `Ram`.
@@ -1592,6 +1664,7 @@ mod tests {
                 present,
                 false,
                 model,
+                None,
             )
             .unwrap();
             assert_eq!(cpu.cpu.numeric_error_route(), route);
@@ -2130,7 +2203,7 @@ mod tests {
                 FpuModel::None
             };
             let mut cpu =
-                X86JitCpu::new_i386_bare_with_fpu(0, 0x1000, RealSegments::flat(0), present)
+                X86JitCpu::new_i386_bare_with_fpu(0, 0x1000, RealSegments::flat(0), present, None)
                     .unwrap();
             assert_eq!(cpu.vm.fpu_model(), expected);
             assert_eq!(cpu.cpu.fpu_model(), expected);
@@ -3443,6 +3516,7 @@ mod i386_tests {
             model != CpuModel::I80386,
             false,
             model,
+            None,
         )
         .unwrap();
         cpu.map_ram(0, 0x100000).unwrap();
@@ -3620,6 +3694,7 @@ mod i386_tests {
             false,
             false,
             CpuModel::I80386,
+            None,
         );
         assert!(matches!(result, Err(CpuError::Memory(message)) if message == "InvalidSpan"));
     }
@@ -3730,7 +3805,7 @@ mod i486_tests {
     fn i486_reset_uses_model_signature_control_bits_and_internal_fpu_route() {
         for (cpuid, signature) in [(false, 0x0403), (true, 0x0410)] {
             let mut cpu =
-                X86JitCpu::new_i486_bare(0, 0x1000, RealSegments::default(), cpuid).unwrap();
+                X86JitCpu::new_i486_bare(0, 0x1000, RealSegments::default(), cpuid, None).unwrap();
             assert!(cpu.memory_backing_stats().sparse);
             for a20 in [false, true] {
                 cpu.cpu.cpu.legacy.cr0 = 1;
@@ -3745,5 +3820,34 @@ mod i486_tests {
                 assert_eq!(cpu.cpu.a20_enabled(), a20);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod engine_tests {
+    use super::*;
+
+    // Runs on a supplied JIT backend are tested where a backend exists, in
+    // machine-file's cpu_engine tests: this crate links none.
+
+    #[test]
+    fn without_a_supplied_backend_every_model_interprets() {
+        let cpu = X86JitCpu::new_i486_bare(0, 0x1000, RealSegments::default(), true, None).unwrap();
+        assert_eq!(cpu.engine(), CpuEngine::Interpreter);
+        assert_eq!(cpu.published_compiled_blocks(), 0);
+        let cpu =
+            X86JitCpu::new_i286_bare_with_fpu(1 << 24, 0, 0x1000, RealSegments::flat(0), true)
+                .unwrap();
+        assert_eq!(cpu.engine(), CpuEngine::Interpreter);
+    }
+
+    #[test]
+    fn engine_names_round_trip() {
+        for engine in CpuEngine::ALL {
+            assert_eq!(CpuEngine::from_name(engine.name()), Some(engine));
+        }
+        assert_eq!(CpuEngine::default(), CpuEngine::Interpreter);
+        assert_eq!(CpuEngine::from_name("cranelift"), None);
+        assert_eq!(CpuEngine::from_name("JIT"), None);
     }
 }

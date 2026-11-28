@@ -117,12 +117,16 @@ table!(Board {
     rtc,
     mouse
 });
+// The engine is a local run choice of the host program, not hardware: a
+// stored config never carries it, so identical hardware keeps one identity.
 table!(Cpu {
     model,
     rate,
     clock_mhz,
     turbo,
     fpu
+} ignore {
+    engine
 });
 table!(Memory {
     conventional_kib,
