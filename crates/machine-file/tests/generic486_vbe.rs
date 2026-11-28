@@ -11,7 +11,7 @@ use cpu::Cpu;
 use std::path::{Path, PathBuf};
 use video::{Frame, PixelFormat};
 
-const CPU_REV: &str = "60157dab84d6e9db416c2b069625b06f614c7c81";
+const CPU_REV: &str = "dd4316586f1459cec0618008b17817a0d26245a2";
 const PROGRAM: &[u8] = include_bytes!("fixtures/seabios-vbe.bin");
 const BOCHS_ROM_SHA256: &str = "609be4bab79bf84297c50ef80c070147a2bd71ae1d457e8329b3feb5ec59b8c3";
 

@@ -2904,7 +2904,7 @@ checksum = "ea6fc2961e4ef194dcbfe56bb845534d0dc8098940c7e5c012a258bfec6701bd"
 [[package]]
 name = "x86jit-core"
 version = "0.3.0"
-source = "git+https://github.com/unemu-org/x86jit?rev=60157dab84d6e9db416c2b069625b06f614c7c81#60157dab84d6e9db416c2b069625b06f614c7c81"
+source = "git+https://github.com/unemu-org/x86jit?rev=dd4316586f1459cec0618008b17817a0d26245a2#dd4316586f1459cec0618008b17817a0d26245a2"
 dependencies = [
  "iced-x86",
 ]
@@ -2912,7 +2912,7 @@ dependencies = [
 [[package]]
 name = "x86jit-cranelift"
 version = "0.3.0"
-source = "git+https://github.com/unemu-org/x86jit?rev=60157dab84d6e9db416c2b069625b06f614c7c81#60157dab84d6e9db416c2b069625b06f614c7c81"
+source = "git+https://github.com/unemu-org/x86jit?rev=dd4316586f1459cec0618008b17817a0d26245a2#dd4316586f1459cec0618008b17817a0d26245a2"
 dependencies = [
  "cranelift",
  "cranelift-module",
@@ -2928,7 +2928,7 @@ dependencies = [
 [[package]]
 name = "x86jit-cranelift-jit"
 version = "0.135.8"
-source = "git+https://github.com/unemu-org/x86jit?rev=60157dab84d6e9db416c2b069625b06f614c7c81#60157dab84d6e9db416c2b069625b06f614c7c81"
+source = "git+https://github.com/unemu-org/x86jit?rev=dd4316586f1459cec0618008b17817a0d26245a2#dd4316586f1459cec0618008b17817a0d26245a2"
 dependencies = [
  "anyhow",
  "cranelift-codegen",

@@ -18,7 +18,7 @@ use video::{Frame, PixelFormat};
 #[path = "support/speed.rs"]
 mod speed;
 
-const CPU_REV: &str = "60157dab84d6e9db416c2b069625b06f614c7c81";
+const CPU_REV: &str = "dd4316586f1459cec0618008b17817a0d26245a2";
 const LFB32: &[u8] = include_bytes!("fixtures/bochs-vbe-lfb32.bin");
 const LFB16: &[u8] = include_bytes!("fixtures/bochs-vbe-lfb16.bin");
 const SPEED_RAM: &[u8] = include_bytes!("fixtures/bochs-vbe-speed-ram.bin");
