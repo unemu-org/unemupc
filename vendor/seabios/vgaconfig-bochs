@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# SeaVGABIOS rel-1.17.0 fragment; olddefconfig supplies the pinned defaults.
+
+# The Bochs variant drives the DISPI interface at 1CEh/1CFh for VBE modes
+# and falls back to standard VGA when its ID handshake fails.
+CONFIG_QEMU=y
+CONFIG_VGA_BOCHS=y
+CONFIG_VGA_BOCHS_STDVGA=y
+# Firmware is delivered by fw_cfg on an ISA board, without a PCI device.
+# Without a PCI BAR the linear framebuffer stays at the fixed E0000000h.
+# CONFIG_VGA_PCI is not set
+# The card answers the VBE 2.0 functions through this BIOS.
+CONFIG_VGA_VBE=y
+# SeaVGABIOS does not retain the system BIOS's VARFSEG debug-port variable.
+# Its supported serial debug path exposes initialization diagnostics on COM1.
+CONFIG_DEBUG_SERIAL=y
+CONFIG_DEBUG_SERIAL_PORT=0x3f8
+# CONFIG_DEBUG_IO is not set
+CONFIG_DEBUG_LEVEL=1

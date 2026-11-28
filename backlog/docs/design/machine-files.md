@@ -493,6 +493,9 @@ accepted, including with the run-only escape: SeaBIOS allocates VGA ROMs
 sequentially from C0000h and ignores addresses embedded in fw_cfg filenames
 (`src/optionroms.c`, `run_file_roms`; `src/malloc.c`, `rom_reserve` and
 `rom_confirm`). A different base would misrepresent where the ROM executes.
+Validation lets the deployed ROM extend up to E0000h, where the system BIOS
+image starts on these boards; a longer ROM is refused at its `base`. This is
+a static upper bound: SeaBIOS's runtime limit (`rom_get_max`) may be lower. The Bochs VBE build is 39,424 bytes.
 The IBM 5170 continues to map its video ROM as before. This does not enable arbitrary `genroms/` delivery.
 
 **MEASURED, CPU pin `274d48a8`:** diskless POST shows SeaBIOS boot text in
@@ -631,6 +634,64 @@ The board therefore retains internal routing; its reserved F0h/F1h ports use
 the inert absent-socket device, never the AT IRQ13 error latch. This is a
 provisional emulator policy, not CR0.NE-driven FERR#/IGNNE# fidelity. See
 [486 gaps](protected-mode-gaps.md#486-board-coverage-and-gaps).
+
+### Generic 486 ISA board with Bochs VBE
+
+`machines/generic-486-seabios-vbe.toml` is the generic 486 SeaBIOS board
+(80486DX, integrated FPU, 33 MHz, 640 KiB + 15 MiB, COM1) with
+`[[card]] kind = "vga"`, `model = "bochs-vbe"`, `memory_mib = 16` and the
+SeaVGABIOS Bochs VBE build as its video ROM:
+
+```toml
+[[firmware.option_roms]]
+image = "../vendor/seabios/build/vgabios-1.17.0-bochs.bin"
+sha256 = "609be4bab79bf84297c50ef80c070147a2bd71ae1d457e8329b3feb5ec59b8c3"
+base = 0xC0000
+```
+
+The catalogue ID is `seavgabios-1.17.0-unemu1-bochs` (39,424 bytes,
+LGPL-3.0-only, built by `vendor/seabios/fetch.sh` from the same pinned fork
+commit as the other two ROMs, with our `vgaconfig-bochs`; see
+[`vendor/seabios/README.md`](../../../vendor/seabios/README.md#bochs-vbe-rom)).
+It is delivered through fw_cfg like the standard-VGA ROM. Without the
+DISPI interface it falls back to standard VGA, so it also runs on a plain
+`vga` card. The 4F01h mode blocks give the linear framebuffer at
+E0000000h: the ROM has no PCI header, so it uses the fixed Bochs address
+that the card maps.
+
+**MEASURED, CPU pin `60157dab`** (`crates/machine-file/tests/generic486_vbe.rs`):
+
+- Diskless POST reaches `No bootable device.` with the same text rows and
+  the same font-rendered hash as `generic-486-seabios.toml`
+  (`a9ec051a…`), at 11,020,243 retired instructions against 10,975,155
+  after the 10,000,000-step budget. COM1 shows `Start SeaVGABIOS (version
+  1.17.0-unemupc-bochs)` and `VBE DISPI: lfb_addr=e0000000, size 16 MB`.
+  The BIOS removes only modes 199h–19Eh (3840, 4096 and 5120 pixels wide,
+  above the card's 2560-pixel GETCAPS maximum).
+- 4F00h returns `VESA`, version 0300h and 256 × 64 KiB. The mode list holds
+  100h–107h, 10Dh–11Fh, 140h–14Ch, 175h–198h, then the standard VGA modes
+  00h–07h, 0Dh–13h and 6Ah. The 640×480 modes are **101h** (8 bpp),
+  **110h** (15), **111h** (16), **112h** (24) and **142h** (32).
+- A project-owned program (`fixtures/seabios-vbe.asm`, two sectors on a
+  generated 1.44 MB floppy) checks 4F01h for 101h, 111h and 142h
+  (attributes with the LFB bit, 640/1280/2560 bytes per line, memory model
+  4 or 6, the 5:6:5 and 8:8:8 masks, PhysBasePtr E0000000h); sets each with
+  the LFB bit (4F02h), writes pixel n = n through FS in big real mode and
+  checks every captured pixel; sets the DAC to 8 bits with 4F08h (read back
+  8) and sees unshifted palette values in the 8 bpp frame; sets 101h banked
+  and fills it through A0000h with 4F05h for banks 0–4 (read back bank 4),
+  every pixel checked; and prints `VBE` with INT 10h AH=0Eh in 111h. The
+  teletype draws through INT 15h AH=87h: white glyphs only in the first
+  three 8×16 cells (38, 45 and 40 lit pixels), black elsewhere. 4F03h
+  returns 4111h.
+- Both CPU engines retire 19,796,148 instructions, reach each stage at the
+  same count and leave identical frames, results and VBE blocks.
+
+**Known limitation:** the BIOS lists the 4 bpp planar modes 102h, 104h and
+106h, which the card does not support. Setting 102h after 111h returns
+004Fh, but the DISPI BPP register still reads 16. A fork change that probes
+each mode's depth at initialisation (write BPP, read it back) removes them;
+it needs a fork release, so the shipped ROM keeps the upstream behaviour.
 
 ### Serial mouse
 
@@ -1411,10 +1472,13 @@ a banked card (MEASURED, debug build: a store loop over the window retires
 over the framebuffer). Register behaviour, the eight-bit DAC and the model
 choices are tabled in `crates/devices/src/bochs_vbe.rs`. Planar 4-bit VBE
 modes are not supported: the card refuses BPP 4, so the bundled VGA BIOS
-build must not offer them (SeaVGABIOS lists the MM_PLANAR modes 102h, 104h
-and 106h). Code cannot run from video memory: the framebuffer is mapped
-without execute and the window is trapped. No shipped machine file selects
-the card yet.
+build must not offer them. The current SeaVGABIOS Bochs build still lists
+the MM_PLANAR modes 102h, 104h and 106h and reports success when one is
+set, while the card keeps its previous depth; see
+[Generic 486 ISA board with Bochs VBE](#generic-486-isa-board-with-bochs-vbe).
+Code cannot run from video memory: the framebuffer is mapped
+without execute and the window is trapped. `machines/generic-486-seabios-vbe.toml`
+selects the card.
 
 When an IDE card uses the primary channel, lowering gives the FDC card
 `0x3F0–0x3F5` and `0x3F7`, using `FdcCfg::port_windows(true)`. The IDE control

@@ -12,8 +12,9 @@ it through fw_cfg, ATA and block commands. The second fix probes the math
 coprocessor before setting the BDA equipment flag and enabling IRQ13, so a
 386 without an FPU reports its actual hardware. Fixes are submitted upstream
 (`upc-o0j.23`); there are no source patches applied by this build recipe.
-Only this README, the build script and our [`config`](config) and
-[`vgaconfig`](vgaconfig) fragments are committed.
+Only this README, the build script and our [`config`](config),
+[`vgaconfig`](vgaconfig) and [`vgaconfig-bochs`](vgaconfig-bochs) fragments
+are committed.
 The clone (`src/`), temporary exports and release source archive (`build/`),
 and ROM are gitignored. The release includes LGPLv3-noticed rebuild files in
 `unemu/` and README updates. The maintainer replaced the release and tag under
@@ -24,7 +25,7 @@ The catalogue identifies this image as `seabios-1.17.0-unemu1-isa`, separating
 its bytes and provenance from the original upstream fixture. The output
 filename and version suffix stay unchanged. The board is `generic-386-isa`
 (`machines/generic-386-seabios.toml`); existing 286 machines do not use it.
-CI builds both ROMs in the fixtures lane. Execution qualification is recorded below.
+CI builds all three ROMs in the fixtures lane. Execution qualification is recorded below.
 
 ## Execution boundary (historical, CPU pin `deae5bac`)
 
@@ -250,13 +251,72 @@ path on COM1 instead. The system BIOS still logs at 402h and mirrors its
 console to COM1; SeaVGABIOS initialization lines appear on COM1. No emulator
 port alias or firmware-source patch hides either diagnostic issue.
 
+## Bochs VBE ROM
+
+The same command also builds `build/vgabios-1.17.0-bochs.bin`, SeaVGABIOS's
+Bochs VBE variant, from the same pinned source archive in its own temporary
+export. It is the video BIOS of `machines/generic-486-seabios-vbe.toml`,
+whose `vga` card has `model = "bochs-vbe"`. The catalogue ID is
+`seavgabios-1.17.0-unemu1-bochs`, with role video BIOS and fits for
+`generic-386-isa` and `generic-486-isa`. The fork is not changed for this
+build: the release tag, the release source asset and the other two ROMs are
+unchanged. Our committed `vgaconfig-bochs` fragment is the only additional
+input. The release's `unemu/` rebuild recipe does not carry it: until a
+later fork release does, the rebuild recipe for this ROM is this `fetch.sh`
+with `vgaconfig-bochs` on top of the `v1.17.0-unemu1` release source, not
+the release's `unemu/build.sh`.
+
+**READ:** `vgasrc/Kconfig` offers `CONFIG_VGA_BOCHS` ("QEMU/Bochs VBE
+SVGA") with the `VGA_BOCHS_STDVGA` variant; `vgasrc/vgahw.h` dispatches it
+to `bochsvga_*`, which fall back to `stdvga_*` when DISPI is absent or
+disabled. `bochsvga_setup` (`vgasrc/bochsvga.c`) writes and reads back the
+DISPI ID at 1CEh/1CFh, then reads the video memory size and the GETCAPS
+maxima and removes modes that exceed them. With `CONFIG_VGA_PCI=n` it skips
+the PCI BAR lookup and keeps the linear framebuffer at the fixed
+`VBE_DISPI_LFB_PHYSICAL_ADDRESS`, E0000000h, which is where the card maps
+it. `CONFIG_VGA_VBE=y` enables the VBE functions (`vgasrc/vbe.c`), which
+report VBE version 3.0. The serial-debug settings match `vgaconfig`.
+
+| Input / output | SHA-256 |
+|---|---|
+| Our `vgaconfig-bochs` fragment | `80d550bdb1ff17be47e8a6d2438fb633edd7ceac65b729312b4d93549d35cc50` |
+| `build/vgabios-1.17.0-bochs.bin` | `609be4bab79bf84297c50ef80c070147a2bd71ae1d457e8329b3feb5ec59b8c3` |
+
+**MEASURED on 2026-11-28:** two builds in different temporary exports
+produced identical 39,424-byte images with the hash above, with the same
+GCC 15.2.0 / binutils 2.46 firmware toolchain; both also reproduced the
+pinned system BIOS and standard-VGA hashes. The version is fixed at
+`1.17.0-unemupc-bochs`. The image is 38.5 KiB, longer than the 32 KiB
+standard-VGA build: the mode table and the DISPI and VBE code do not fit
+32 KiB. SeaBIOS deploys it from C0000h, and the next option ROM may start at
+the following 2 KiB boundary (`src/optionroms.c`, `rom_reserve`). The
+generic boards accept a fw_cfg video ROM up to E0000h, a static bound at the
+system BIOS image; SeaBIOS's runtime limit (`rom_get_max`) may be lower. `fetch.sh` leaves
+`build/vgabios-bochs.disasm`; its mnemonics contain no post-386
+instruction (no BSWAP, CPUID, WBINVD/INVD/INVLPG, timestamp/MSR,
+XADD/CMPXCHG, CMOV or SIMD). This is an instruction audit, not execution
+coverage.
+
+**4 bpp planar modes (known limitation).** The card refuses BPP 4 (the
+write is ignored; see `crates/devices/src/bochs_vbe.rs`). SeaVGABIOS still
+lists the MM_PLANAR modes 102h, 104h and 106h: `bochsvga_setup` drops modes
+only for width, depth above the GETCAPS maximum and memory, and depth 4 is
+below the maximum of 32. `bochsvga_set_mode` writes BPP without reading it
+back, so 4F02h for these modes returns success (004Fh) while the card keeps
+its previous depth. **MEASURED:** after mode 111h, setting mode 102h
+returns 004Fh and the DISPI BPP register still reads 16. A guest that uses
+these modes sees a wrong picture. The fix belongs in the fork (probe each
+mode's depth at init and drop the refused ones), which needs a fork release;
+until then this ROM keeps the upstream behaviour.
+
 ## Provenance and licence
 
 Upstream is [SeaBIOS](https://github.com/coreboot/seabios), with project-level
 licence **LGPL-3.0-only**. **READ at the pinned revision:**
 `docs/Download.md:1–2` permits distribution under GNU LGPLv3;
 `src/post.c:1–6`, `src/sercon.c:1–5`, `src/hw/ata.c:1–6`,
-`vgasrc/vgainit.c:1–7`, `vgasrc/stdvga.c:1–7` and
+`vgasrc/vgainit.c:1–7`, `vgasrc/stdvga.c:1–7`, `vgasrc/bochsvga.c:1–7`,
+`vgasrc/vbe.c:1–7` and
 `Makefile:1–5` likewise name GNU LGPLv3 without an "or later" grant.
 `COPYING.LESSER:1–16` contains LGPL version 3 and incorporates GPLv3.
 Its later-version provision (`COPYING.LESSER:151–156`) requires the library

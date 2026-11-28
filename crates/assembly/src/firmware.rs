@@ -521,6 +521,39 @@ pub const SEAVGABIOS_1_17_0_STDVGA: FirmwareEntry = FirmwareEntry {
     superseded_by: None,
 };
 
+/// SeaVGABIOS Bochs VBE ISA build from the same fork commit as the system
+/// BIOS: the IBM VGA plus VBE modes through the Bochs DISPI interface, linear
+/// framebuffer at E0000000h. The BIOS reports VBE version 3.0 (VESA BIOS
+/// Extension Core Functions Standard 3.0). Without DISPI it is a standard VGA
+/// BIOS. The release source archive holds its source, but the release's
+/// rebuild recipe does not: it is built by `vendor/seabios/fetch.sh` with
+/// `vgaconfig-bochs` on top of that source. See firmware design §3.6.
+pub const SEAVGABIOS_1_17_0_BOCHS: FirmwareEntry = FirmwareEntry {
+    id: "seavgabios-1.17.0-unemu1-bochs",
+    kind: FirmwareKind::VideoBios,
+    sha256: "609be4bab79bf84297c50ef80c070147a2bd71ae1d457e8329b3feb5ec59b8c3",
+    size: 39424,
+    base: FirmwareBase::Suggested(0xC0000),
+    scan_window: None,
+    video_scan_window: None,
+    rom_offset: 0,
+    provides: &[],
+    capabilities: &[],
+    requires: &[FirmwarePart::VgaRegisters],
+    cpu_min: FirmwareCpu::I80386,
+    boards: &["generic-386-isa", "generic-486-isa"],
+    distribution: FirmwareDistribution::Open {
+        fetch: "vendor/seabios/fetch.sh",
+        license: "LGPL-3.0-only",
+        provenance: "unemu-org/seabios v1.17.0-unemu1 ac8cabc4585f4922139a841b1c91cceb432b8728, Bochs VBE ISA configuration",
+        source_archive_sha256: Some(SEABIOS_SOURCE_ARCHIVE),
+    },
+    parts: &[],
+    status: FirmwareStatus::Listed,
+    cmos_layout: None,
+    superseded_by: None,
+};
+
 /// Unmodified Xi 8088 build pinned by `vendor/kiselev-bios/fetch.sh`.
 /// The catalogue promises the tested 286 machine, rather than upstream's wider
 /// CPU support. See `vendor/kiselev-bios/README.md`, Image size and mapping.
@@ -879,8 +912,12 @@ pub fn validate_option_roms_with_catalogue(
             });
         }
         let (start, end) = if crate::fw_cfg::video_rom_file(config, image) {
-            // This is the board's firmware deployment window, not an ISA scan.
-            (0xC0000, 0xC8000)
+            // This is the board's firmware deployment window, not an ISA scan:
+            // SeaBIOS (optionroms.c, rom_reserve) copies the video ROM into
+            // shadow RAM from C0000h. E0000h, where the system BIOS image
+            // starts on these boards, is a static upper bound; SeaBIOS's own
+            // runtime limit (rom_get_max) may be lower.
+            (0xC0000, 0xE0000)
         } else if video_rom {
             let known_bios = matched_entry(bios, catalogue);
             known_bios.and_then(|bios| bios.video_scan_window).ok_or(
@@ -2198,6 +2235,36 @@ mod tests {
         assert_eq!(entry.sha256, hash);
     }
 
+    /// Both SeaVGABIOS entries pin the output hash and size their fetch
+    /// script checks.
+    #[test]
+    fn seavgabios_entries_match_the_pinned_fixture_recipe() {
+        let script = include_str!("../../../vendor/seabios/fetch.sh");
+        for (entry, variable, fragment) in [
+            (SEAVGABIOS_1_17_0_STDVGA, "VGA_OUTPUT_SHA256", "vgaconfig "),
+            (
+                SEAVGABIOS_1_17_0_BOCHS,
+                "VGA_BOCHS_OUTPUT_SHA256",
+                "vgaconfig-bochs ",
+            ),
+        ] {
+            let hash = script
+                .lines()
+                .find_map(|line| {
+                    line.strip_prefix(&format!("{variable}=\""))?
+                        .strip_suffix('"')
+                })
+                .expect("fixture script must pin its output hash");
+            assert_eq!(entry.sha256, hash, "{}", entry.id);
+            let call = script
+                .lines()
+                .find(|line| line.starts_with(&format!("build_vgabios {fragment}")))
+                .expect("fixture script builds the variant");
+            let size: u64 = call.split_whitespace().nth(4).unwrap().parse().unwrap();
+            assert_eq!(entry.size, size, "{}", entry.id);
+        }
+    }
+
     /// `SOURCE_ARCHIVE_SHA256` of each open fetch script.
     fn fetch_script_source_pins() -> [(&'static str, String); 5] {
         let pin = |script: &str| {
@@ -2393,9 +2460,53 @@ mod tests {
         );
     }
 
+    /// A checksummed option ROM of `len` bytes at C0000h on a generic board.
+    fn generic_with_video_rom(len: usize) -> MachineConfig {
+        let mut config = config();
+        config.board = BoardModel::Generic486Isa;
+        let mut rom = vec![0; len];
+        rom[..3].copy_from_slice(&[0x55, 0xAA, (len / 512) as u8]);
+        rom[len - 1] = 0u8.wrapping_sub(rom.iter().copied().fold(0, u8::wrapping_add));
+        config.images.push(LoadImage {
+            base: 0xC0000,
+            source: ImageSource::Inline(rom),
+            kind: ImageKind::Rom,
+            provides: Vec::new(),
+        });
+        config
+    }
+
+    /// SeaBIOS copies the fw_cfg video ROM into shadow RAM from C0000h. The
+    /// static bound is E0000h, the system BIOS image base on these boards
+    /// (SeaBIOS's runtime limit may be lower): a VBE BIOS longer than 32 KiB
+    /// is accepted, one reaching into the BIOS image is not.
+    #[test]
+    fn generic_board_video_rom_may_fill_the_option_rom_area_below_the_bios() {
+        let catalogue = [synthetic()];
+        validate_option_roms_with_catalogue(&generic_with_video_rom(39424), &catalogue).unwrap();
+        validate_option_roms_with_catalogue(&generic_with_video_rom(0x1FE00), &catalogue).unwrap();
+        let mut too_long = generic_with_video_rom(0x1FE00);
+        let ImageSource::Inline(rom) = &mut too_long.images[1].source else {
+            unreachable!();
+        };
+        rom.extend([0; 1024]);
+        assert!(matches!(
+            validate_option_roms_with_catalogue(&too_long, &catalogue),
+            Err(ConfigError::OptionRomOutsideScanWindow {
+                start: 0xC0000,
+                end: 0xE0000,
+                ..
+            })
+        ));
+    }
+
     #[test]
     fn seabios_entries_pin_the_release_source_archive() {
-        for entry in [SEABIOS_1_17_0_ISA, SEAVGABIOS_1_17_0_STDVGA] {
+        for entry in [
+            SEABIOS_1_17_0_ISA,
+            SEAVGABIOS_1_17_0_STDVGA,
+            SEAVGABIOS_1_17_0_BOCHS,
+        ] {
             let FirmwareDistribution::Open {
                 source_archive_sha256,
                 provenance,

@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+schema = 1
+name = "generic-486-seabios-vbe"
+description = "Intel486 DX ISA board with the unemu SeaBIOS fork, a Bochs VBE card and COM1"
+
+[board]
+model = "generic-486-isa"
+
+[board.rtc]
+start = "2000-01-01T00:00:00"
+nvram = "derived"
+
+[cpu]
+model = "80486dx"
+fpu = "integrated"
+clock_mhz = 33
+
+[memory]
+conventional_kib = 640
+extended_kib = 15360
+
+[firmware.bios]
+image = "../vendor/seabios/bios-1.17.0-isa.bin"
+sha256 = "9aace5de21df74ba42243664454d1f2130c143fc04ce5b4e69c0c71e55e9b699"
+
+# SeaBIOS receives this video ROM through fw_cfg and copies it to C0000h.
+# It offers the VBE modes of the card below, with the linear framebuffer at
+# E0000000h.
+[[firmware.option_roms]]
+image = "../vendor/seabios/build/vgabios-1.17.0-bochs.bin"
+sha256 = "609be4bab79bf84297c50ef80c070147a2bd71ae1d457e8329b3feb5ec59b8c3"
+base = 0xC0000
+
+[[card]]
+kind = "vga"
+model = "bochs-vbe"
+memory_mib = 16
+
+[[card]]
+kind = "uart-16550"
+port = 0x3F8
+irq = 4

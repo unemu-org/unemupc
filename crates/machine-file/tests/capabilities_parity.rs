@@ -227,6 +227,8 @@ fn repository_machine_file_parity() {
         ("machines/generic-486-freedos.toml".into(), "15d8146732683afe9e9ff865d82aafab9441f35000d378cdafb914893e6cb94e".into()),
         ("machines/generic-486-games.toml".into(), "8228c77db74a330518a6acc8060f5130813b8cc694accfaaee4ab231e85c6de7".into()),
         ("machines/generic-486-ide.toml".into(), "ee6e31860a9cb03a4339c3b7696f6f969ffe867d2c9e8ad8954a8bf355dd1efa".into()),
+        // The Bochs VBE card and its video BIOS.
+        ("machines/generic-486-seabios-vbe.toml".into(), "897160e6585c1b425381354ce2e7912580b0b30c0e765fa360065d2d2db05cf4".into()),
         ("machines/generic-486-seabios.toml".into(), "d43e0b355235b30aec8244dec0efb47cd7d2c843d38c10a68466329740c2f54a".into()),
         ("machines/presets/ibm-5170.toml".into(), "resolve:<repo>/machines/presets/ibm-5170.toml:16: firmware.bios.image: required fields are missing: firmware.bios.image (<repo>/machines/presets/ibm-5170.toml:16); inheritance chain: <repo>/machines/presets/ibm-5170.toml".into()),
     ];

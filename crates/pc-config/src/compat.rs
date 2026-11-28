@@ -164,6 +164,7 @@ pub const MACHINE_KEYS: &[Row] = &[
 pub const CATALOGUE: &[Row] = &[
     ("seabios-1.17.0-unemu1-isa", Release(0, 0, 5)),
     ("seavgabios-1.17.0-unemu1-stdvga", Release(0, 0, 5)),
+    ("seavgabios-1.17.0-unemu1-bochs", Release(0, 0, 6)),
     ("kiselev-xi8088-1.0.2", BASELINE),
     ("kiselev-xi8088-1.0.2-atreset", BASELINE),
     ("unemu-at-bios-1.0.2-unemu.3", BASELINE),
@@ -727,6 +728,19 @@ mod tests {
         assert_eq!(
             firmware(entry.sha256, entry.size).unwrap(),
             Release(0, 0, 5)
+        );
+    }
+
+    #[test]
+    fn seavgabios_bochs_requires_the_release_with_the_bochs_vbe_card() {
+        let entry = assembly::BoardModel::Generic486Isa
+            .firmware_catalogue()
+            .iter()
+            .find(|entry| entry.id == "seavgabios-1.17.0-unemu1-bochs")
+            .unwrap();
+        assert_eq!(
+            firmware(entry.sha256, entry.size).unwrap(),
+            Release(0, 0, 6)
         );
     }
 

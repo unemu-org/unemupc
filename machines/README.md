@@ -16,6 +16,11 @@ remains the exact override and conflicts with `clock_mhz` in the same layer.
 The IBM AT default remains its calibrated 8/13 rate. See
 [clock rules and presets](../backlog/docs/design/machine-files.md#nominal-cpu-clocks).
 
+`generic-486-seabios-vbe.toml` is the diskless 486 profile with a 16 MiB
+Bochs VBE card and the SeaVGABIOS Bochs VBE build, which offers VBE modes
+with a linear framebuffer at E0000000h; see
+[the board description](../backlog/docs/design/machine-files.md#generic-486-isa-board-with-bochs-vbe).
+
 `generic-386-freedos.toml` and `generic-486-freedos.toml` extend those
 profiles with the pinned FreeDOS 1.44 MB floppy in A:. Their `-ide.toml`
 counterparts extend the floppy profiles with the readonly `vendor/hdd/fat16.img`

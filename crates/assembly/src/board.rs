@@ -114,6 +114,7 @@ impl BoardModel {
             Self::Generic386Isa | Self::Generic486Isa => &[
                 crate::firmware::SEABIOS_1_17_0_ISA,
                 crate::firmware::SEAVGABIOS_1_17_0_STDVGA,
+                crate::firmware::SEAVGABIOS_1_17_0_BOCHS,
             ],
             Self::Bare => &[],
         }

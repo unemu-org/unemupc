@@ -586,7 +586,9 @@ zero defaults and key 0Eh = 0 (no boot menu); files are `vgaroms/*`,
 description. ROM catalogue placement must distinguish firmware-loaded ROMs
 from pre-mapped ROMs. This distinction is implemented for video ROMs: both
 generic ISA boards use the normal `firmware.option_roms` source at C0000h,
-with catalogue `seavgabios-1.17.0-unemu1-stdvga`. Assembly freezes its resolved
+with catalogue `seavgabios-1.17.0-unemu1-stdvga`, or
+`seavgabios-1.17.0-unemu1-bochs` for the Bochs VBE card
+(machine-files.md §Generic 486 ISA board with Bochs VBE). Assembly freezes its resolved
 bytes as `vgaroms/vga-c0000.bin` and leaves C0000h empty for SeaBIOS to deploy.
 Normal pins, ROM header/checksum, board/CPU/card requirements and catalogue
 membership still apply; only the existing run-only escape relaxes membership.

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: AGPL-3.0-or-later
-# Build the pinned unemu SeaBIOS and standard-VGA ROMs; see README.md.
+# Build the pinned unemu SeaBIOS, standard-VGA and Bochs VBE ROMs; see README.md.
 # Run from the repository root: nix develop .#firmware --command bash vendor/seabios/fetch.sh
 # Requires an i686-elf GCC/binutils cross toolchain, native C compiler, Python 3,
 # GNU make, git, tar, SHA-256 and standard shell tools. ACPI is off: no IASL.
@@ -36,6 +36,8 @@ CONFIG_SHA256="d1958e10e395c8eb00ea9e99ab1c6fe86cf1acb9a0480d0f7a1b551fa4fe8e2a"
 OUTPUT_SHA256="9aace5de21df74ba42243664454d1f2130c143fc04ce5b4e69c0c71e55e9b699"
 VGA_CONFIG_SHA256="370f78d9c30db41bd155d7b360fbf5cd0d6e26e390e19c106c14d32dbf5b5d40"
 VGA_OUTPUT_SHA256="1adc6c0fa72b93c5d0659575c992b1bf6f64fd451c444b2a735e22f0a3d6e925"
+VGA_BOCHS_CONFIG_SHA256="80d550bdb1ff17be47e8a6d2438fb633edd7ceac65b729312b4d93549d35cc50"
+VGA_BOCHS_OUTPUT_SHA256="609be4bab79bf84297c50ef80c070147a2bd71ae1d457e8329b3feb5ec59b8c3"
 VERSION="1.17.0"
 EXTRAVERSION="-unemupc98-isa"
 
@@ -48,6 +50,7 @@ CROSS_PREFIX="${CROSS_PREFIX:-i686-elf-}"
 HOSTCC="${HOSTCC:-cc}"
 check_sha256 "$HERE/config" "$CONFIG_SHA256"
 check_sha256 "$HERE/vgaconfig" "$VGA_CONFIG_SHA256"
+check_sha256 "$HERE/vgaconfig-bochs" "$VGA_BOCHS_CONFIG_SHA256"
 
 if [ ! -d "$SRC_DIR/.git" ]; then
 	git clone "$REPO" "$SRC_DIR"
@@ -154,33 +157,44 @@ if ! cmp -s "$IMAGE" "$OUT"; then
 fi
 echo "built $OUT ($SIZE bytes) from $COMMIT"
 
-# A separate export keeps the system BIOS configuration and bytes independent.
-mkdir "$BUILD_DIR/vgatree"
-tar --exclude=unemu -xf "$BUILD_DIR/source.tar" -C "$BUILD_DIR/vgatree"
-cp "$HERE/vgaconfig" "$BUILD_DIR/vgatree/.config"
-printf '%s\n' "$VERSION" > "$BUILD_DIR/vgatree/.version"
-MAKE_ARGS[1]="$BUILD_DIR/vgatree"
-MAKE_ARGS[6]="EXTRAVERSION=-unemupc-stdvga"
-make "${MAKE_ARGS[@]}" olddefconfig
-verify_config "$BUILD_DIR/vgatree" "$HERE/vgaconfig"
-make "${MAKE_ARGS[@]}" out/vgabios.bin
-VGA_IMAGE="$BUILD_DIR/vgatree/out/vgabios.bin"
-VGA_SIZE="$(wc -c < "$VGA_IMAGE" | tr -d '[:space:]')"
-if [ "$VGA_SIZE" -ne 32768 ]; then
-	echo "unexpected VGA BIOS size: $VGA_SIZE bytes (expected 32768)" >&2
-	exit 1
-fi
-if ! grep -Fxq -- '#define BUILD_VERSION "1.17.0-unemupc-stdvga"' \
-	"$BUILD_DIR/vgatree/out/autovgaversion.h"; then
-	echo "non-reproducible SeaVGABIOS version" >&2
-	exit 1
-fi
-# Keep a symbol-aware 16-bit disassembly for the minimum-CPU audit.
-"${CROSS_PREFIX}objdump" -d -M i8086 "$BUILD_DIR/vgatree/out/vgarom.o" > "$BUILD_DIR/vgabios.disasm"
-check_sha256 "$VGA_IMAGE" "$VGA_OUTPUT_SHA256"
-# Install locally even when a worktree initially shares fixtures via symlinks.
-mv "$VGA_IMAGE" "$HERE/build/vgabios-1.17.0-stdvga.bin"
-mv "$BUILD_DIR/vgabios.disasm" "$HERE/build/vgabios.disasm"
-echo "built $HERE/build/vgabios-1.17.0-stdvga.bin ($VGA_SIZE bytes) from $COMMIT"
+# Each VGA variant gets its own export, so the system BIOS and every video
+# BIOS keep independent configurations and bytes.
+build_vgabios() {
+	local fragment="$1" variant="$2" output_sha="$3" expected_size="$4" disasm="$5"
+	local tree="$BUILD_DIR/$6" image size
+	mkdir "$tree"
+	tar --exclude=unemu -xf "$BUILD_DIR/source.tar" -C "$tree"
+	cp "$HERE/$fragment" "$tree/.config"
+	printf '%s\n' "$VERSION" > "$tree/.version"
+	MAKE_ARGS[1]="$tree"
+	MAKE_ARGS[6]="EXTRAVERSION=-unemupc-$variant"
+	make "${MAKE_ARGS[@]}" olddefconfig
+	verify_config "$tree" "$HERE/$fragment"
+	make "${MAKE_ARGS[@]}" out/vgabios.bin
+	image="$tree/out/vgabios.bin"
+	size="$(wc -c < "$image" | tr -d '[:space:]')"
+	if [ "$size" -ne "$expected_size" ]; then
+		echo "unexpected VGA BIOS size: $size bytes (expected $expected_size)" >&2
+		exit 1
+	fi
+	if ! grep -Fxq -- "#define BUILD_VERSION \"$VERSION-unemupc-$variant\"" \
+		"$tree/out/autovgaversion.h"; then
+		echo "non-reproducible SeaVGABIOS version" >&2
+		exit 1
+	fi
+	# Keep a symbol-aware 16-bit disassembly for the minimum-CPU audit.
+	"${CROSS_PREFIX}objdump" -d -M i8086 "$tree/out/vgarom.o" > "$BUILD_DIR/$disasm"
+	check_sha256 "$image" "$output_sha"
+	# Install locally even when a worktree initially shares fixtures via symlinks.
+	mv "$image" "$HERE/build/vgabios-$VERSION-$variant.bin"
+	mv "$BUILD_DIR/$disasm" "$HERE/build/$disasm"
+	echo "built $HERE/build/vgabios-$VERSION-$variant.bin ($size bytes) from $COMMIT"
+}
+build_vgabios vgaconfig stdvga "$VGA_OUTPUT_SHA256" 32768 vgabios.disasm vgatree
+# The VBE mode tables and DISPI code need 38.5 KiB, past the 32 KiB of the
+# standard-VGA build; the option-ROM header's length byte carries the size.
+build_vgabios vgaconfig-bochs bochs "$VGA_BOCHS_OUTPUT_SHA256" 39424 vgabios-bochs.disasm vgatree-bochs
 mv "$BUILD_DIR/release-source.tar" "$SOURCE_OUT"
-echo "wrote $SOURCE_OUT (source of both ROMs, LGPL-3.0-only)"
+# The release recipe rebuilds the system and standard-VGA ROMs. The Bochs ROM
+# also needs this script's vgaconfig-bochs until a fork release carries it.
+echo "wrote $SOURCE_OUT (source of all three ROMs, LGPL-3.0-only; the Bochs ROM also needs vgaconfig-bochs)"

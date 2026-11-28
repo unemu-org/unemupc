@@ -603,6 +603,7 @@ fn parts_bios_placement_names_parts_field() {
 fn repository_machine_cpu_regions_cover_the_full_firmware_board_space() {
     for relative in [
         "seabios/bios-1.17.0-isa.bin",
+        "seabios/build/vgabios-1.17.0-bochs.bin",
         "kiselev-bios/bios-xi8088.bin",
         "kiselev-bios/bios-xi8088-atreset.bin",
         "unemu-at-bios/bios-unemu-at.bin",
@@ -644,6 +645,7 @@ fn repository_machine_cpu_regions_cover_the_full_firmware_board_space() {
             "generic-486-freedos.toml",
             "generic-486-games.toml",
             "generic-486-ide.toml",
+            "generic-486-seabios-vbe.toml",
             "generic-486-seabios.toml",
             "presets/ibm-5170.toml",
         ]
@@ -677,6 +679,9 @@ fn repository_machine_cpu_regions_cover_the_full_firmware_board_space() {
         (0xA0000, 0xC0000, "mmio"),
         (0xFFFE0000, 0x100000000, "rom"),
     ];
+    // The Bochs VBE card's video memory is mapped at the linear framebuffer.
+    let mut generic486_vbe = generic386.clone();
+    generic486_vbe.insert(4, (0xE000_0000, 0xE100_0000, "lfb"));
     let options = AssemblyOptions::default();
     let mut checked = 0;
     for name in names {
@@ -763,6 +768,8 @@ fn repository_machine_cpu_regions_cover_the_full_firmware_board_space() {
             let loaded = machine_file::load_for_assembly(root.join(&name), options).unwrap();
             let expected = if name == Path::new("at-ide.toml") {
                 &ide
+            } else if name == Path::new("generic-486-seabios-vbe.toml") {
+                &generic486_vbe
             } else if loaded.config.board.is_generic_isa() {
                 &generic386
             } else {
@@ -778,7 +785,7 @@ fn repository_machine_cpu_regions_cover_the_full_firmware_board_space() {
         }
     }
     assert_eq!(
-        checked, 16,
+        checked, 17,
         "every machine file and both preset BIOS variants"
     );
 }
