@@ -731,7 +731,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e35d6e78f4cebb90e51d543db8fe41528851d6deeef6ef21ebd4bfdc1e784776"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -1835,7 +1835,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2597,7 +2597,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2903,7 +2903,7 @@ checksum = "ea6fc2961e4ef194dcbfe56bb845534d0dc8098940c7e5c012a258bfec6701bd"
 [[package]]
 name = "x86jit-core"
 version = "0.3.0"
-source = "git+https://github.com/unemu-org/x86jit?rev=3d793fc281debe02d998eb13ece3bec658a58edb#3d793fc281debe02d998eb13ece3bec658a58edb"
+source = "git+https://github.com/unemu-org/x86jit?rev=60157dab84d6e9db416c2b069625b06f614c7c81#60157dab84d6e9db416c2b069625b06f614c7c81"
 dependencies = [
  "iced-x86",
 ]
@@ -2911,7 +2911,7 @@ dependencies = [
 [[package]]
 name = "x86jit-cranelift"
 version = "0.3.0"
-source = "git+https://github.com/unemu-org/x86jit?rev=3d793fc281debe02d998eb13ece3bec658a58edb#3d793fc281debe02d998eb13ece3bec658a58edb"
+source = "git+https://github.com/unemu-org/x86jit?rev=60157dab84d6e9db416c2b069625b06f614c7c81#60157dab84d6e9db416c2b069625b06f614c7c81"
 dependencies = [
  "cranelift",
  "cranelift-module",
@@ -2927,7 +2927,7 @@ dependencies = [
 [[package]]
 name = "x86jit-cranelift-jit"
 version = "0.135.8"
-source = "git+https://github.com/unemu-org/x86jit?rev=3d793fc281debe02d998eb13ece3bec658a58edb#3d793fc281debe02d998eb13ece3bec658a58edb"
+source = "git+https://github.com/unemu-org/x86jit?rev=60157dab84d6e9db416c2b069625b06f614c7c81#60157dab84d6e9db416c2b069625b06f614c7c81"
 dependencies = [
  "anyhow",
  "cranelift-codegen",
